@@ -1,0 +1,139 @@
+{
+  "$defs": {
+    "FieldKind": {
+      "description": "The types a filterable field can have.",
+      "oneOf": [
+        {
+          "const": "text",
+          "description": "A string.",
+          "type": "string"
+        },
+        {
+          "const": "integer",
+          "description": "An integer.",
+          "type": "string"
+        },
+        {
+          "const": "number",
+          "description": "A number.",
+          "type": "string"
+        },
+        {
+          "const": "bool",
+          "description": "True or false.",
+          "type": "string"
+        },
+        {
+          "const": "timestamp",
+          "description": "An RFC 3339 time, compared as a time, never as text.",
+          "type": "string"
+        }
+      ]
+    },
+    "FilterableField": {
+      "additionalProperties": false,
+      "description": "A field that can be filtered on.",
+      "properties": {
+        "kind": {
+          "$ref": "#/$defs/FieldKind",
+          "description": "The field's type."
+        },
+        "name": {
+          "description": "The field's name.",
+          "maxLength": 128,
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "kind"
+      ],
+      "type": "object"
+    },
+    "RecordTypeDecl": {
+      "additionalProperties": false,
+      "description": "One record type.",
+      "properties": {
+        "filterable": {
+          "description": "The top-level fields that can be filtered on.",
+          "items": {
+            "$ref": "#/$defs/FilterableField"
+          },
+          "maxItems": 32,
+          "type": "array"
+        },
+        "name": {
+          "description": "Its name, as `plugin.type`.",
+          "maxLength": 128,
+          "pattern": "^[a-z][a-z0-9_]*\\.[a-z][a-z0-9_]*$",
+          "type": "string"
+        },
+        "schema": {
+          "description": "The JSON Schema every record of this type must meet. It must pass the\nstrictness check when it's registered.",
+          "x-extension": "the plugin's own record schema, checked when registered"
+        }
+      },
+      "required": [
+        "name",
+        "schema",
+        "filterable"
+      ],
+      "type": "object"
+    },
+    "RelationDecl": {
+      "additionalProperties": false,
+      "description": "A named link from records of one type to records of another.",
+      "properties": {
+        "from": {
+          "description": "The type of the records it links from.",
+          "maxLength": 128,
+          "type": "string"
+        },
+        "name": {
+          "description": "Its name, as `plugin.relation`.",
+          "maxLength": 128,
+          "pattern": "^[a-z][a-z0-9_]*\\.[a-z][a-z0-9_]*$",
+          "type": "string"
+        },
+        "to": {
+          "description": "The type of the records it links to.",
+          "maxLength": 128,
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "from",
+        "to"
+      ],
+      "type": "object"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "A plugin's declarations, as they appear in its manifest.",
+  "properties": {
+    "relations": {
+      "description": "The relations between them.",
+      "items": {
+        "$ref": "#/$defs/RelationDecl"
+      },
+      "maxItems": 64,
+      "type": "array"
+    },
+    "types": {
+      "description": "The record types.",
+      "items": {
+        "$ref": "#/$defs/RecordTypeDecl"
+      },
+      "maxItems": 64,
+      "type": "array"
+    }
+  },
+  "required": [
+    "types",
+    "relations"
+  ],
+  "title": "RecordDecls",
+  "type": "object"
+}

@@ -1,0 +1,36 @@
+# cargo-deny. Licenses, bans and sources run on every push (fast, no build);
+# advisories run daily in deps.yml, so a new advisory never blocks a push.
+[graph]
+all-features = true
+
+[licenses]
+# Permissive licenses only, compatible with MIT OR Apache-2.0.
+allow = [
+  "MIT",
+  "MIT-0",
+  "Apache-2.0",
+  "Apache-2.0 WITH LLVM-exception",
+  "BSD-2-Clause",
+  "BSD-3-Clause",
+  "ISC",
+  "Unicode-3.0",
+  "Zlib",
+  "CC0-1.0",
+]
+confidence-threshold = 0.9
+# The list is the policy, not an inventory; an allowance no crate uses yet is fine.
+unused-allowed-license = "allow"
+
+[bans]
+multiple-versions = "warn"
+wildcards = "deny"
+# Internal path dependencies have no version; every internal crate is publish = false.
+allow-wildcard-paths = true
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+
+[advisories]
+yanked = "deny"

@@ -1,0 +1,22 @@
+[package]
+name = "store-memory"
+description = "An in-memory store, for tests, that keeps the conformance suite honest."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[dependencies]
+async-trait.workspace = true
+chrono.workspace = true
+protocol = { path = "../protocol" }
+store = { path = "../store" }
+
+[dev-dependencies]
+store-conformance = { path = "../store-conformance" }
+tokio.workspace = true
+
+[lints]
+workspace = true

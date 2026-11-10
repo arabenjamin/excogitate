@@ -1,0 +1,6 @@
+# The one place the compiler version is named. rustup, CI and any image obey it.
+# `rust-version` in Cargo.toml matches it (no separate MSRV job).
+[toolchain]
+channel = "1.99.1"
+components = ["rustfmt", "clippy"]
+profile = "minimal"

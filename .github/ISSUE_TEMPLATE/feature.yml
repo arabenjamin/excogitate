@@ -1,0 +1,19 @@
+name: Feature request
+description: Suggest a change or an addition.
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: The problem it solves
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What you propose
+  - type: textarea
+    id: plugin
+    attributes:
+      label: Could it be a plugin?
+      description: The core stays small. Say why this belongs in the core, if it does.

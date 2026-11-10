@@ -1,0 +1,17 @@
+[package]
+name = "schema-gen"
+description = "Writes and checks the committed JSON Schemas in schemas/."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[dependencies]
+schema = { path = "../schema" }
+serde_json.workspace = true
+store = { path = "../store" }
+
+[lints]
+workspace = true

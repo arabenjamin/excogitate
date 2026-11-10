@@ -1,0 +1,45 @@
+[workspace]
+resolver = "3"
+members = ["crates/*"]
+
+[workspace.dependencies]
+async-trait = "0.1"
+chrono = { version = "0.4", default-features = false, features = ["clock", "serde", "std"] }
+jsonschema = { version = "0.61", default-features = false }
+schemars = { version = "1.2", features = ["chrono04", "uuid1"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "sync"] }
+uuid = { version = "1", features = ["v7"] }
+
+[workspace.package]
+version = "0.0.0"
+edition = "2024"
+rust-version = "1.99.1"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/arabenjamin/excogitate"
+
+# Lints are deny from the first commit: the code is new, so there is no
+# backlog to ratchet down. CI also sets RUSTFLAGS=-Dwarnings, which turns the
+# `warn` groups below into errors. Each `allow` is written out with its reason.
+[workspace.lints.rust]
+missing_docs = "deny"
+missing_debug_implementations = "deny"
+nonstandard_style = { level = "deny", priority = -1 }
+unsafe_code = "forbid"
+
+[workspace.lints.rustdoc]
+broken_intra_doc_links = "deny"
+
+[workspace.lints.clippy]
+pedantic = { level = "warn", priority = -1 }
+# No panics in library code (allowed in tests, see clippy.toml).
+unwrap_used = "deny"
+expect_used = "deny"
+# Crates that parse model output or fetched content also deny
+# `string_slice` and `indexing_slicing` in their own [lints] (plan § Principles 1).
+
+[profile.release]
+lto = "thin"
+codegen-units = 1

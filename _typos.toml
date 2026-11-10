@@ -1,0 +1,7 @@
+# typos: spelling, checked in CI.
+[default.extend-words]
+# Proper names and terms used on purpose.
+excogitate = "excogitate"
+
+[files]
+extend-exclude = ["LICENSE-APACHE", "LICENSE-MIT", "Cargo.lock"]

@@ -1,0 +1,158 @@
+name: CI
+
+# Fast on a push: the quick checks need no build and fail in under a minute;
+# the Rust jobs run in parallel on a shared, restore-only cache; one gate job
+# is the required check, so a job skipped by the path filter never blocks a
+# pull request. Actions are pinned by commit SHA.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: -Dwarnings
+  RUSTDOCFLAGS: -Dwarnings
+  # CI never needs debug info; it makes the build and the cache smaller.
+  CARGO_PROFILE_DEV_DEBUG: "0"
+  CARGO_PROFILE_TEST_DEBUG: "0"
+
+jobs:
+  changes:
+    name: Changed paths
+    runs-on: ubuntu-24.04
+    outputs:
+      rust: ${{ steps.filter.outputs.rust }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - id: filter
+        uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4.0.3
+        with:
+          filters: |
+            rust:
+              - 'crates/**'
+              - 'schemas/**'
+              - 'Cargo.toml'
+              - 'Cargo.lock'
+              - 'rust-toolchain.toml'
+              - 'clippy.toml'
+              - 'deny.toml'
+              - '.github/workflows/ci.yml'
+
+  quick:
+    name: Quick checks (no build)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0 # the commit check reads the pull request's commits
+      - name: Hooks and scripts are executable
+        # Git silently skips a hook that isn't executable.
+        run: |
+          git ls-files -s .githooks scripts/*.sh | awk '$1 != "100755" { print "not executable: " $4; bad = 1 } END { exit bad }'
+      - name: Toolchain from rust-toolchain.toml
+        run: rustup toolchain install
+      - run: cargo fmt --all -- --check
+      - uses: crate-ci/typos@7f9d0819ca1c008ade73f4b41fa9d258d48f605b # v1.51.1
+      - uses: taiki-e/install-action@5488ac5a951645ce95062214902ac4b6bc1a1037 # v2.87.32
+        with:
+          tool: taplo-cli@0.10.0,cargo-deny@0.20.2
+      - run: taplo fmt --check
+      - name: Dependency licenses, bans and sources
+        run: cargo deny --locked check licenses bans sources
+      - name: The name only where allowed
+        run: scripts/check_name.sh
+      - name: Conventional Commits
+        if: github.event_name == 'pull_request'
+        run: scripts/check_commits.sh "${{ github.event.pull_request.base.sha }}..${{ github.event.pull_request.head.sha }}"
+
+  clippy:
+    name: Clippy
+    needs: changes
+    if: needs.changes.outputs.rust == 'true'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - run: rustup toolchain install
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          shared-key: dev
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - run: cargo clippy --locked --workspace --all-targets --all-features
+
+  test:
+    name: Tests
+    needs: changes
+    if: needs.changes.outputs.rust == 'true'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - run: rustup toolchain install
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          shared-key: dev
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - uses: taiki-e/install-action@5488ac5a951645ce95062214902ac4b6bc1a1037 # v2.87.32
+        with:
+          tool: cargo-nextest@0.9.150
+      - run: cargo nextest run --locked --workspace --all-features
+      - name: Doctests (nextest skips them)
+        run: cargo test --locked --workspace --doc
+
+  docs:
+    name: Docs
+    needs: changes
+    if: needs.changes.outputs.rust == 'true'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - run: rustup toolchain install
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          shared-key: dev
+          save-if: false
+      - run: cargo doc --locked --workspace --no-deps --all-features
+
+  features:
+    name: Each feature set
+    needs: changes
+    if: needs.changes.outputs.rust == 'true'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - run: rustup toolchain install
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          shared-key: dev
+          save-if: false
+      - uses: taiki-e/install-action@5488ac5a951645ce95062214902ac4b6bc1a1037 # v2.87.32
+        with:
+          tool: cargo-hack@0.6.45
+      # `check`, not `build`: no codegen, so the feature sets don't rebuild
+      # the world. One test run of the no-plugins build joins when plugins exist.
+      - run: cargo hack check --locked --workspace --each-feature --no-dev-deps
+
+  gate:
+    name: CI gate
+    # The one required check. It passes when every job passed or was skipped
+    # by the path filter, and fails when any failed or was cancelled.
+    if: always()
+    needs: [changes, quick, clippy, test, docs, features]
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Every job passed or was skipped
+        env:
+          RESULTS: ${{ join(needs.*.result, ' ') }}
+        run: |
+          echo "results: $RESULTS"
+          for r in $RESULTS; do
+            case "$r" in success|skipped) ;; *) exit 1 ;; esac
+          done

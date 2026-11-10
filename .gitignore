@@ -1,0 +1,33 @@
+# Build output
+/target/
+*.profraw
+
+# Local configuration and secrets. .env.example is the committed template.
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# Runtime data: the store, its WAL, and anything the brain writes
+*.duckdb
+*.duckdb.wal
+/data/
+/workspace/
+
+# Frontend and packaging output
+node_modules/
+/dist/
+
+# Agent tooling: per-machine notes stay out of the product
+.claude/
+CLAUDE.local.md
+
+# Editors and OS files (a shared extensions list is the one exception)
+.idea/
+.vscode/*
+!.vscode/extensions.json
+*.swp
+*~
+.DS_Store
+Thumbs.db

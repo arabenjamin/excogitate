@@ -1,0 +1,7 @@
+# Normalize line endings; scripts and hooks must stay LF to run.
+* text=auto eol=lf
+*.sh text eol=lf
+.githooks/* text eol=lf
+Cargo.lock text eol=lf linguist-generated=true
+*.parquet binary
+*.duckdb binary
