@@ -27,4 +27,7 @@ pub use client::{ModelClient, ModelError, OpenAiClient};
 pub use gateway::{Completion, Embedded, FailedAttempt, Gateway, GatewayError};
 pub use ledger::{MemoryLedger, SpendLedger};
 pub use route::{Candidate, NoRoute, Rejection, RoutePolicy, TokenEstimate, plan};
+#[doc(hidden)]
+pub use wire::parse_chat;
+
 pub use structured::{Structured, StructuredError, first_json_object, generate_structured};

@@ -1,0 +1,31 @@
+name: Fuzz
+
+# Fuzzing needs nightly Rust, so this is the one exception to the single
+# toolchain pin: a scheduled job on a pinned nightly, never on a push. A crash
+# fails the job, and the log has the input that caused it.
+on:
+  schedule:
+    - cron: "17 4 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  NIGHTLY: nightly-2026-10-15
+
+jobs:
+  fuzz:
+    name: Fuzz ${{ matrix.target }}
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [parse_chat, first_json_object, tool_arguments]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - run: rustup toolchain install "$NIGHTLY" --profile minimal
+      - run: cargo +"$NIGHTLY" install cargo-fuzz --locked --version 0.13.1
+      # Our own code forbids unsafe; what this hunts is panics on hostile text.
+      - name: Run for ten minutes
+        run: cargo +"$NIGHTLY" fuzz run --sanitizer none "${{ matrix.target }}" "fuzz/corpus/${{ matrix.target }}" -- -max_total_time=600

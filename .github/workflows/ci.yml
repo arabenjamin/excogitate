@@ -139,7 +139,7 @@ jobs:
           tool: cargo-hack@0.6.45
       # `check`, not `build`: no codegen, so the feature sets don't rebuild
       # the world. One test run of the no-plugins build joins when plugins exist.
-      - run: cargo hack check --locked --workspace --each-feature --no-dev-deps
+      - run: cargo hack check --locked --workspace --each-feature
 
   gate:
     name: CI gate

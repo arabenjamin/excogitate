@@ -164,7 +164,11 @@ fn finish_reason(name: Option<&str>) -> FinishReason {
 }
 
 /// Reads a chat reply.
-pub(crate) fn parse_chat(body: &[u8]) -> Result<ChatResponse, ModelError> {
+///
+/// # Errors
+///
+/// [`ModelError::BadResponse`] if it isn't one.
+pub fn parse_chat(body: &[u8]) -> Result<ChatResponse, ModelError> {
     let wire: WireChat = serde_json::from_slice(body)
         .map_err(|error| ModelError::BadResponse(format!("not a chat reply: {error}")))?;
     let usage = wire.usage.and_then(|usage| {
