@@ -15,5 +15,6 @@ Cargo.toml
 Cargo.lock
 .github/ISSUE_TEMPLATE/config.yml
 docs/*
+models.example.yaml
 scripts/name-allowlist
 scripts/check_name.sh

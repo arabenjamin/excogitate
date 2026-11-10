@@ -16,6 +16,8 @@ allow = [
   "Unicode-3.0",
   "Zlib",
   "CC0-1.0",
+  # Mozilla's root certificates, as data (webpki-root-certs, through rustls).
+  "CDLA-Permissive-2.0",
 ]
 confidence-threshold = 0.9
 # The list is the policy, not an inventory; an allowance no crate uses yet is fine.
