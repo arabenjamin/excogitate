@@ -31,3 +31,8 @@ CLAUDE.local.md
 *~
 .DS_Store
 Thumbs.db
+
+# Fuzzing output (the corpus in fuzz/corpus is committed)
+/fuzz/target/
+/fuzz/artifacts/
+/fuzz/coverage/

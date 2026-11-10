@@ -22,8 +22,8 @@ thiserror.workspace = true
 tokio.workspace = true
 
 [dev-dependencies]
-axum = "0.8"
-proptest = "1"
+axum.workspace = true
+proptest.workspace = true
 
 [lints]
 workspace = true

@@ -9,6 +9,7 @@ repository.workspace = true
 publish = false
 
 [dependencies]
+dispatch = { path = "../dispatch" }
 model = { path = "../model" }
 schema = { path = "../schema" }
 serde_json.workspace = true
