@@ -1,0 +1,24 @@
+[package]
+name = "plugin-api"
+description = "The contract a plugin is built on: manifest, tools and capabilities."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[dependencies]
+async-trait.workspace = true
+protocol = { path = "../protocol" }
+schema = { path = "../schema" }
+schemars.workspace = true
+serde.workspace = true
+serde-saphyr.workspace = true
+serde_json.workspace = true
+store = { path = "../store" }
+thiserror.workspace = true
+tokio.workspace = true
+
+[lints]
+workspace = true

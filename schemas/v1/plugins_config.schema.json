@@ -1,0 +1,75 @@
+{
+  "$defs": {
+    "PluginCapability": {
+      "description": "A thing a plugin can ask for. A closed list, granted by name.",
+      "oneOf": [
+        {
+          "const": "records",
+          "description": "Its own records in the store.",
+          "type": "string"
+        },
+        {
+          "const": "http",
+          "description": "HTTP through the brain.",
+          "type": "string"
+        },
+        {
+          "const": "model",
+          "description": "Model calls through the brain.",
+          "type": "string"
+        }
+      ]
+    },
+    "PluginConfig": {
+      "additionalProperties": false,
+      "description": "What one plugin is granted.",
+      "properties": {
+        "capabilities": {
+          "description": "The capabilities it may use.",
+          "items": {
+            "$ref": "#/$defs/PluginCapability"
+          },
+          "maxItems": 8,
+          "type": "array"
+        },
+        "name": {
+          "description": "The plugin's name.",
+          "maxLength": 32,
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "capabilities"
+      ],
+      "type": "object"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "The contents of `plugins.yaml`.",
+  "properties": {
+    "plugins": {
+      "description": "The plugins given anything. A plugin not listed is granted nothing.",
+      "items": {
+        "$ref": "#/$defs/PluginConfig"
+      },
+      "maxItems": 128,
+      "type": "array"
+    },
+    "version": {
+      "description": "The format version.",
+      "format": "uint32",
+      "maximum": 1,
+      "minimum": 1,
+      "type": "integer"
+    }
+  },
+  "required": [
+    "version",
+    "plugins"
+  ],
+  "title": "PluginsConfig",
+  "type": "object"
+}

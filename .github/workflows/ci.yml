@@ -39,6 +39,7 @@ jobs:
           filters: |
             rust:
               - 'crates/**'
+              - 'plugins/**'
               - 'schemas/**'
               - 'models.example.yaml'
               - 'Cargo.toml'
@@ -107,6 +108,8 @@ jobs:
       - run: cargo nextest run --locked --workspace --all-features
       - name: Doctests (nextest skips them)
         run: cargo test --locked --workspace --doc
+      - name: The brain with no plugins compiled in
+        run: cargo nextest run --locked -p app --no-default-features
 
   docs:
     name: Docs
@@ -138,7 +141,7 @@ jobs:
         with:
           tool: cargo-hack@0.6.45
       # `check`, not `build`: no codegen, so the feature sets don't rebuild
-      # the world. One test run of the no-plugins build joins when plugins exist.
+      # the world.
       - run: cargo hack check --locked --workspace --each-feature
 
   gate:

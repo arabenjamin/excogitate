@@ -10,7 +10,8 @@ itself from evidence.
 ## Status
 
 **Pre-alpha: nothing here runs yet.** The interfaces are being built first
-(Phase 1: the schemas, the store and model ports, and dispatch so far). The
+(Phase 1: the schemas, the store and model ports, dispatch and the plugin
+contract are in place, and nothing uses them end to end yet). The
 first usable release, Phase 2a, is a brain that can look something up on the
 web and remember it.
 Until then, expect everything to change, and don't depend on any interface.
@@ -64,14 +65,15 @@ The plan has four layers: a store port (DuckDB by default), a model port
 (any OpenAI-wire endpoint), a dispatcher that validates every call, and the
 agents, workflows and Harness² on top. `docs/` describes each one as it is
 built: so far, [the store port](docs/store.md), [the model
-port](docs/models.md), [dispatch](docs/dispatch.md) and
+port](docs/models.md), [dispatch](docs/dispatch.md), [plugins](docs/plugins.md) and
 [schemas](docs/schemas.md).
 
 ## Writing a plugin
 
-The plugin contract has a manifest with a schema, a declared schema for
-every tool's input and output, and narrow capabilities granted by name.
-An example plugin will be the starting point. Both arrive in Phase 1.
+A plugin has a manifest with a schema, a declared schema for every tool's
+input and output, and narrow capabilities granted by name. It can be compiled
+in behind a cargo feature or run as its own process. Start by copying
+[`plugins/example`](plugins/example), and see [the guide](docs/plugins.md).
 
 ## Getting help, contributing, security
 

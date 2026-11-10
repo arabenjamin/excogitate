@@ -8,6 +8,14 @@ license.workspace = true
 repository.workspace = true
 publish = false
 
+[features]
+# One feature per compiled-in plugin. The default build has none.
+plugin-example = ["dep:plugin-example"]
+
+[dependencies]
+plugin-api = { path = "../plugin-api" }
+plugin-example = { path = "../../plugins/example", optional = true }
+
 [[bin]]
 name = "excogitate"
 path = "src/main.rs"

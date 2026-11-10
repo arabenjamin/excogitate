@@ -60,6 +60,10 @@ checksum = "940b3a0ca603d1eade50a4846a2afffd5ef57a9feac2c0e2ec2e14f9ead76000"
 [[package]]
 name = "app"
 version = "0.0.0"
+dependencies = [
+ "plugin-api",
+ "plugin-example",
+]
 
 [[package]]
 name = "arraydeque"
@@ -380,6 +384,7 @@ dependencies = [
  "chrono",
  "events",
  "model",
+ "plugin-api",
  "proptest",
  "protocol",
  "schema",
@@ -1293,6 +1298,61 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f6b464fbc74e149a392436b17d523f769e057cb6877f6a5c4618bc6f11800548"
 
 [[package]]
+name = "plugin-api"
+version = "0.0.0"
+dependencies = [
+ "async-trait",
+ "protocol",
+ "schema",
+ "schemars",
+ "serde",
+ "serde-saphyr",
+ "serde_json",
+ "store",
+ "thiserror",
+ "tokio",
+]
+
+[[package]]
+name = "plugin-example"
+version = "0.0.0"
+dependencies = [
+ "async-trait",
+ "dispatch",
+ "events",
+ "model",
+ "plugin-api",
+ "plugin-host",
+ "protocol",
+ "schemars",
+ "serde",
+ "serde_json",
+ "store",
+ "store-memory",
+ "tokio",
+]
+
+[[package]]
+name = "plugin-host"
+version = "0.0.0"
+dependencies = [
+ "async-trait",
+ "chrono",
+ "dispatch",
+ "plugin-api",
+ "protocol",
+ "schema",
+ "schemars",
+ "serde",
+ "serde-saphyr",
+ "serde_json",
+ "store",
+ "store-memory",
+ "thiserror",
+ "tokio",
+]
+
+[[package]]
 name = "potential_utf"
 version = "0.1.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1752,6 +1812,8 @@ version = "0.0.0"
 dependencies = [
  "dispatch",
  "model",
+ "plugin-api",
+ "plugin-host",
  "schema",
  "serde_json",
  "store",
@@ -1918,6 +1980,16 @@ name = "shlex"
 version = "2.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f8fadd59c855ef2080decdef8ff161eb6661b86933c9d82e5ba29dc602a55aba"
+
+[[package]]
+name = "signal-hook-registry"
+version = "1.4.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c4db69cba1110affc0e9f7bcd48bbf87b3f4fc7c61fc9155afd4c469eb3d6c1b"
+dependencies = [
+ "errno",
+ "libc",
+]
 
 [[package]]
 name = "simd_cesu8"
@@ -2129,6 +2201,7 @@ dependencies = [
  "libc",
  "mio",
  "pin-project-lite",
+ "signal-hook-registry",
  "socket2",
  "tokio-macros",
  "windows-sys 0.61.2",

@@ -13,6 +13,7 @@ async-trait.workspace = true
 chrono.workspace = true
 events = { path = "../events" }
 model = { path = "../model" }
+plugin-api = { path = "../plugin-api" }
 protocol = { path = "../protocol" }
 schema = { path = "../schema" }
 schemars.workspace = true

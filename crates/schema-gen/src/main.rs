@@ -15,6 +15,8 @@ fn generated() -> BTreeMap<&'static str, Value> {
     BTreeMap::from([
         ("budget", schema_of::<dispatch::Budget>()),
         ("models_config", schema_of::<model::ModelsConfig>()),
+        ("plugin_manifest", schema_of::<plugin_api::PluginManifest>()),
+        ("plugins_config", schema_of::<plugin_host::PluginsConfig>()),
         ("receipt", schema_of::<dispatch::Receipt>()),
         ("record_decls", schema_of::<store::RecordDecls>()),
     ])

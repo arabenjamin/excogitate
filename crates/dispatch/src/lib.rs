@@ -13,8 +13,7 @@ mod session;
 mod tool;
 
 pub use budget::{Budget, BudgetKind};
+pub use plugin_api::{Effect, Tool, ToolContext, ToolDefinition, ToolFailure, ToolOutput};
 pub use receipt::{CallStatus, ModelEntry, Outcome, Receipt, RefusalKind, ToolEntry, Totals};
 pub use session::{ModelStop, Session, SessionConfig, SessionError, ToolReply, parse_arguments};
-pub use tool::{
-    Effect, RegistryError, Tool, ToolContext, ToolDefinition, ToolFailure, ToolOutput, ToolRegistry,
-};
+pub use tool::{RegistryError, ToolRegistry};

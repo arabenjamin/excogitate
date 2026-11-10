@@ -76,4 +76,6 @@ additional terms or conditions.
 ## CI timings
 
 The target is a warm push in under 5 minutes, with the quick checks failing
-in under a minute. Measured times go here once the first runs are in.
+in under a minute. Measured 2026-11-10: a push took 82 seconds, and the quick
+checks 18. That's before the bundled database build arrives in Phase 2a, so
+measure again then.

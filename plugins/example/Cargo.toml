@@ -1,0 +1,33 @@
+[package]
+name = "plugin-example"
+description = "The starting point for a new plugin. Copy this."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[[bin]]
+name = "example-service"
+path = "src/main.rs"
+
+[dependencies]
+async-trait.workspace = true
+plugin-api = { path = "../../crates/plugin-api" }
+protocol = { path = "../../crates/protocol" }
+schemars.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+store = { path = "../../crates/store" }
+tokio.workspace = true
+
+[dev-dependencies]
+dispatch = { path = "../../crates/dispatch" }
+events = { path = "../../crates/events" }
+model = { path = "../../crates/model" }
+plugin-host = { path = "../../crates/plugin-host" }
+store-memory = { path = "../../crates/store-memory" }
+
+[lints]
+workspace = true
