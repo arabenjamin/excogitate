@@ -1,0 +1,279 @@
+{
+  "$defs": {
+    "Effect": {
+      "description": "What a tool can do to the world. A write counts against the write budget\nand is stubbed when Harness² probes a candidate.",
+      "oneOf": [
+        {
+          "const": "read",
+          "description": "Only reads.",
+          "type": "string"
+        },
+        {
+          "const": "write",
+          "description": "Changes something.",
+          "type": "string"
+        }
+      ]
+    },
+    "FieldKind": {
+      "description": "The types a filterable field can have.",
+      "oneOf": [
+        {
+          "const": "text",
+          "description": "A string.",
+          "type": "string"
+        },
+        {
+          "const": "integer",
+          "description": "An integer.",
+          "type": "string"
+        },
+        {
+          "const": "number",
+          "description": "A number.",
+          "type": "string"
+        },
+        {
+          "const": "bool",
+          "description": "True or false.",
+          "type": "string"
+        },
+        {
+          "const": "timestamp",
+          "description": "An RFC 3339 time, compared as a time, never as text.",
+          "type": "string"
+        }
+      ]
+    },
+    "FilterableField": {
+      "additionalProperties": false,
+      "description": "A field that can be filtered on.",
+      "properties": {
+        "kind": {
+          "$ref": "#/$defs/FieldKind",
+          "description": "The field's type."
+        },
+        "name": {
+          "description": "The field's name.",
+          "maxLength": 128,
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "kind"
+      ],
+      "type": "object"
+    },
+    "PluginCapability": {
+      "description": "A thing a plugin can ask for. A closed list, granted by name.",
+      "oneOf": [
+        {
+          "const": "records",
+          "description": "Its own records in the store.",
+          "type": "string"
+        },
+        {
+          "const": "http",
+          "description": "HTTP through the brain.",
+          "type": "string"
+        },
+        {
+          "const": "model",
+          "description": "Model calls through the brain.",
+          "type": "string"
+        }
+      ]
+    },
+    "RecordDecls": {
+      "additionalProperties": false,
+      "description": "A plugin's declarations, as they appear in its manifest.",
+      "properties": {
+        "relations": {
+          "description": "The relations between them.",
+          "items": {
+            "$ref": "#/$defs/RelationDecl"
+          },
+          "maxItems": 64,
+          "type": "array"
+        },
+        "types": {
+          "description": "The record types.",
+          "items": {
+            "$ref": "#/$defs/RecordTypeDecl"
+          },
+          "maxItems": 64,
+          "type": "array"
+        }
+      },
+      "required": [
+        "types",
+        "relations"
+      ],
+      "type": "object"
+    },
+    "RecordTypeDecl": {
+      "additionalProperties": false,
+      "description": "One record type.",
+      "properties": {
+        "filterable": {
+          "description": "The top-level fields that can be filtered on.",
+          "items": {
+            "$ref": "#/$defs/FilterableField"
+          },
+          "maxItems": 32,
+          "type": "array"
+        },
+        "name": {
+          "description": "Its name, as `plugin.type`.",
+          "maxLength": 128,
+          "pattern": "^[a-z][a-z0-9_]*\\.[a-z][a-z0-9_]*$",
+          "type": "string"
+        },
+        "schema": {
+          "description": "The JSON Schema every record of this type must meet. It must pass the\nstrictness check when it's registered.",
+          "x-extension": "the plugin's own record schema, checked when registered"
+        }
+      },
+      "required": [
+        "name",
+        "schema",
+        "filterable"
+      ],
+      "type": "object"
+    },
+    "RelationDecl": {
+      "additionalProperties": false,
+      "description": "A named link from records of one type to records of another.",
+      "properties": {
+        "from": {
+          "description": "The type of the records it links from.",
+          "maxLength": 128,
+          "type": "string"
+        },
+        "name": {
+          "description": "Its name, as `plugin.relation`.",
+          "maxLength": 128,
+          "pattern": "^[a-z][a-z0-9_]*\\.[a-z][a-z0-9_]*$",
+          "type": "string"
+        },
+        "to": {
+          "description": "The type of the records it links to.",
+          "maxLength": 128,
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "from",
+        "to"
+      ],
+      "type": "object"
+    },
+    "ToolManifest": {
+      "additionalProperties": false,
+      "description": "One tool, as its plugin declares it.",
+      "properties": {
+        "description": {
+          "description": "What it does, for the model.",
+          "maxLength": 2048,
+          "type": "string"
+        },
+        "effect": {
+          "$ref": "#/$defs/Effect",
+          "description": "What it can do to the world."
+        },
+        "input_schema": {
+          "description": "The JSON Schema of its arguments.",
+          "x-extension": "the tool's own schema, checked for strictness"
+        },
+        "name": {
+          "description": "Its name, as `plugin_tool`.",
+          "maxLength": 64,
+          "minLength": 1,
+          "pattern": "^[a-z][a-z0-9_]*$",
+          "type": "string"
+        },
+        "output_schema": {
+          "description": "The JSON Schema of its result.",
+          "x-extension": "the tool's own schema, checked for strictness"
+        }
+      },
+      "required": [
+        "name",
+        "description",
+        "input_schema",
+        "output_schema",
+        "effect"
+      ],
+      "type": "object"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "A plugin's `plugin.yaml`.",
+  "properties": {
+    "api_version": {
+      "description": "The contract version it's written against.",
+      "format": "uint32",
+      "maximum": 1,
+      "minimum": 1,
+      "type": "integer"
+    },
+    "capabilities": {
+      "default": [],
+      "description": "What it needs from the brain.",
+      "items": {
+        "$ref": "#/$defs/PluginCapability"
+      },
+      "maxItems": 8,
+      "type": "array"
+    },
+    "description": {
+      "description": "What it's for.",
+      "maxLength": 1024,
+      "type": "string"
+    },
+    "name": {
+      "description": "Its name, which prefixes its tools and record types.",
+      "maxLength": 32,
+      "minLength": 1,
+      "pattern": "^[a-z][a-z0-9]*$",
+      "type": "string"
+    },
+    "records": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/RecordDecls"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "The record types and relations it keeps."
+    },
+    "tools": {
+      "description": "Its tools.",
+      "items": {
+        "$ref": "#/$defs/ToolManifest"
+      },
+      "maxItems": 64,
+      "type": "array"
+    },
+    "version": {
+      "description": "Its version.",
+      "maxLength": 32,
+      "minLength": 1,
+      "type": "string"
+    }
+  },
+  "required": [
+    "api_version",
+    "name",
+    "version",
+    "description",
+    "tools"
+  ],
+  "title": "PluginManifest",
+  "type": "object"
+}

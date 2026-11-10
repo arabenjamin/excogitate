@@ -4,8 +4,7 @@
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use crate::BudgetKind;
-use crate::tool::Effect;
+use crate::{BudgetKind, Effect};
 
 /// How a run ended. A closed list; every run ends in exactly one.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]

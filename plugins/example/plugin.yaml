@@ -1,0 +1,53 @@
+# The compiled-in form: it keeps records, so it asks for that capability.
+api_version: 1
+name: example
+version: 0.0.0
+description: Counts words and keeps bookmarks. Copy this to start a plugin.
+
+capabilities: [records]
+
+records:
+  types:
+    - name: example.bookmark
+      schema:
+        type: object
+        additionalProperties: false
+        required: [url]
+        properties:
+          url: { type: string, maxLength: 2048 }
+      filterable:
+        - { name: url, kind: text }
+  relations: []
+
+tools:
+  - name: example_word_count
+    description: Counts the words in a text.
+    effect: read
+    input_schema:
+      type: object
+      additionalProperties: false
+      required: [text]
+      properties:
+        text: { type: string, maxLength: 100000 }
+    output_schema:
+      type: object
+      additionalProperties: false
+      required: [words]
+      properties:
+        words: { type: integer, minimum: 0 }
+
+  - name: example_bookmark_add
+    description: Saves a bookmark and returns its id.
+    effect: write
+    input_schema:
+      type: object
+      additionalProperties: false
+      required: [url]
+      properties:
+        url: { type: string, maxLength: 2048 }
+    output_schema:
+      type: object
+      additionalProperties: false
+      required: [id]
+      properties:
+        id: { type: string, format: uuid }

@@ -16,7 +16,7 @@ reqwest = { version = "0.13", default-features = false, features = ["http2", "ru
 schema = { path = "../schema" }
 schemars.workspace = true
 serde.workspace = true
-serde-saphyr = "2.1"
+serde-saphyr.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
 tokio.workspace = true

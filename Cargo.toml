@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/*"]
+members = ["crates/*", "plugins/*"]
 
 [workspace.dependencies]
 async-trait = "0.1"
@@ -8,11 +8,20 @@ axum = "0.8"
 chrono = { version = "0.4", default-features = false, features = ["clock", "serde", "std"] }
 jsonschema = { version = "0.61", default-features = false }
 proptest = "1"
+serde-saphyr = "2.1"
 schemars = { version = "1.2", features = ["chrono04", "uuid1"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 thiserror = "2"
-tokio = { version = "1", features = ["macros", "rt-multi-thread", "sync", "time"] }
+tokio = { version = "1", features = [
+  "io-std",
+  "io-util",
+  "macros",
+  "process",
+  "rt-multi-thread",
+  "sync",
+  "time",
+] }
 uuid = { version = "1", features = ["v7"] }
 
 [workspace.package]
