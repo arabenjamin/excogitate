@@ -42,6 +42,7 @@ jobs:
               - 'plugins/**'
               - 'schemas/**'
               - 'models.example.yaml'
+              - 'scripts/fetch_duckdb_extensions.sh'
               - 'Cargo.toml'
               - 'Cargo.lock'
               - 'rust-toolchain.toml'
@@ -72,6 +73,8 @@ jobs:
         run: cargo deny --locked check licenses bans sources
       - name: The name only where allowed
         run: scripts/check_name.sh
+      - name: No oversized files
+        run: scripts/check_file_size.sh
       - name: Conventional Commits
         if: github.event_name == 'pull_request'
         run: scripts/check_commits.sh "${{ github.event.pull_request.base.sha }}..${{ github.event.pull_request.head.sha }}"
@@ -105,6 +108,8 @@ jobs:
       - uses: taiki-e/install-action@5488ac5a951645ce95062214902ac4b6bc1a1037 # v2.87.32
         with:
           tool: cargo-nextest@0.9.150
+      - name: DuckDB extensions for the store's tests
+        run: scripts/fetch_duckdb_extensions.sh
       - run: cargo nextest run --locked --workspace --all-features
       - name: Doctests (nextest skips them)
         run: cargo test --locked --workspace --doc

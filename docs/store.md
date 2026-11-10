@@ -33,3 +33,24 @@ Telemetry and trajectories don't go here. They go to the append-only
 
 The suite defines what a store is. `crates/store-memory` is the smallest
 store that passes it.
+
+## The default store: DuckDB
+
+`crates/store-duckdb` keeps everything in one file, with no database server.
+It's built around one writer thread, plain scans for vector search, and a
+full-text index maintained by deleting and re-inserting chunks. The reasons
+are in the crate's top comment.
+
+**Extensions.** The store loads DuckDB's `fts` extension from a fixed directory
+and never downloads anything at runtime. `scripts/fetch_duckdb_extensions.sh`
+fetches it for tests, into `.cache/`.
+
+**The library.** The crate links DuckDB's prebuilt shared library, which the
+build downloads. A binary needs `libduckdb.so` beside it at runtime.
+
+**Upgrading DuckDB.** A newer DuckDB can write a file an older one can't open.
+Before changing the pinned version, call `DuckDbStore::export`, and update
+the version in the fetch script (a test checks they match).
+
+**The event sink.** `DuckDbSink` keeps telemetry and trajectories in a file of
+its own, so they never compete with the store's writer.

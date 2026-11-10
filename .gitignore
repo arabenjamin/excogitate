@@ -1,6 +1,13 @@
 # Build output
 /target/
+/.cache/
 *.profraw
+
+# Core dumps
+core.[0-9]*
+vgcore.*
+/crates/*/core
+/plugins/*/core
 
 # Local configuration and secrets. .env.example is the committed template.
 .env

@@ -27,8 +27,8 @@ Schemas in `schemas/` are generated from the Rust types and a test fails
 when they drift. After changing a type behind one, run
 `cargo run -p schema-gen -- --write` and commit the result.
 
-`pre-commit` runs a secret scan of what's staged, the format check, the
-name check and the unit tests. `commit-msg` checks the message format.
+`pre-commit` refuses any file over 1 MiB, then runs a secret scan of what's
+staged, the format check, the name check and the unit tests. `commit-msg` checks the message format.
 
 ## Branches and commits
 

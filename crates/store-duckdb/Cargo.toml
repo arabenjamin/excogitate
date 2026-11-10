@@ -1,0 +1,33 @@
+[package]
+name = "store-duckdb"
+description = "The default store: one embedded DuckDB file, behind one writer."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[dependencies]
+async-trait.workspace = true
+chrono.workspace = true
+# Pinned exactly: a newer DuckDB can write a file an older one can't open, so an
+# upgrade is a deliberate step. See docs/store.md before changing it.
+# download-lib fetches DuckDB's own prebuilt library. Compiling it from source
+# (`bundled`) took 204 seconds on 32 cores and would dominate every cold build.
+duckdb = { version = "=1.20000.1", features = ["chrono", "download-lib"] }
+events = { path = "../events" }
+protocol = { path = "../protocol" }
+schema = { path = "../schema" }
+serde.workspace = true
+serde_json.workspace = true
+store = { path = "../store" }
+thiserror.workspace = true
+tokio.workspace = true
+uuid.workspace = true
+
+[dev-dependencies]
+store-conformance = { path = "../store-conformance" }
+
+[lints]
+workspace = true

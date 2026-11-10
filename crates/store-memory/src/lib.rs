@@ -91,7 +91,10 @@ impl State {
                 let chunks = self.chunks.get(&note.id).map_or(&[][..], Vec::as_slice);
                 chunks.iter().filter_map(|chunk| {
                     score(chunk).map(|score| ChunkHit {
-                        chunk: chunk.clone(),
+                        chunk: Chunk {
+                            embedding: None,
+                            ..chunk.clone()
+                        },
                         provenance: note.provenance.clone(),
                         score,
                     })

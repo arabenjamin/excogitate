@@ -290,6 +290,63 @@ pub async fn vector_search_orders_by_similarity(store: &dyn Store) {
     assert!(hits.items[0].score > hits.items[1].score);
 }
 
+/// A zero vector has no direction. It must rank last, not break the query.
+pub async fn a_zero_vector_is_handled(store: &dyn Store) {
+    let (plain, zero) = (note("plain"), note("zero"));
+    store
+        .apply(note_with_text(&zero, "zero", Some([0.0, 0.0, 0.0])))
+        .await
+        .unwrap();
+    store
+        .apply(note_with_text(&plain, "plain", Some([1.0, 0.0, 0.0])))
+        .await
+        .unwrap();
+    let hits = store
+        .search_vector(&[1.0, 0.0, 0.0], ClassFilter::Any, page(5))
+        .await
+        .unwrap();
+    let order: Vec<_> = hits.items.iter().map(|h| h.chunk.note_id).collect();
+    assert_eq!(order, [plain.id, zero.id]);
+    let none = store
+        .search_vector(&[0.0, 0.0, 0.0], ClassFilter::Any, page(5))
+        .await
+        .unwrap();
+    assert_eq!(none.items.len(), 2);
+}
+
+/// A query of nothing but punctuation matches nothing, and doesn't fail.
+pub async fn an_empty_text_query_is_empty(store: &dyn Store) {
+    store
+        .apply(note_with_text(&note("a"), "words", None))
+        .await
+        .unwrap();
+    for query in ["", "   ", "?!."] {
+        let hits = store
+            .search_text(query, ClassFilter::Any, page(5))
+            .await
+            .unwrap();
+        assert_eq!(hits.items.len(), 0, "{query:?}");
+    }
+}
+
+/// A search is often the first thing a prompt sees, and a vector is large.
+pub async fn hits_leave_out_the_embedding(store: &dyn Store) {
+    store
+        .apply(note_with_text(&note("a"), "words", Some([1.0, 0.0, 0.0])))
+        .await
+        .unwrap();
+    let hits = store
+        .search_text("words", ClassFilter::Any, page(5))
+        .await
+        .unwrap();
+    assert_eq!(hits.items[0].chunk.embedding, None);
+    let hits = store
+        .search_vector(&[1.0, 0.0, 0.0], ClassFilter::Any, page(5))
+        .await
+        .unwrap();
+    assert_eq!(hits.items[0].chunk.embedding, None);
+}
+
 /// Text without an embedder still stores, and stays out of vector results.
 pub async fn vector_search_skips_chunks_without_embeddings(store: &dyn Store) {
     store

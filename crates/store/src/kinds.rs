@@ -64,7 +64,7 @@ pub struct Chunk {
 /// untrusted still applies once the text is back in a prompt.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ChunkHit {
-    /// The chunk found.
+    /// The chunk found, without its embedding.
     pub chunk: Chunk,
     /// Where its note came from.
     pub provenance: Provenance,
