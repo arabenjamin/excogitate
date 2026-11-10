@@ -1,0 +1,19 @@
+[package]
+name = "store-conformance"
+description = "The tests any store must pass. They define what a store is."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[dependencies]
+chrono.workspace = true
+protocol = { path = "../protocol" }
+serde_json.workspace = true
+store = { path = "../store" }
+tokio.workspace = true
+
+[lints]
+workspace = true

@@ -1,0 +1,6 @@
+# taplo: TOML formatting, checked in CI with `taplo fmt --check`.
+[formatting]
+align_entries = false
+array_auto_collapse = false
+column_width = 100
+indent_string = "  "

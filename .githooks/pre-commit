@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+# Checks on every commit: secrets, format, the name, and the unit tests.
+# Clippy, integration tests and doctests run in CI; run them locally with the
+# commands in CONTRIBUTING.md. Cargo reads the working tree, so unstaged edits
+# are part of what the tests see.
+set -euo pipefail
+root=$(git rev-parse --show-toplevel)
+if command -v docker >/dev/null 2>&1; then
+  "$root/scripts/secret_scan.sh" --staged
+else
+  echo "WARNING: Docker not found, so staged changes were NOT scanned for secrets." >&2
+fi
+cargo fmt --all -- --check
+"$root/scripts/check_name.sh"
+# Unit tests only. Cargo rejects --lib when the workspace has no library.
+unit_targets=(--bins)
+if [[ -n $(git ls-files 'crates/*/src/lib.rs') ]]; then
+  unit_targets+=(--lib)
+fi
+cargo test --quiet --locked --workspace "${unit_targets[@]}"

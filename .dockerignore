@@ -1,0 +1,15 @@
+# The build context is the source, not the build or the data.
+target/
+.git/
+.github/
+data/
+workspace/
+*.duckdb
+*.duckdb.wal
+.env
+.env.*
+!.env.example
+node_modules/
+dist/
+.claude/
+CLAUDE.local.md
