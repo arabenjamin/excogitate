@@ -118,7 +118,9 @@ impl Validator {
     }
 }
 
-fn bounded(message: &str) -> String {
+/// Cuts text that may be untrusted and huge to a length safe to show.
+#[must_use]
+pub fn bounded(message: &str) -> String {
     if message.chars().count() <= MAX_MESSAGE_CHARS {
         return message.to_owned();
     }

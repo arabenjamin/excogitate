@@ -1,0 +1,233 @@
+{
+  "$defs": {
+    "Capability": {
+      "description": "What a model can do. Agents ask for these, never for a model by name.",
+      "oneOf": [
+        {
+          "const": "chat",
+          "description": "Chat completions.",
+          "type": "string"
+        },
+        {
+          "const": "tools",
+          "description": "Tool calls.",
+          "type": "string"
+        },
+        {
+          "const": "json_schema",
+          "description": "The server enforces a JSON Schema on the reply.",
+          "type": "string"
+        },
+        {
+          "const": "embeddings",
+          "description": "Embeddings.",
+          "type": "string"
+        },
+        {
+          "const": "investigative",
+          "description": "Measured able to run a multi-step investigative loop.",
+          "type": "string"
+        }
+      ]
+    },
+    "ModelConfig": {
+      "additionalProperties": false,
+      "description": "One model, as configured.",
+      "properties": {
+        "capabilities": {
+          "description": "What it can do.",
+          "items": {
+            "$ref": "#/$defs/Capability"
+          },
+          "maxItems": 8,
+          "minItems": 1,
+          "type": "array"
+        },
+        "context_tokens": {
+          "description": "Its context window.",
+          "format": "uint32",
+          "minimum": 1,
+          "type": "integer"
+        },
+        "embedding_dimension": {
+          "description": "The width of its embeddings. Required with the `embeddings` capability.",
+          "format": "uint32",
+          "maximum": 65535,
+          "minimum": 1,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "max_output_tokens": {
+          "description": "The most it may write in one reply.",
+          "format": "uint32",
+          "minimum": 1,
+          "type": "integer"
+        },
+        "name": {
+          "description": "The name used in receipts and logs.",
+          "maxLength": 64,
+          "minLength": 1,
+          "type": "string"
+        },
+        "price": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Price"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "What it costs. Absent means free."
+        },
+        "provider": {
+          "description": "The provider serving it.",
+          "maxLength": 64,
+          "minLength": 1,
+          "type": "string"
+        },
+        "wire_model": {
+          "description": "The id the endpoint knows it by.",
+          "maxLength": 256,
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "provider",
+        "wire_model",
+        "capabilities",
+        "context_tokens",
+        "max_output_tokens"
+      ],
+      "type": "object"
+    },
+    "Price": {
+      "additionalProperties": false,
+      "description": "What a model costs, in millionths of a dollar per million tokens.\nIntegers, so that spend adds up exactly.",
+      "properties": {
+        "input_usd_micros_per_mtok": {
+          "description": "Per million input tokens.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "output_usd_micros_per_mtok": {
+          "description": "Per million output tokens.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "input_usd_micros_per_mtok",
+        "output_usd_micros_per_mtok"
+      ],
+      "type": "object"
+    },
+    "ProviderConfig": {
+      "additionalProperties": false,
+      "description": "One endpoint.",
+      "properties": {
+        "api_key_env": {
+          "description": "The environment variable holding its API key, if it needs one.",
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Z][A-Z0-9_]*$",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "base_url": {
+          "description": "The URL that `/chat/completions` and `/embeddings` hang off.",
+          "maxLength": 512,
+          "minLength": 1,
+          "type": "string"
+        },
+        "name": {
+          "description": "Its name.",
+          "maxLength": 64,
+          "minLength": 1,
+          "type": "string"
+        },
+        "no_log": {
+          "description": "Whether it keeps no logs of what it's sent. Only then may private work\ngo to it. Required, so nobody gets this by default.",
+          "type": "boolean"
+        },
+        "paid_for": {
+          "default": [],
+          "description": "The purposes that may use its priced models.",
+          "items": {
+            "maxLength": 64,
+            "minLength": 1,
+            "type": "string"
+          },
+          "maxItems": 32,
+          "type": "array"
+        },
+        "spend_cap_usd_micros_per_day": {
+          "description": "The most it may spend per UTC day. Required for a priced model.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "timeout_secs": {
+          "description": "How long one request may take.",
+          "format": "uint32",
+          "maximum": 3600,
+          "minimum": 1,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "name",
+        "base_url",
+        "no_log",
+        "timeout_secs"
+      ],
+      "type": "object"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "The contents of `models.yaml`.",
+  "properties": {
+    "models": {
+      "description": "The models they serve. Among equal prices, earlier ones are preferred.",
+      "items": {
+        "$ref": "#/$defs/ModelConfig"
+      },
+      "maxItems": 128,
+      "type": "array"
+    },
+    "providers": {
+      "description": "The endpoints.",
+      "items": {
+        "$ref": "#/$defs/ProviderConfig"
+      },
+      "maxItems": 32,
+      "type": "array"
+    },
+    "version": {
+      "description": "The format version.",
+      "format": "uint32",
+      "maximum": 1,
+      "minimum": 1,
+      "type": "integer"
+    }
+  },
+  "required": [
+    "version",
+    "providers",
+    "models"
+  ],
+  "title": "ModelsConfig",
+  "type": "object"
+}

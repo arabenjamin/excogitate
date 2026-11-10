@@ -12,7 +12,10 @@ use serde_json::Value;
 
 /// Every published schema, by file stem.
 fn generated() -> BTreeMap<&'static str, Value> {
-    BTreeMap::from([("record_decls", schema_of::<store::RecordDecls>())])
+    BTreeMap::from([
+        ("models_config", schema_of::<model::ModelsConfig>()),
+        ("record_decls", schema_of::<store::RecordDecls>()),
+    ])
 }
 
 /// Where the current version's schemas live.

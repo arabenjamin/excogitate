@@ -1,0 +1,29 @@
+[package]
+name = "model"
+description = "The model port: any OpenAI-wire endpoint, routing, and structured output."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[dependencies]
+async-trait.workspace = true
+chrono.workspace = true
+protocol = { path = "../protocol" }
+reqwest = { version = "0.13", default-features = false, features = ["http2", "rustls"] }
+schema = { path = "../schema" }
+schemars.workspace = true
+serde.workspace = true
+serde-saphyr = "2.1"
+serde_json.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+
+[dev-dependencies]
+axum = "0.8"
+proptest = "1"
+
+[lints]
+workspace = true

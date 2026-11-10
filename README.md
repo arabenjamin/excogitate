@@ -10,7 +10,7 @@ itself from evidence.
 ## Status
 
 **Pre-alpha: nothing here runs yet.** The interfaces are being built first
-(Phase 1: the schemas, the store port and its conformance suite so far). The
+(Phase 1: the schemas, the store port and the model port so far). The
 first usable release, Phase 2a, is a brain that can look something up on the
 web and remember it.
 Until then, expect everything to change, and don't depend on any interface.
@@ -63,8 +63,8 @@ Every variable starts with `EXCOGITATE_`. The reference will be in
 The plan has four layers: a store port (DuckDB by default), a model port
 (any OpenAI-wire endpoint), a dispatcher that validates every call, and the
 agents, workflows and Harness² on top. `docs/` describes each one as it is
-built: so far, [the store port](docs/store.md) and
-[schemas](docs/schemas.md).
+built: so far, [the store port](docs/store.md), [the model
+port](docs/models.md) and [schemas](docs/schemas.md).
 
 ## Writing a plugin
 
