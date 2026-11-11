@@ -69,6 +69,14 @@ fn check_files(files: &[DefinitionFile], runtime: &Runtime) -> Result<(), Defini
         check_agent(&parse::<Agent>(file)?, &tools).map_err(|problem| invalid(file, problem))?;
         agents.insert(file.name.clone());
     }
+    if let Some(front_door) = &runtime.config.front_door
+        && !agents.contains(front_door)
+    {
+        return Err(DefinitionError::Invalid {
+            name: "front_door".to_owned(),
+            problem: format!("the setting names the agent {front_door}, and there's no such file"),
+        });
+    }
     let mut workflows = BTreeMap::new();
     for file in of_kind(DefinitionKind::Workflow) {
         let workflow: Workflow = parse(file)?;

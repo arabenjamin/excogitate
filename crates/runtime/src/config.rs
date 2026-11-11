@@ -22,9 +22,17 @@ pub struct Config {
     /// The limits on each run. Spending defaults to zero, so a priced model
     /// is only used if this allows it.
     pub budget: Budget,
-    /// The instructions every chat starts with.
+    /// The instructions every chat starts with, unless `front_door` names
+    /// an agent.
     #[schemars(length(min = 1, max = 16_000))]
     pub system_prompt: String,
+    /// The agent that answers chats. Its instructions and its tools replace
+    /// `system_prompt` and the full tool list, and if it has `delegate`, the
+    /// agents it can hand work to are listed in its instructions. Without
+    /// it, a chat is offered every tool.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schemars(length(min = 1, max = 64))]
+    pub front_door: Option<String>,
     /// The longest each of the model's replies may be.
     #[schemars(range(min = 1, max = 1_000_000))]
     pub max_output_tokens: u32,
@@ -131,6 +139,7 @@ impl Default for Config {
                 max_duration_ms: 300_000,
             },
             system_prompt: DEFAULT_SYSTEM_PROMPT.to_owned(),
+            front_door: None,
             max_output_tokens: 2048,
             max_result_chars: 12_000,
             recall_limit: 3,

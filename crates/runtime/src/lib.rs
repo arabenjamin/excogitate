@@ -10,6 +10,7 @@ mod cli;
 mod config;
 mod connect;
 mod definitions;
+mod delegate;
 mod harness;
 mod http;
 mod jobs;

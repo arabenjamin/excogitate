@@ -425,6 +425,12 @@ impl Session {
         });
     }
 
+    /// Whether this run offers the tool named.
+    #[must_use]
+    pub fn offers(&self, tool: &str) -> bool {
+        self.offered.contains(tool)
+    }
+
     /// Makes a call on the harness's own initiative, with every check a
     /// model's call gets. The receipt says the model didn't ask for it.
     /// Returns `None`, and makes no call, if it would leave the model no tool
