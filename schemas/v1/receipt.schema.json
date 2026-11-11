@@ -328,6 +328,10 @@
   "additionalProperties": false,
   "description": "What a run did. It goes out with the answer.",
   "properties": {
+    "answer_cut_off": {
+      "description": "True if the answer was cut off at the output limit.",
+      "type": "boolean"
+    },
     "budget_hit": {
       "anyOf": [
         {
@@ -384,6 +388,7 @@
   "required": [
     "run",
     "outcome",
+    "answer_cut_off",
     "model_calls",
     "tool_calls",
     "calls_not_recorded",
