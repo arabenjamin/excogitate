@@ -10,7 +10,9 @@ use chrono::{DateTime, TimeZone, Utc};
 use serde_json::{Value, json};
 use store::{Definition, DefinitionKey, DefinitionKind, PageRequest, Store, WriteOp};
 use store_memory::MemoryStore;
-use work::{DefinitionFiles, Schedule, ScheduleError, Scheduler, StoreTransport, sync_schedules};
+use work::{
+    DefinitionError, Schedule, Scheduler, StoreTransport, read_definition_files, save_definitions,
+};
 
 fn at(hour: u32, minute: u32) -> DateTime<Utc> {
     Utc.with_ymd_and_hms(2027, 3, 10, hour, minute, 0).unwrap()
@@ -83,11 +85,11 @@ fn a_schedule_runs_in_its_own_time_zone() {
 #[test]
 fn bad_schedules_are_named() {
     let error = schedule("not cron").due_slot("s", at(1, 0)).unwrap_err();
-    assert!(matches!(error, ScheduleError::Cron { .. }), "{error}");
+    assert!(matches!(error, DefinitionError::Cron { .. }), "{error}");
     let mut zoned = schedule("0 8 * * *");
     zoned.timezone = Some("Mars/Olympus".to_owned());
     let error = zoned.due_slot("s", at(1, 0)).unwrap_err();
-    assert!(matches!(error, ScheduleError::Zone { .. }), "{error}");
+    assert!(matches!(error, DefinitionError::Zone { .. }), "{error}");
 }
 
 #[tokio::test]
@@ -166,18 +168,28 @@ impl Temp {
         std::fs::remove_file(self.0.join("schedules").join(name)).unwrap();
     }
 
-    fn files(&self) -> DefinitionFiles {
-        let payload = json!({
-            "type": "object",
-            "additionalProperties": false,
-            "required": ["message"],
-            "properties": { "message": { "type": "string", "maxLength": 100 } }
-        });
-        DefinitionFiles {
-            root: self.0.clone(),
-            payloads: BTreeMap::from([("chat".to_owned(), payload)]),
-        }
+    fn root(&self) -> &std::path::Path {
+        &self.0
     }
+}
+
+fn payloads() -> BTreeMap<String, Value> {
+    let payload = json!({
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["message"],
+        "properties": { "message": { "type": "string", "maxLength": 100 } }
+    });
+    BTreeMap::from([("chat".to_owned(), payload)])
+}
+
+/// What the brain does at startup: read, check everything, then save.
+async fn sync(store: &dyn Store, root: &std::path::Path) -> Result<usize, DefinitionError> {
+    let files = read_definition_files(root, &[(DefinitionKind::Schedule, "schedules")])?;
+    for file in &files {
+        Schedule::from_file(file, &payloads())?;
+    }
+    save_definitions(store, &files, &[DefinitionKind::Schedule], at(0, 0)).await
 }
 
 impl Drop for Temp {
@@ -214,12 +226,7 @@ async fn files_reach_the_store_and_say_where_they_came_from() {
     dir.write("morning.yaml", GOOD);
     dir.write("ignored.yaml.disabled", "this isn't read");
     let store = MemoryStore::new(3);
-    assert_eq!(
-        sync_schedules(&store, &dir.files(), at(0, 0))
-            .await
-            .unwrap(),
-        1
-    );
+    assert_eq!(sync(&store, dir.root()).await.unwrap(), 1);
     assert_eq!(
         names(&store).await,
         [(
@@ -234,14 +241,10 @@ async fn a_removed_file_removes_its_schedule_and_nothing_else() {
     let dir = Temp::new("remove");
     dir.write("morning.yaml", GOOD);
     let store = MemoryStore::new(3);
-    sync_schedules(&store, &dir.files(), at(0, 0))
-        .await
-        .unwrap();
+    sync(&store, dir.root()).await.unwrap();
     put(&store, "from_rest", &schedule("0 8 * * *"), "api").await;
     dir.remove("morning.yaml");
-    sync_schedules(&store, &dir.files(), at(0, 0))
-        .await
-        .unwrap();
+    sync(&store, dir.root()).await.unwrap();
     assert_eq!(
         names(&store).await,
         [("from_rest".to_owned(), "api".to_owned())]
@@ -250,12 +253,9 @@ async fn a_removed_file_removes_its_schedule_and_nothing_else() {
 
 #[tokio::test]
 async fn no_directory_means_no_schedules() {
-    let files = DefinitionFiles {
-        root: PathBuf::from("/nonexistent/place"),
-        payloads: BTreeMap::new(),
-    };
     let store = MemoryStore::new(3);
-    assert_eq!(sync_schedules(&store, &files, at(0, 0)).await.unwrap(), 0);
+    let root = PathBuf::from("/nonexistent/place");
+    assert_eq!(sync(&store, &root).await.unwrap(), 0);
 }
 
 async fn refused(text: &str) -> String {
@@ -263,9 +263,7 @@ async fn refused(text: &str) -> String {
     dir.write("good.yaml", GOOD);
     dir.write("bad.yaml", text);
     let store = MemoryStore::new(3);
-    let error = sync_schedules(&store, &dir.files(), at(0, 0))
-        .await
-        .unwrap_err();
+    let error = sync(&store, dir.root()).await.unwrap_err();
     assert_eq!(
         names(&store).await,
         [] as [(String, String); 0],
@@ -296,6 +294,20 @@ async fn a_bad_file_stops_the_sync_and_says_which() {
         let error = refused(text).await;
         assert!(error.contains(expected), "{expected}: {error}");
     }
+}
+
+#[tokio::test]
+async fn a_file_cant_take_the_name_of_something_from_elsewhere() {
+    let dir = Temp::new("homes");
+    dir.write("morning.yaml", GOOD);
+    let store = MemoryStore::new(3);
+    put(&store, "morning", &schedule("0 9 * * *"), "api").await;
+    let error = sync(&store, dir.root()).await.unwrap_err();
+    assert!(matches!(error, DefinitionError::TwoHomes { .. }), "{error}");
+    assert_eq!(
+        names(&store).await,
+        [("morning".to_owned(), "api".to_owned())]
+    );
 }
 
 #[test]

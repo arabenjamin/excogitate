@@ -11,6 +11,9 @@ recall_limit: 3
 # search finds nothing to use, and the model can still search for itself.
 recall_min_similarity: 0.6
 
+# The longest one workflow run may take, in seconds.
+workflow_time_limit_seconds: 1800
+
 # The limits on each run. Give all of them, or leave the whole block out.
 # max_usd_micros is 0, so a priced model isn't used until you raise it.
 budget:

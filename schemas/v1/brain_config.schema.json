@@ -350,6 +350,14 @@
       "maximum": 64,
       "minimum": 1,
       "type": "integer"
+    },
+    "workflow_time_limit_seconds": {
+      "default": 1800,
+      "description": "The longest one workflow run may take, in seconds.",
+      "format": "uint32",
+      "maximum": 86400,
+      "minimum": 1,
+      "type": "integer"
     }
   },
   "title": "BrainConfig",

@@ -1,7 +1,6 @@
 //! Schedules: a cron expression and the job to enqueue when it comes due.
 
-use std::collections::{BTreeMap, BTreeSet};
-use std::path::{Path, PathBuf};
+use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -14,18 +13,12 @@ use schema::{Validator, bounded};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use store::{
-    Definition, DefinitionKey, DefinitionKind, Job, JobId, JobStatus, PageRequest, Store,
-    StoreError, UnitOfWork, WriteOp,
-};
+use store::{Definition, DefinitionKind, Job, JobId, JobStatus, Store, StoreError};
 use tokio::sync::watch;
 use uuid::Uuid;
 
-use crate::{Enqueued, JobTransport};
-
-/// Marks a definition as coming from a file, so it can be removed with it.
-const FILE_SOURCE: &str = "file:";
-const PAGE_SIZE: u32 = 200;
+use crate::definitions::{DefinitionFile, list_definitions};
+use crate::{DefinitionError, Enqueued, JobTransport};
 
 fn one() -> u32 {
     1
@@ -74,64 +67,20 @@ pub struct Schedule {
     pub enabled: bool,
 }
 
-/// A schedule that can't be used.
-#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
-#[non_exhaustive]
-pub enum ScheduleError {
-    /// The cron expression isn't valid.
-    #[error("{name}: not a valid cron expression: {problem}")]
-    Cron {
-        /// The schedule.
-        name: String,
-        /// What's wrong.
-        problem: String,
-    },
-    /// The time zone isn't known.
-    #[error("{name}: unknown time zone {zone}")]
-    Zone {
-        /// The schedule.
-        name: String,
-        /// The zone.
-        zone: String,
-    },
-    /// It names a kind of job no handler runs.
-    #[error("{name}: no handler for job kind {kind}")]
-    UnknownKind {
-        /// The schedule.
-        name: String,
-        /// The kind.
-        kind: String,
-    },
-    /// The file or the payload doesn't meet its schema.
-    #[error("{name}: {problem}")]
-    Invalid {
-        /// The schedule.
-        name: String,
-        /// What's wrong.
-        problem: String,
-    },
-    /// A file couldn't be read.
-    #[error("{0}")]
-    File(String),
-    /// The store failed.
-    #[error(transparent)]
-    Store(#[from] StoreError),
-}
-
-fn parse_cron(name: &str, expression: &str) -> Result<Cron, ScheduleError> {
+fn parse_cron(name: &str, expression: &str) -> Result<Cron, DefinitionError> {
     CronParser::builder()
         .seconds(Seconds::Optional)
         .build()
         .parse(expression)
-        .map_err(|error| ScheduleError::Cron {
+        .map_err(|error| DefinitionError::Cron {
             name: name.to_owned(),
             problem: bounded(&error.to_string()),
         })
 }
 
-fn parse_zone(name: &str, zone: Option<&str>) -> Result<Tz, ScheduleError> {
+fn parse_zone(name: &str, zone: Option<&str>) -> Result<Tz, DefinitionError> {
     zone.map_or(Ok(Tz::UTC), |zone| {
-        zone.parse().map_err(|_| ScheduleError::Zone {
+        zone.parse().map_err(|_| DefinitionError::Zone {
             name: name.to_owned(),
             zone: zone.to_owned(),
         })
@@ -139,17 +88,52 @@ fn parse_zone(name: &str, zone: Option<&str>) -> Result<Tz, ScheduleError> {
 }
 
 impl Schedule {
+    /// A schedule from its file, checked: its shape, its cron and zone, and
+    /// that the job kind exists and its payload fits. `payloads` holds each
+    /// job kind's payload schema.
+    ///
+    /// # Errors
+    ///
+    /// [`DefinitionError`] naming the schedule and what's wrong with it.
+    pub fn from_file(
+        file: &DefinitionFile,
+        payloads: &BTreeMap<String, Value>,
+    ) -> Result<Self, DefinitionError> {
+        let name = file.name.as_str();
+        let invalid = |problem: String| DefinitionError::Invalid {
+            name: name.to_owned(),
+            problem: bounded(&problem),
+        };
+        let validator = Validator::for_type::<Self>().map_err(|e| invalid(e.to_string()))?;
+        let schedule: Self = validator
+            .parse(file.body.clone())
+            .map_err(|refusal| invalid(format!("{}: {refusal}", file.path.display())))?;
+        parse_cron(name, &schedule.cron)?;
+        parse_zone(name, schedule.timezone.as_deref())?;
+        let Some(payload) = payloads.get(&schedule.kind) else {
+            return Err(DefinitionError::UnknownKind {
+                name: name.to_owned(),
+                kind: schedule.kind,
+            });
+        };
+        Validator::from_schema(payload)
+            .map_err(|error| invalid(error.to_string()))?
+            .check(&schedule.payload)
+            .map_err(|refusal| invalid(format!("its payload: {refusal}")))?;
+        Ok(schedule)
+    }
+
     /// The firing to make at `now`: the latest slot not past `now`, if it's
     /// within the catch-up window.
     ///
     /// # Errors
     ///
-    /// [`ScheduleError`] if the expression or the zone isn't valid.
+    /// [`DefinitionError`] if the expression or the zone isn't valid.
     pub fn due_slot(
         &self,
         name: &str,
         now: DateTime<Utc>,
-    ) -> Result<Option<DateTime<Utc>>, ScheduleError> {
+    ) -> Result<Option<DateTime<Utc>>, DefinitionError> {
         let cron = parse_cron(name, &self.cron)?;
         let zone = parse_zone(name, self.timezone.as_deref())?;
         let Ok(slot) = cron.find_previous_occurrence(&now.with_timezone(&zone), true) else {
@@ -166,25 +150,6 @@ impl Schedule {
 fn firing_id(name: &str, slot: DateTime<Utc>) -> JobId {
     let key = format!("{name}|{}", slot.to_rfc3339());
     JobId::from_uuid(Uuid::new_v5(&Uuid::NAMESPACE_OID, key.as_bytes()))
-}
-
-async fn list_schedules(store: &dyn Store) -> Result<Vec<Definition>, StoreError> {
-    let mut found = Vec::new();
-    let mut offset = 0;
-    loop {
-        let page = store
-            .list_definitions(
-                DefinitionKind::Schedule,
-                PageRequest::new(PAGE_SIZE, offset)?,
-            )
-            .await?;
-        let got = u32::try_from(page.items.len()).unwrap_or(u32::MAX);
-        found.extend(page.items);
-        if !page.has_more || got == 0 {
-            return Ok(found);
-        }
-        offset = offset.saturating_add(got);
-    }
 }
 
 /// Enqueues jobs as their schedules come due.
@@ -209,7 +174,7 @@ impl Scheduler {
     /// [`StoreError`] if the schedules can't be read.
     pub async fn tick(&self, now: DateTime<Utc>) -> Result<Vec<String>, StoreError> {
         let mut fired = Vec::new();
-        for definition in list_schedules(self.store.as_ref()).await? {
+        for definition in list_definitions(self.store.as_ref(), DefinitionKind::Schedule).await? {
             let name = definition.key.name.clone();
             match self.fire(&definition, now).await {
                 Ok(true) => fired.push(name),
@@ -224,11 +189,11 @@ impl Scheduler {
         &self,
         definition: &Definition,
         now: DateTime<Utc>,
-    ) -> Result<bool, ScheduleError> {
+    ) -> Result<bool, DefinitionError> {
         let name = &definition.key.name;
         let schedule: Schedule =
             serde_json::from_value(definition.body.clone()).map_err(|error| {
-                ScheduleError::Invalid {
+                DefinitionError::Invalid {
                     name: name.clone(),
                     problem: bounded(&error.to_string()),
                 }
@@ -266,106 +231,4 @@ impl Scheduler {
             let _ = tokio::time::timeout(interval, shutdown.changed()).await;
         }
     }
-}
-
-/// Where schedule files are, and the payload schema of each job kind.
-#[derive(Debug, Clone)]
-pub struct DefinitionFiles {
-    /// The directory holding `schedules/*.yaml`. It's fine if it's missing.
-    pub root: PathBuf,
-    /// Each job kind's payload schema.
-    pub payloads: BTreeMap<String, Value>,
-}
-
-fn file_problem(path: &Path, problem: impl std::fmt::Display) -> ScheduleError {
-    ScheduleError::File(bounded(&format!("{}: {problem}", path.display())))
-}
-
-fn name_of(path: &Path) -> Option<String> {
-    let stem = path.file_stem()?.to_str()?;
-    let good = !stem.is_empty()
-        && stem.len() <= 64
-        && stem
-            .chars()
-            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_' || c == '-');
-    good.then(|| stem.to_owned())
-}
-
-fn check(name: &str, schedule: &Schedule, files: &DefinitionFiles) -> Result<(), ScheduleError> {
-    parse_cron(name, &schedule.cron)?;
-    parse_zone(name, schedule.timezone.as_deref())?;
-    let invalid = |problem: String| ScheduleError::Invalid {
-        name: name.to_owned(),
-        problem: bounded(&problem),
-    };
-    let Some(payload) = files.payloads.get(&schedule.kind) else {
-        return Err(ScheduleError::UnknownKind {
-            name: name.to_owned(),
-            kind: schedule.kind.clone(),
-        });
-    };
-    Validator::from_schema(payload)
-        .map_err(|error| invalid(error.to_string()))?
-        .check(&schedule.payload)
-        .map_err(|refusal| invalid(format!("its payload: {refusal}")))
-}
-
-fn read_schedule(path: &Path) -> Result<Value, ScheduleError> {
-    let text = std::fs::read_to_string(path).map_err(|error| file_problem(path, error))?;
-    let raw: Value = serde_saphyr::from_str(&text).map_err(|error| file_problem(path, error))?;
-    let validator = Validator::for_type::<Schedule>().map_err(|error| file_problem(path, error))?;
-    validator
-        .check(&raw)
-        .map_err(|refusal| file_problem(path, refusal))?;
-    Ok(raw)
-}
-
-/// Makes the store's file-backed schedules match the files, so each has one
-/// home. A file that's gone removes its schedule. Anything wrong with any
-/// file stops the sync, before anything is written.
-///
-/// # Errors
-///
-/// [`ScheduleError`] naming the file and what's wrong with it.
-pub async fn sync_schedules(
-    store: &dyn Store,
-    files: &DefinitionFiles,
-    now: DateTime<Utc>,
-) -> Result<usize, ScheduleError> {
-    let directory = files.root.join("schedules");
-    let mut unit = UnitOfWork::new();
-    let mut present = BTreeSet::new();
-    if directory.is_dir() {
-        let entries = std::fs::read_dir(&directory).map_err(|e| file_problem(&directory, e))?;
-        for entry in entries {
-            let path = entry.map_err(|e| file_problem(&directory, e))?.path();
-            if path.extension().and_then(|e| e.to_str()) != Some("yaml") {
-                continue;
-            }
-            let name = name_of(&path).ok_or_else(|| {
-                file_problem(&path, "a name is lowercase letters, digits, - and _")
-            })?;
-            let body = read_schedule(&path)?;
-            let schedule: Schedule =
-                serde_json::from_value(body.clone()).map_err(|error| file_problem(&path, error))?;
-            check(&name, &schedule, files)?;
-            unit = unit.with(WriteOp::PutDefinition(Definition {
-                key: DefinitionKey {
-                    kind: DefinitionKind::Schedule,
-                    name: name.clone(),
-                },
-                body,
-                source: format!("{FILE_SOURCE}schedules/{name}.yaml"),
-                updated_at: now,
-            }));
-            present.insert(name);
-        }
-    }
-    for existing in list_schedules(store).await? {
-        if existing.source.starts_with(FILE_SOURCE) && !present.contains(&existing.key.name) {
-            unit = unit.with(WriteOp::DeleteDefinition(existing.key));
-        }
-    }
-    store.apply(unit).await?;
-    Ok(present.len())
 }

@@ -28,6 +28,7 @@ thiserror.workspace = true
 tokio = { workspace = true, features = ["signal"] }
 tools = { path = "../tools" }
 work = { path = "../work" }
+workflow = { path = "../workflow" }
 
 [dev-dependencies]
 axum.workspace = true

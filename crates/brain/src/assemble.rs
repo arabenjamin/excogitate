@@ -1,6 +1,7 @@
 //! Builds the brain from its parts.
 
 use std::sync::Arc;
+use std::time::Duration;
 
 use dispatch::ToolRegistry;
 use events::EventSink;
@@ -9,6 +10,7 @@ use model::{Capability, Catalog, Gateway, OpenAiClient};
 use plugin_api::Tool;
 use store::Store;
 use tools::{HttpConfigError, HttpRequestTool, MemoryTool};
+use workflow::{Engine, EngineLimits};
 
 use crate::BrainConfig;
 use crate::ledger::StoreLedger;
@@ -39,6 +41,7 @@ pub struct Brain {
     pub(crate) gateway: Arc<Gateway>,
     pub(crate) sink: Arc<dyn EventSink>,
     pub(crate) config: Arc<BrainConfig>,
+    pub(crate) workflows: Engine,
 }
 
 /// The width of the vectors, if the catalog has an embedding model.
@@ -79,14 +82,28 @@ impl Brain {
                 EMBEDDING_PURPOSE,
             )) as Arc<dyn Embedder>
         });
-        let memory = Memory::new(store, embedder, ChunkConfig::default());
+        let memory = Memory::new(Arc::clone(&store), embedder, ChunkConfig::default());
         let mut registry = ToolRegistry::new();
         registry.register(Arc::new(MemoryTool::new(memory)))?;
         registry.register(Arc::new(HttpRequestTool::new(&config.http, secret_of)?))?;
+        let registry = Arc::new(registry);
+        let workflows = Engine {
+            registry: Arc::clone(&registry),
+            gateway: Arc::clone(&gateway),
+            sink: Arc::clone(&sink),
+            store,
+            limits: EngineLimits {
+                agent_budget: config.budget,
+                agent_result_chars: config.max_result_chars,
+                agent_output_tokens: config.max_output_tokens,
+                time_limit: Duration::from_secs(u64::from(config.workflow_time_limit_seconds)),
+            },
+        };
         Ok(Self {
-            registry: Arc::new(registry),
+            registry,
             gateway,
             sink,
+            workflows,
             config: Arc::new(config),
         })
     }

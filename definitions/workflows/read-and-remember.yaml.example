@@ -1,0 +1,28 @@
+# Copy to a .yaml file in this directory to turn it on, along with the
+# summarizer agent. The file's name is the workflow's name.
+description: Reads a page, summarizes it, and stores the summary.
+inputs:
+  type: object
+  additionalProperties: false
+  required: [url]
+  properties:
+    url: {type: string, maxLength: 2048}
+steps:
+  - type: tool
+    id: fetch
+    tool: http_request
+    arguments: {url: "{{inputs.url}}"}
+  - type: agent
+    id: summary
+    agent: summarizer
+    message: Summarize the page at {{inputs.url}}.
+    # What an earlier step found goes here, marked as data, never in message.
+    context: "{{steps.fetch.result.body}}"
+  - type: tool
+    id: store
+    tool: memory
+    arguments:
+      operation: store
+      text: "{{steps.summary.answer}}"
+      source_url: "{{inputs.url}}"
+output: "{{steps.summary.answer}}"
