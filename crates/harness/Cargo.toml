@@ -1,0 +1,34 @@
+[package]
+name = "harness"
+description = "Harness²: the system improves its own agents from evidence."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[dependencies]
+chrono.workspace = true
+dispatch = { path = "../dispatch" }
+events = { path = "../events" }
+model = { path = "../model" }
+protocol = { path = "../protocol" }
+schema = { path = "../schema" }
+schemars.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+store = { path = "../store" }
+thiserror.workspace = true
+workflow = { path = "../workflow" }
+
+[dev-dependencies]
+async-trait.workspace = true
+chaos-model = { path = "../chaos-model" }
+plugin-api = { path = "../plugin-api" }
+proptest.workspace = true
+store-memory = { path = "../store-memory" }
+tokio.workspace = true
+
+[lints]
+workspace = true

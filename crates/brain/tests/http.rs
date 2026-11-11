@@ -40,7 +40,7 @@ async fn start(name: &str, script: Vec<ChaosStep>, config: BrainConfig) -> Runni
     let model = ChaosServer::start(script).await.unwrap();
     let yaml = format!(
         "version: 1\nproviders:\n  - {{name: c, base_url: '{}', no_log: true, timeout_secs: 10}}\n\
-         models:\n  - {{name: c, provider: c, wire_model: x, capabilities: [chat, tools], context_tokens: 1000000, max_output_tokens: 100}}\n",
+         models:\n  - {{name: c, provider: c, wire_model: x, capabilities: [chat, tools, investigative], context_tokens: 1000000, max_output_tokens: 4000}}\n",
         model.base_url
     );
     let store = Arc::new(MemoryStore::new(3));
@@ -862,4 +862,117 @@ async fn bad_run_queries_are_refused() {
     }
     let missing = "/api/v1/runs/00000000-0000-0000-0000-000000000000";
     assert_eq!(running.get(missing).await.status(), StatusCode::NOT_FOUND);
+}
+
+// Harness².
+
+fn judged(value: &Value) -> ChaosStep {
+    ChaosStep::Text(value.to_string())
+}
+
+#[tokio::test]
+async fn an_attempt_started_over_rest_is_kept_and_can_be_read() {
+    let script = vec![
+        ChaosStep::Text("I don't know.".to_owned()),
+        judged(&json!({
+            "invariant": { "system_prompt": "You help. Work it out before you answer.",
+                           "change": "Work it out.",
+                           "cites": [{ "run": "R", "step": 3, "quote": "I don't know" }] },
+            "domain": { "system_prompt": "You help.", "change": "Nothing.", "cites": [] }
+        })),
+        ChaosStep::Text("It is 42.".to_owned()),
+        judged(&json!({
+            "verdicts": [{ "candidate": "A", "effect": "mitigated",
+                           "cite": { "run": "A", "step": 3, "quote": "It is 42." } }],
+            "decision": "adopt", "choose": "A", "merged": null, "reason": "A answered."
+        })),
+    ];
+    let running = with_workflow("attempt", script).await;
+    let request = json!({ "agent": "helper", "task": "What is six times seven?", "why": null });
+    let response = running.post("/api/v1/harness/attempts", &request).await;
+    assert_eq!(response.status(), StatusCode::ACCEPTED);
+    let job = body_of(response).await["job_id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let done = running.work_off(&job).await;
+    assert_eq!(done["status"], "succeeded", "{done}");
+    let id = done["result"]["attempt_id"].as_str().unwrap().to_owned();
+
+    let kept = body_of(running.get(&format!("/api/v1/harness/attempts/{id}")).await).await;
+    assert_eq!(kept["attempt"]["status"], "supported", "{kept}");
+    assert_eq!(kept["attempt"]["chosen"], "A");
+    Validator::from_schema(&schema::schema_of::<brain::AttemptView>())
+        .unwrap()
+        .check(&kept)
+        .unwrap();
+    // The probes are runs of their own, kept apart from the agent's.
+    let probes = body_of(running.get("/api/v1/runs?agent=probe:helper").await).await;
+    assert_eq!(probes["items"].as_array().unwrap().len(), 2, "{probes}");
+    let real = body_of(running.get("/api/v1/runs?agent=agent:helper").await).await;
+    assert_eq!(real["items"], json!([]));
+
+    let supported = body_of(
+        running
+            .get("/api/v1/harness/attempts?status=supported")
+            .await,
+    )
+    .await;
+    assert_eq!(supported["items"].as_array().unwrap().len(), 1);
+    let failed = body_of(running.get("/api/v1/harness/attempts?status=failed").await).await;
+    assert_eq!(failed["items"], json!([]));
+}
+
+#[tokio::test]
+async fn a_bad_attempt_request_is_refused_before_it_queues() {
+    let running = with_workflow("attempt-bad", vec![]).await;
+    let ghost = json!({ "agent": "ghost", "task": "Anything." });
+    assert_eq!(
+        running
+            .post("/api/v1/harness/attempts", &ghost)
+            .await
+            .status(),
+        StatusCode::NOT_FOUND
+    );
+    let extra = json!({ "agent": "helper", "task": "Anything.", "adopt": true });
+    assert_eq!(
+        running
+            .post("/api/v1/harness/attempts", &extra)
+            .await
+            .status(),
+        StatusCode::BAD_REQUEST
+    );
+    for path in [
+        "/api/v1/harness/attempts?status=great",
+        "/api/v1/harness/attempts?limit=0",
+        "/api/v1/harness/attempts/not-a-uuid",
+    ] {
+        assert_eq!(
+            running.get(path).await.status(),
+            StatusCode::BAD_REQUEST,
+            "{path}"
+        );
+    }
+    let jobs = body_of(running.get("/api/v1/jobs").await).await;
+    assert_eq!(jobs["items"], json!([]));
+}
+
+#[test]
+fn a_probe_read_that_isnt_a_tool_stops_the_brain_starting() {
+    let config = BrainConfig {
+        harness: brain::HarnessConfig {
+            probe_reads: vec!["ghost".to_owned()],
+            ..brain::HarnessConfig::default()
+        },
+        ..BrainConfig::default()
+    };
+    let error = Brain::assemble(
+        Arc::new(MemoryStore::new(3)),
+        Arc::new(MemorySink::new()),
+        Catalog::from_yaml("version: 1\nproviders: []\nmodels: []\n", |_| None).unwrap(),
+        config,
+        &|_| None,
+    )
+    .unwrap_err();
+    assert!(error.to_string().contains("ghost"), "{error}");
 }

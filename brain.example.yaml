@@ -36,3 +36,12 @@ budget:
 #   max_concurrent_requests: 8
 #   # Browser origins allowed to call it. Others are refused.
 #   allowed_origins: []
+
+# harness:
+#   # Tools a Harness² probe really runs, for their reads only. Writes never run.
+#   probe_reads: [memory]
+#   # What the judges may spend on one attempt. They need a model marked
+#   # investigative in models.yaml.
+#   judge_usd_micros: 0
+#   judge_output_tokens: 4000
+#   time_limit_seconds: 1800

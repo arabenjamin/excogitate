@@ -7,6 +7,7 @@ mod assemble;
 mod config;
 mod connect;
 mod definitions;
+mod harness;
 mod http;
 mod jobs;
 mod ledger;
@@ -14,11 +15,11 @@ mod mcp;
 mod run;
 
 pub use assemble::{Brain, BrainError};
-pub use config::{BrainConfig, ConfigError, ServerConfig};
+pub use config::{BrainConfig, ConfigError, HarnessConfig, ServerConfig};
 pub use connect::relay;
 pub use http::{
-    ApiError, DefinitionList, DefinitionView, HttpError, JobList, JobStatusView, JobView,
-    OpenAiRequest, RunList, RunRequest, RunStarted, RunView,
+    ApiError, AttemptList, AttemptView, DefinitionList, DefinitionView, HttpError, JobList,
+    JobStatusView, JobView, OpenAiRequest, RunList, RunRequest, RunStarted, RunView,
 };
 pub use jobs::WorkflowArgs;
 pub use mcp::{ChatArgs, ChatReply, ToolEnvelope};

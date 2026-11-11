@@ -464,6 +464,15 @@ impl Engine {
         }
     }
 
+    /// The agent defined as `name`, if there is one.
+    ///
+    /// # Errors
+    ///
+    /// [`WorkflowError`] if the store fails or the definition doesn't parse.
+    pub async fn agent(&self, name: &str) -> Result<Option<Agent>, WorkflowError> {
+        self.definition(DefinitionKind::Agent, name).await
+    }
+
     /// What decides how `agent` behaves, for its harness id. What a workflow
     /// has left changes from run to run, so it's the agent's own limits, not
     /// what this run got.

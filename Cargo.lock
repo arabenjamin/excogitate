@@ -460,6 +460,7 @@ dependencies = [
  "dispatch",
  "events",
  "futures-util",
+ "harness",
  "memory",
  "model",
  "plugin-api",
@@ -1141,6 +1142,30 @@ dependencies = [
  "crunchy",
  "num-traits",
  "zerocopy",
+]
+
+[[package]]
+name = "harness"
+version = "0.2.0"
+dependencies = [
+ "async-trait",
+ "chaos-model",
+ "chrono",
+ "dispatch",
+ "events",
+ "model",
+ "plugin-api",
+ "proptest",
+ "protocol",
+ "schema",
+ "schemars",
+ "serde",
+ "serde_json",
+ "store",
+ "store-memory",
+ "thiserror",
+ "tokio",
+ "workflow",
 ]
 
 [[package]]
@@ -2533,6 +2558,7 @@ version = "0.2.0"
 dependencies = [
  "brain",
  "dispatch",
+ "harness",
  "model",
  "plugin-api",
  "plugin-host",

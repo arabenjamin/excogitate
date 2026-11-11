@@ -2,6 +2,7 @@
 //! all behind the owner key. Everything is checked against its schema before
 //! it's used.
 
+mod harness;
 mod mcp;
 mod openai;
 mod rest;
@@ -32,6 +33,7 @@ use work::{JobTransport, StoreTransport};
 
 use crate::Brain;
 
+pub use harness::{AttemptList, AttemptView};
 pub use openai::OpenAiRequest;
 pub use rest::{
     DefinitionList, DefinitionView, JobList, JobStatusView, JobView, RunRequest, RunStarted,
@@ -127,7 +129,7 @@ impl ApiError {
         )
     }
 
-    fn refused(refusal: &Refusal) -> Self {
+    pub(super) fn refused(refusal: &Refusal) -> Self {
         let mut error = Self::invalid("the request doesn't meet its schema");
         error.problems = refusal
             .problems
@@ -181,6 +183,7 @@ pub(super) struct App {
     origins: Arc<BTreeSet<String>>,
     run_request: Arc<Validator>,
     openai_request: Arc<Validator>,
+    improve_request: Arc<Validator>,
 }
 
 impl App {
@@ -316,12 +319,14 @@ impl Brain {
             origins: Arc::new(self.config.server.allowed_origins.iter().cloned().collect()),
             run_request: validator::<RunRequest>()?,
             openai_request: validator::<OpenAiRequest>()?,
+            improve_request: validator::<::harness::Request>()?,
         };
         let guarded = Router::new()
             .merge(mcp::routes())
             .merge(openai::routes())
             .merge(rest::routes())
             .merge(runs::routes())
+            .merge(harness::routes())
             .fallback(nowhere)
             .layer(middleware::from_fn_with_state(app.clone(), guard));
         Ok(Router::new()
