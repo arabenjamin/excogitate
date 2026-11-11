@@ -182,7 +182,7 @@ pub struct Job {
     pub lease: Option<Lease>,
     /// Why the last attempt failed.
     pub last_error: Option<String>,
-    /// What it produced, once it succeeded.
+    /// What it produced, or what its last failed attempt left behind.
     pub result: Option<Value>,
 }
 

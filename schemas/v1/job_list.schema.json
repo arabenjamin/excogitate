@@ -1,0 +1,127 @@
+{
+  "$defs": {
+    "JobStatusView": {
+      "description": "Where a job stands.",
+      "oneOf": [
+        {
+          "const": "queued",
+          "description": "Waiting to run.",
+          "type": "string"
+        },
+        {
+          "const": "claimed",
+          "description": "Running.",
+          "type": "string"
+        },
+        {
+          "const": "succeeded",
+          "description": "It finished.",
+          "type": "string"
+        },
+        {
+          "const": "dead",
+          "description": "It failed and has no attempts left.",
+          "type": "string"
+        }
+      ]
+    },
+    "JobView": {
+      "additionalProperties": false,
+      "description": "A job, as the API shows it.",
+      "properties": {
+        "attempts": {
+          "description": "How many times it has been claimed.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "id": {
+          "description": "Its id.",
+          "maxLength": 36,
+          "type": "string"
+        },
+        "kind": {
+          "description": "What kind of work it is.",
+          "maxLength": 64,
+          "type": "string"
+        },
+        "last_error": {
+          "description": "Why the last attempt failed.",
+          "maxLength": 2048,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "max_attempts": {
+          "description": "How many claims it may have.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "payload": {
+          "description": "Its input.",
+          "x-extension": "the job kind's own payload"
+        },
+        "priority": {
+          "description": "Higher runs first.",
+          "format": "int32",
+          "type": "integer"
+        },
+        "requested_by": {
+          "description": "Who asked for it.",
+          "maxLength": 256,
+          "type": "string"
+        },
+        "result": {
+          "description": "What it produced, or what a failed attempt left behind.",
+          "x-extension": "the job kind's own result"
+        },
+        "run_at": {
+          "description": "The earliest it may run.",
+          "format": "date-time",
+          "type": "string"
+        },
+        "status": {
+          "$ref": "#/$defs/JobStatusView",
+          "description": "Where it stands."
+        }
+      },
+      "required": [
+        "id",
+        "kind",
+        "payload",
+        "priority",
+        "status",
+        "requested_by",
+        "run_at",
+        "attempts",
+        "max_attempts"
+      ],
+      "type": "object"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "One page of jobs, newest first.",
+  "properties": {
+    "has_more": {
+      "description": "True if there are more past this page.",
+      "type": "boolean"
+    },
+    "items": {
+      "description": "The jobs.",
+      "items": {
+        "$ref": "#/$defs/JobView"
+      },
+      "maxItems": 200,
+      "type": "array"
+    }
+  },
+  "required": [
+    "items",
+    "has_more"
+  ],
+  "title": "JobList",
+  "type": "object"
+}

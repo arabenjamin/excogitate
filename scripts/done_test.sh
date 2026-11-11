@@ -108,5 +108,36 @@ check "the hostile script really was hostile" "$chaos" \
 check "and some runs were stopped" "$chaos" \
   "$replies | map(.receipt.outcome) | (index(\"model_failed\") != null) or (index(\"budget_hit\") != null)"
 
+# The server shares the store with the sessions above, so it goes last.
+export BRAIN_PORT=18473
+key=done-test-owner-key-of-sufficient-length
+base="http://127.0.0.1:$BRAIN_PORT"
+compose up --detach --no-deps server
+for ((try = 1; try <= 60; try++)); do
+  curl --silent --fail "$base/health" >/dev/null 2>&1 && break
+  [[ $try != 60 ]] || fail "the server never came up"
+  sleep 1
+done
+ok "the server starts and reports healthy"
+
+api() { curl --silent --header "authorization: Bearer $key" --header 'content-type: application/json' "$@"; }
+
+unauthorized=$(curl --silent --output /dev/null --write-out '%{http_code}' "$base/v1/models")
+[[ $unauthorized == 401 ]] || fail "the API answered without the key ($unauthorized)"
+ok "nothing but health answers without the key"
+
+over_http="$work/over_http"
+api "$base/mcp" -d "$(call 1 memory '{"operation":"search","query":"otters"}')" >"$over_http"
+check "MCP over HTTP reaches what the earlier sessions stored" "$over_http" \
+  '.[0].result.structuredContent.result.hits[0].text | contains("hold hands")'
+
+jobs="$work/jobs"
+api "$base/api/v1/jobs" >"$jobs"
+check "the REST API answers" "$jobs" '.[0].items == [] and .[0].has_more == false'
+
+models="$work/models"
+api "$base/v1/models" >"$models"
+check "the front door lists its model" "$models" '.[0].data[0].id == "brain"'
+
 passed=1
 echo "The done-test passed."

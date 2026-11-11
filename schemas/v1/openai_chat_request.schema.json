@@ -1,0 +1,182 @@
+{
+  "$defs": {
+    "WireContent": {
+      "anyOf": [
+        {
+          "description": "Plain text.",
+          "maxLength": 1000000,
+          "type": "string"
+        },
+        {
+          "description": "A list of parts.",
+          "items": {
+            "$ref": "#/$defs/WirePart"
+          },
+          "maxItems": 64,
+          "type": "array"
+        }
+      ],
+      "description": "A message's content."
+    },
+    "WireMessage": {
+      "description": "One message from a client.",
+      "properties": {
+        "content": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/WireContent"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "What it says."
+        },
+        "role": {
+          "$ref": "#/$defs/WireRole",
+          "description": "Who wrote it."
+        },
+        "tool_calls": {
+          "description": "Refused if it holds anything: this server runs its own tools.",
+          "x-extension": "refused unless empty"
+        }
+      },
+      "required": [
+        "role"
+      ],
+      "type": "object"
+    },
+    "WirePart": {
+      "description": "One part of a message's content.",
+      "properties": {
+        "text": {
+          "description": "The text.",
+          "maxLength": 1000000,
+          "type": "string"
+        },
+        "type": {
+          "description": "Only text is accepted.",
+          "maxLength": 8,
+          "pattern": "^text$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "text"
+      ],
+      "type": "object"
+    },
+    "WireRole": {
+      "description": "Who wrote a message.",
+      "oneOf": [
+        {
+          "const": "system",
+          "description": "Instructions.",
+          "type": "string"
+        },
+        {
+          "const": "developer",
+          "description": "Instructions, under the newer name.",
+          "type": "string"
+        },
+        {
+          "const": "user",
+          "description": "The person.",
+          "type": "string"
+        },
+        {
+          "const": "assistant",
+          "description": "The model.",
+          "type": "string"
+        },
+        {
+          "const": "tool",
+          "description": "A tool's result, which this server refuses: its tools are its own.",
+          "type": "string"
+        }
+      ]
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "What an `OpenAI` client sends. Being someone else's format, fields it\ndoesn't use are ignored. Any that would change the meaning of the reply are\nread, so they can be refused rather than quietly ignored.",
+  "properties": {
+    "max_completion_tokens": {
+      "description": "The same, under the newer name.",
+      "format": "uint32",
+      "maximum": 1000000,
+      "minimum": 1,
+      "type": [
+        "integer",
+        "null"
+      ]
+    },
+    "max_tokens": {
+      "description": "The longest each reply may be. The server's own limit still applies.",
+      "format": "uint32",
+      "maximum": 1000000,
+      "minimum": 1,
+      "type": [
+        "integer",
+        "null"
+      ]
+    },
+    "messages": {
+      "description": "The conversation so far, ending with the user.",
+      "items": {
+        "$ref": "#/$defs/WireMessage"
+      },
+      "maxItems": 512,
+      "minItems": 1,
+      "type": "array"
+    },
+    "model": {
+      "description": "Must be the model `/v1/models` lists.",
+      "maxLength": 256,
+      "minLength": 1,
+      "type": "string"
+    },
+    "n": {
+      "description": "How many replies. Only 1.",
+      "format": "uint32",
+      "maximum": 1,
+      "minimum": 1,
+      "type": [
+        "integer",
+        "null"
+      ]
+    },
+    "response_format": {
+      "description": "Refused unless it asks for plain text.",
+      "x-extension": "only {\"type\": \"text\"} is accepted"
+    },
+    "stream": {
+      "description": "Send the reply as server-sent events.",
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "temperature": {
+      "description": "Sampling temperature.",
+      "format": "float",
+      "maximum": 2.0,
+      "minimum": 0.0,
+      "type": [
+        "number",
+        "null"
+      ]
+    },
+    "tools": {
+      "description": "Refused if it holds anything: this server runs its own tools.",
+      "x-extension": "refused unless empty"
+    }
+  },
+  "required": [
+    "model",
+    "messages"
+  ],
+  "title": "OpenAiRequest",
+  "type": "object",
+  "x-extension": "a client's other fields are ignored"
+}

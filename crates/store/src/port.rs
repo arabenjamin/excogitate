@@ -146,8 +146,8 @@ pub trait JobQueue {
     /// [`StoreError::Conflict`] if `worker` doesn't hold it.
     async fn complete_job(&self, id: JobId, worker: &str, result: Value) -> Result<(), StoreError>;
 
-    /// Records a failed attempt. The job runs again at `retry_at`, or goes
-    /// dead if it's out of attempts.
+    /// Records a failed attempt, and what it left behind, if anything. The
+    /// job runs again at `retry_at`, or goes dead if it's out of attempts.
     ///
     /// # Errors
     ///
@@ -158,6 +158,7 @@ pub trait JobQueue {
         id: JobId,
         worker: &str,
         error: &str,
+        result: Option<Value>,
         retry_at: DateTime<Utc>,
     ) -> Result<(), StoreError>;
 }

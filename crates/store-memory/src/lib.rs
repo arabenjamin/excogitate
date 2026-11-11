@@ -498,12 +498,14 @@ impl JobQueue for MemoryStore {
         id: JobId,
         worker: &str,
         error: &str,
+        result: Option<Value>,
         retry_at: DateTime<Utc>,
     ) -> Result<(), StoreError> {
         let mut state = self.state();
         let job = state.held_job(id, worker)?;
         job.lease = None;
         job.last_error = Some(error.to_owned());
+        job.result = result;
         if job.attempts >= job.max_attempts {
             job.status = JobStatus::Dead;
         } else {

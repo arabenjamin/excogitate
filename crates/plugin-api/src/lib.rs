@@ -18,7 +18,7 @@ pub use capability::{
     RecordsCapability,
 };
 pub use manifest::{API_VERSION, ManifestError, PluginCapability, PluginManifest, ToolManifest};
-pub use serve::{MAX_LINE_BYTES, MCP_VERSION, read_line, serve, serve_stdio};
+pub use serve::{MAX_LINE_BYTES, MCP_VERSION, McpHandler, read_line, serve, serve_stdio};
 pub use tool::{
     Effect, Plugin, PluginError, Tool, ToolContext, ToolDefinition, ToolFailure, ToolOutput,
 };

@@ -18,4 +18,4 @@ pub use definitions::{
 };
 pub use schedule::{Schedule, Scheduler};
 pub use transport::{Enqueued, JobTransport, StoreTransport};
-pub use worker::{JobHandler, Worker, WorkerError, WorkerOptions};
+pub use worker::{JobFailure, JobHandler, Worker, WorkerError, WorkerOptions};

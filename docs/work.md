@@ -1,11 +1,10 @@
 # Work that runs on its own
 
-`crates/work` runs jobs without anyone waiting for them. Start it with the
-`worker` command, or `docker compose --profile worker up -d worker`.
+`crates/work` runs jobs without anyone waiting for them. The `server` command
+runs the workers and the scheduler alongside [the API](api.md).
 
-**DuckDB allows one process at a time, so don't run the worker and an MCP
-session together yet.** The second one to start fails with an error. Both move
-into one process when MCP moves to HTTP.
+**DuckDB allows one process at a time.** An MCP stdio session can't run while the
+server does. The second one to start fails with an error.
 
 ## Jobs
 

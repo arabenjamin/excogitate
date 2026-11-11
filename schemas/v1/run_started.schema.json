@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "A run that was asked for.",
+  "properties": {
+    "already_existed": {
+      "description": "True if this key had already started it, and nothing new was queued.",
+      "type": "boolean"
+    },
+    "job_id": {
+      "description": "The job to look at for how it went.",
+      "maxLength": 36,
+      "type": "string"
+    }
+  },
+  "required": [
+    "job_id",
+    "already_existed"
+  ],
+  "title": "RunStarted",
+  "type": "object"
+}

@@ -66,11 +66,14 @@ impl JobHandler for Fixture {
         Duration::from_millis(200)
     }
 
-    async fn run(&self, job: &Job) -> Result<Value, String> {
+    async fn run(&self, job: &Job) -> Result<Value, work::JobFailure> {
         self.runs.fetch_add(1, Ordering::SeqCst);
         match self.does {
             Does::Succeed => Ok(json!({ "got": job.payload })),
-            Does::Fail => Err("it broke".to_owned()),
+            Does::Fail => Err(work::JobFailure {
+                message: "it broke".to_owned(),
+                result: Some(json!({ "got": "halfway" })),
+            }),
             Does::Panic => panic!("boom"),
             Does::Slow => {
                 tokio::time::sleep(Duration::from_millis(150)).await;
@@ -184,6 +187,7 @@ async fn a_failing_job_retries_and_then_says_why_it_died() {
     let done = rig.settled(queued.id).await;
     assert_eq!(done.status, JobStatus::Dead);
     assert_eq!(done.last_error.as_deref(), Some("it broke"));
+    assert_eq!(done.result, Some(json!({ "got": "halfway" })));
     assert_eq!(handler.runs(), 3);
     rig.stop().await;
 }

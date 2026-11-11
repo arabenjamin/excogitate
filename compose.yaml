@@ -1,43 +1,51 @@
-# MCP runs over stdin and stdout, so each session is one `run`:
+# docker compose up -d runs the server: HTTP, the workers and the scheduler.
+# It needs EXCOGITATE_OWNER_KEY in .env.
+#
+# For an MCP client that wants stdio, stop the server and run a session:
 #   docker compose run --rm -T brain
-# Schedules and queued jobs need the long-running worker:
-#   docker compose --profile worker up -d worker
-# Only one of the two can use the store at a time, until MCP moves to HTTP.
-services:
-  brain:
-    build:
-      context: .
-      target: brain
-    image: excogitate:local
-    env_file:
-      - path: .env
-        required: false
-    stdin_open: true
-    extra_hosts:
-      # So a model server on this machine can be reached as host.docker.internal.
-      - host.docker.internal:host-gateway
-    read_only: true
-    tmpfs:
-      - /tmp
-    cap_drop:
-      - ALL
-    security_opt:
-      - no-new-privileges:true
-    volumes:
-      - ./models.yaml:/config/models.yaml:ro
-      - ./brain.yaml:/config/brain.yaml:ro
-      - ./definitions:/config/definitions:ro
-      - brain-data:/data
+# The store takes one process at a time, so the two can't run together.
+x-brain: &brain
+  build:
+    context: .
+    target: brain
+  image: excogitate:local
+  env_file:
+    - path: .env
+      required: false
+  extra_hosts:
+    # So a model server on this machine can be reached as host.docker.internal.
+    - host.docker.internal:host-gateway
+  read_only: true
+  tmpfs:
+    - /tmp
+  cap_drop:
+    - ALL
+  security_opt:
+    - no-new-privileges:true
+  volumes:
+    - ./models.yaml:/config/models.yaml:ro
+    - ./brain.yaml:/config/brain.yaml:ro
+    - ./definitions:/config/definitions:ro
+    - brain-data:/data
 
-  worker:
-    extends:
-      service: brain
-    profiles:
-      - worker
-    command: [worker]
-    stdin_open: false
+services:
+  server:
+    <<: *brain
+    command: [server]
+    environment:
+      EXCOGITATE_BIND: 0.0.0.0:8080
+    ports:
+      # Only this machine can reach it. Put TLS in front before changing that.
+      - 127.0.0.1:${BRAIN_PORT:-8080}:8080
     restart: unless-stopped
     init: true
+    stop_grace_period: 30s
+
+  brain:
+    <<: *brain
+    profiles:
+      - stdio
+    stdin_open: true
 
 volumes:
   brain-data:

@@ -9,7 +9,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use store::Job;
-use work::JobHandler;
+use work::{JobFailure, JobHandler};
 use workflow::RunOutcome;
 
 use crate::Brain;
@@ -54,7 +54,7 @@ impl JobHandler for ChatJob {
         Duration::from_millis(self.0.config.budget.max_duration_ms).saturating_add(MARGIN)
     }
 
-    async fn run(&self, job: &Job) -> Result<Value, String> {
+    async fn run(&self, job: &Job) -> Result<Value, JobFailure> {
         let args: ChatArgs =
             serde_json::from_value(job.payload.clone()).map_err(|error| error.to_string())?;
         let result = self
@@ -62,12 +62,21 @@ impl JobHandler for ChatJob {
             .chat(args.message, SCHEDULE_PURPOSE)
             .await
             .map_err(|failure| failure.0)?;
-        if result.receipt.outcome != Outcome::Answered {
-            return Err(result
-                .stopped_because
-                .unwrap_or_else(|| format!("the run ended as {:?}", result.receipt.outcome)));
+        let answered = result.receipt.outcome == Outcome::Answered;
+        let message = result
+            .stopped_because
+            .clone()
+            .unwrap_or_else(|| format!("the run ended as {:?}", result.receipt.outcome));
+        let reply =
+            serde_json::to_value(ChatReply::from(result)).map_err(|error| error.to_string())?;
+        if answered {
+            Ok(reply)
+        } else {
+            Err(JobFailure {
+                message,
+                result: Some(reply),
+            })
         }
-        serde_json::to_value(ChatReply::from(result)).map_err(|error| error.to_string())
     }
 }
 
@@ -90,7 +99,7 @@ impl JobHandler for WorkflowJob {
         self.0.workflows.limits.time_limit.saturating_add(MARGIN)
     }
 
-    async fn run(&self, job: &Job) -> Result<Value, String> {
+    async fn run(&self, job: &Job) -> Result<Value, JobFailure> {
         let args: WorkflowArgs =
             serde_json::from_value(job.payload.clone()).map_err(|error| error.to_string())?;
         let run = self
@@ -99,12 +108,20 @@ impl JobHandler for WorkflowJob {
             .run(&args.workflow, args.inputs)
             .await
             .map_err(|error| error.to_string())?;
-        if run.outcome != RunOutcome::Completed {
-            return Err(run
-                .failure
-                .unwrap_or_else(|| "the workflow failed".to_owned()));
+        let completed = run.outcome == RunOutcome::Completed;
+        let message = run
+            .failure
+            .clone()
+            .unwrap_or_else(|| "the workflow failed".to_owned());
+        let report = serde_json::to_value(run).map_err(|error| error.to_string())?;
+        if completed {
+            Ok(report)
+        } else {
+            Err(JobFailure {
+                message,
+                result: Some(report),
+            })
         }
-        serde_json::to_value(run).map_err(|error| error.to_string())
     }
 }
 

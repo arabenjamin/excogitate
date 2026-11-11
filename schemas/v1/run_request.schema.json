@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "Starts a workflow.",
+  "properties": {
+    "idempotency_key": {
+      "description": "Send the same key again and no second run starts, so a retry is safe.",
+      "maxLength": 128,
+      "minLength": 1,
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "inputs": {
+      "description": "Its inputs, which must fit what it declares.",
+      "x-extension": "checked against the workflow's inputs schema"
+    },
+    "priority": {
+      "default": 0,
+      "description": "Higher runs first.",
+      "format": "int32",
+      "maximum": 1000,
+      "minimum": -1000,
+      "type": "integer"
+    }
+  },
+  "required": [
+    "inputs"
+  ],
+  "title": "RunRequest",
+  "type": "object"
+}

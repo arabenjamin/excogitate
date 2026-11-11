@@ -46,6 +46,31 @@ pub struct BrainConfig {
     pub workflow_time_limit_seconds: u32,
     /// How `http_request` behaves.
     pub http: HttpConfig,
+    /// How the HTTP server behaves.
+    pub server: ServerConfig,
+}
+
+/// How the HTTP server behaves.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields, default)]
+pub struct ServerConfig {
+    /// How many chats and tool calls run at once. Past this a request is
+    /// turned away with a 503, and not queued.
+    #[schemars(range(min = 1, max = 1024))]
+    pub max_concurrent_requests: u32,
+    /// Browser origins allowed to call it. A request from any other origin is
+    /// refused.
+    #[schemars(length(max = 32), inner(length(max = 256)))]
+    pub allowed_origins: Vec<String>,
+}
+
+impl Default for ServerConfig {
+    fn default() -> Self {
+        Self {
+            max_concurrent_requests: 8,
+            allowed_origins: Vec::new(),
+        }
+    }
 }
 
 impl Default for BrainConfig {
@@ -68,6 +93,7 @@ impl Default for BrainConfig {
             workers: 1,
             workflow_time_limit_seconds: 1800,
             http: HttpConfig::default(),
+            server: ServerConfig::default(),
         }
     }
 }

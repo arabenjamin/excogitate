@@ -45,6 +45,7 @@ pub(crate) enum Command {
         id: JobId,
         worker: String,
         error: String,
+        result: Option<Value>,
         retry_at: DateTime<Utc>,
         reply: Reply<()>,
     },
@@ -205,10 +206,11 @@ impl Writer<'_> {
                 id,
                 worker,
                 error,
+                result,
                 retry_at,
                 reply,
             } => {
-                let _ = reply.send(self.fail(id, &worker, &error, retry_at));
+                let _ = reply.send(self.fail(id, &worker, &error, result.as_ref(), retry_at));
             }
             Command::ReserveSpend {
                 provider,
@@ -836,23 +838,26 @@ impl Writer<'_> {
         id: JobId,
         worker: &str,
         error: &str,
+        result: Option<&Value>,
         retry_at: DateTime<Utc>,
     ) -> Result<(), StoreError> {
         let job = self.held_job(id, worker)?;
+        let left = result.map(to_json).transpose()?;
         let sql = if job.attempts >= job.max_attempts {
             "UPDATE jobs SET status = 'dead', lease_worker = NULL, lease_until = NULL,
-                 last_error = ? WHERE id = ?"
+                 last_error = ?, result = ? WHERE id = ?"
         } else {
             "UPDATE jobs SET status = 'queued', lease_worker = NULL, lease_until = NULL,
-                 last_error = ?, run_at = ? WHERE id = ?"
+                 last_error = ?, result = ?, run_at = ? WHERE id = ?"
         };
-        let result = if job.attempts >= job.max_attempts {
-            self.connection.execute(sql, params![error, id_of(id)])
+        let done = if job.attempts >= job.max_attempts {
+            self.connection
+                .execute(sql, params![error, left, id_of(id)])
         } else {
             self.connection
-                .execute(sql, params![error, retry_at, id_of(id)])
+                .execute(sql, params![error, left, retry_at, id_of(id)])
         };
-        result.map(|_| ()).map_err(backend)
+        done.map(|_| ()).map_err(backend)
     }
 }
 

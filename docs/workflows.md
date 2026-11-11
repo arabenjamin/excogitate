@@ -4,7 +4,8 @@ A workflow is a fixed list of steps. Each step calls a tool or asks a sub-agent.
 A model can decide what a step says, but not which steps run, so anything that
 has to happen goes here, and not in a prompt that asks for it.
 
-Start one from a [schedule](work.md) with `kind: workflow`:
+Start one [over the API](api.md#workflows), or from a [schedule](work.md) with
+`kind: workflow`:
 
 ```yaml
 cron: "0 7 * * *"
@@ -44,13 +45,13 @@ output: "{{steps.summary.answer}}"
 max_usd_micros: 0    # what the whole run may spend; 0 is the default
 ```
 
-**A file is a definition's one home.** The worker reads them all at startup and
+**A file is a definition's one home.** The server reads them all at startup and
 keeps a copy in the store that records which file it came from. A file that's
 gone removes its copy. A file can't take the name of a definition that came from
-somewhere else, and the worker won't start if one tries.
+somewhere else, and the server won't start if one tries.
 
 **Everything is checked before anything is saved.** One bad file stops the
-worker and changes nothing. The checks are:
+server and changes nothing. The checks are:
 
 - the shape of each file, with unknown keys refused;
 - that each tool and agent exists;
@@ -81,7 +82,7 @@ An agent is a chat with its own instructions and tools. It starts with nothing
 but its system prompt and what the step gives it, and it doesn't search memory
 first.
 
-**What earlier steps found goes in `context`, never in `message`.** The worker
+**What earlier steps found goes in `context`, never in `message`.** The server
 refuses a `message` that refers to a step. `context` is labelled as data for the
 model, and the text inside it can't end that label. A `message` can use `inputs`.
 
@@ -103,12 +104,11 @@ skipped. A step fails if:
 - the agent doesn't finish, or its answer is cut off by its token limit;
 - a reference is missing.
 
-A run that finishes keeps this as the job's result
-([schema](../schemas/v1/workflow_run.schema.json)): its output, its cost, and each
-step's status and receipt. An output over 200,000 characters is cut, becomes
-text and has `output_truncated` set. A run that fails is a failed job, and
-`last_error` says which step and why. It keeps no result yet, so the rest is only
-in the event log.
+Every run keeps this as the job's result
+([schema](../schemas/v1/workflow_run.schema.json)), whether it worked or not: its
+output, its cost, and each step's status and receipt. An output over 200,000
+characters is cut, becomes text and has `output_truncated` set. A run that fails
+is a dead job, and `last_error` says which step and why.
 
 `workflow_time_limit_seconds` in `brain.yaml` limits a whole run, 1800 by default.
 Like any job, a run isn't retried unless its schedule sets `max_attempts`, because
@@ -116,5 +116,4 @@ a retry repeats what the earlier steps did.
 
 ## Not yet
 
-There's no branching, no loop, no `on_error` and no parallel step. A run can only
-be started by a schedule.
+There's no branching, no loop, no `on_error` and no parallel step.

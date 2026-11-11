@@ -110,6 +110,21 @@ fn found_something(reply: &str) -> bool {
     !hits.and_then(Value::as_array).is_some_and(Vec::is_empty)
 }
 
+/// What a chat starts from.
+#[derive(Debug)]
+pub(crate) struct ChatInput {
+    /// Added after the brain's own instructions, never in place of them.
+    pub(crate) extra_system: Option<String>,
+    /// Earlier turns, oldest first.
+    pub(crate) history: Vec<Message>,
+    /// The latest thing asked.
+    pub(crate) question: String,
+    /// Sampling temperature, if the client has a view.
+    pub(crate) temperature: Option<f32>,
+    /// The longest each reply may be.
+    pub(crate) max_output_tokens: u32,
+}
+
 /// What a client asks.
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -182,6 +197,29 @@ impl Brain {
         question: String,
         purpose: &str,
     ) -> Result<ChatResult, ToolFailure> {
+        let input = ChatInput {
+            extra_system: None,
+            history: Vec::new(),
+            question,
+            temperature: None,
+            max_output_tokens: self.config.max_output_tokens,
+        };
+        self.chat_with(input, purpose).await
+    }
+
+    /// A chat that continues a conversation the client kept.
+    pub(crate) async fn chat_with(
+        &self,
+        input: ChatInput,
+        purpose: &str,
+    ) -> Result<ChatResult, ToolFailure> {
+        let ChatInput {
+            extra_system,
+            history,
+            question,
+            temperature,
+            max_output_tokens,
+        } = input;
         let offered = self
             .registry
             .definitions()
@@ -189,15 +227,18 @@ impl Brain {
             .map(|definition| definition.name)
             .collect();
         let mut session = session_for(self, offered, purpose, self.config.max_result_chars)?;
-        let mut messages = vec![
-            Message::system(self.config.system_prompt.clone()),
-            Message::user(question.clone()),
-        ];
+        let system = match extra_system {
+            Some(extra) => format!("{}\n\n{extra}", self.config.system_prompt),
+            None => self.config.system_prompt.clone(),
+        };
+        let mut messages = vec![Message::system(system)];
+        messages.extend(history);
+        messages.push(Message::user(question.clone()));
         recall(&self.config, &mut session, &question, &mut messages).await;
         let conversation = Conversation {
             messages,
-            max_output_tokens: self.config.max_output_tokens,
-            temperature: None,
+            max_output_tokens,
+            temperature,
         };
         Ok(session.converse(&self.gateway, conversation).await)
     }
