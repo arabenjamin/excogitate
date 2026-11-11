@@ -36,6 +36,7 @@ fn config() -> BrainConfig {
             allowed_ranges: vec!["127.0.0.1/32".to_owned()],
             ..HttpConfig::default()
         },
+        recall_limit: 0,
         ..BrainConfig::default()
     }
 }
@@ -281,10 +282,31 @@ async fn a_direct_fetch_is_labelled_and_internal_addresses_stay_blocked() {
     assert_eq!(blocked["isError"], true);
 }
 
+/// Text about otters points one way, and everything else another.
+async fn embeddings(body: axum::Json<Value>) -> axum::Json<Value> {
+    let vectors: Vec<Value> = body.0["input"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .enumerate()
+        .map(|(index, text)| {
+            let otters = text.as_str().unwrap().to_lowercase().contains("otter");
+            let vector = if otters {
+                [1.0, 0.0, 0.0]
+            } else {
+                [0.0, 1.0, 0.0]
+            };
+            json!({ "index": index, "embedding": vector })
+        })
+        .collect();
+    axum::Json(json!({ "data": vectors }))
+}
+
 /// A model server that answers once and keeps the request it was sent.
 async fn listening_model() -> (String, Arc<Mutex<Vec<Value>>>) {
     let seen = Arc::new(Mutex::new(Vec::new()));
     let router = Router::new()
+        .route("/v1/embeddings", post(embeddings))
         .route(
             "/v1/chat/completions",
             post(
@@ -407,4 +429,137 @@ async fn spending_outlives_the_brain_that_spent_it() {
     let refused = call_one(&second, "chat", &json!({ "message": "hi" })).await;
     assert_eq!(refused["structuredContent"]["answer"], Value::Null);
     assert_eq!(seen.lock().unwrap().len(), 1, "no second call was made");
+}
+
+fn listening_brain(base_url: &str, recall_limit: u32, recall_min_similarity: f32) -> Brain {
+    let yaml = format!(
+        "version: 1\nproviders:\n  - {{name: c, base_url: '{base_url}', no_log: true, timeout_secs: 10}}\n\
+         models:\n  - {{name: c, provider: c, wire_model: x, capabilities: [chat, tools], context_tokens: 100000, max_output_tokens: 100}}\n  - {{name: e, provider: c, wire_model: emb, capabilities: [embeddings], context_tokens: 8000, max_output_tokens: 1, embedding_dimension: 3}}\n"
+    );
+    Brain::assemble(
+        Arc::new(MemoryStore::new(3)),
+        Arc::new(MemorySink::new()),
+        Catalog::from_yaml(&yaml, |_| None).unwrap(),
+        BrainConfig {
+            recall_limit,
+            recall_min_similarity,
+            ..config()
+        },
+        &|_| None,
+    )
+    .unwrap()
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_chat_starts_with_what_memory_already_has() {
+    let (base_url, seen) = listening_model().await;
+    let brain = listening_brain(&base_url, 3, 0.6);
+    let note = json!({ "operation": "store", "text": "Sea otters hold hands." });
+    call_one(&brain, "memory", &note).await;
+
+    let result = call_one(&brain, "chat", &json!({ "message": "otters" })).await;
+    let reply = &result["structuredContent"];
+    assert_eq!(reply["answer"], "heard");
+    let entry = &reply["receipt"]["tool_calls"][0];
+    assert_eq!(entry["tool"], "memory");
+    assert_eq!(entry["status"], "ran");
+    assert_eq!(entry["effect"], "read");
+    assert_eq!(entry["by_harness"], true);
+    assert_eq!(entry["untrusted"], true, "a model wrote that note");
+
+    let seen = seen.lock().unwrap();
+    let messages = seen[0]["messages"].as_array().unwrap();
+    assert_eq!(messages[1]["role"], "user");
+    assert_eq!(messages[2]["role"], "assistant");
+    assert_eq!(messages[2]["tool_calls"][0]["function"]["name"], "memory");
+    assert_ne!(
+        messages[2]["content"], "",
+        "a small model goes silent after a blank turn"
+    );
+    assert_eq!(messages[3]["role"], "tool");
+    let found = messages[3]["content"].as_str().unwrap();
+    assert!(found.contains("hold hands"), "{found}");
+    assert!(found.contains("\"untrusted\":true"), "{found}");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn notes_that_arent_close_enough_stay_out_of_the_transcript() {
+    let (base_url, seen) = listening_model().await;
+    let brain = listening_brain(&base_url, 3, 0.6);
+    let note = json!({ "operation": "store", "text": "Sea otters hold hands." });
+    call_one(&brain, "memory", &note).await;
+
+    let result = call_one(&brain, "chat", &json!({ "message": "capital of France" })).await;
+    let entry = &result["structuredContent"]["receipt"]["tool_calls"][0];
+    assert_eq!(
+        entry["by_harness"], true,
+        "the search still ran, and says so"
+    );
+    assert_eq!(entry["status"], "ran");
+    assert_eq!(
+        seen.lock().unwrap()[0]["messages"]
+            .as_array()
+            .unwrap()
+            .len(),
+        2
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn nothing_found_means_nothing_added() {
+    let (base_url, seen) = listening_model().await;
+    let brain = listening_brain(&base_url, 3, 0.0);
+    call_one(&brain, "chat", &json!({ "message": "otters" })).await;
+    assert_eq!(
+        seen.lock().unwrap()[0]["messages"]
+            .as_array()
+            .unwrap()
+            .len(),
+        2
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_recall_that_is_refused_stays_out_of_the_transcript() {
+    let (base_url, seen) = listening_model().await;
+    // Past what the memory tool allows, so dispatch refuses the search.
+    let brain = listening_brain(&base_url, 51, 0.0);
+    let result = call_one(&brain, "chat", &json!({ "message": "otters" })).await;
+    let reply = &result["structuredContent"];
+    assert_eq!(reply["answer"], "heard");
+    assert_eq!(reply["receipt"]["tool_calls"][0]["status"], "refused");
+    assert_eq!(
+        seen.lock().unwrap()[0]["messages"]
+            .as_array()
+            .unwrap()
+            .len(),
+        2
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn recall_can_be_turned_off() {
+    let (base_url, seen) = listening_model().await;
+    let brain = listening_brain(&base_url, 0, 0.0);
+    let result = call_one(&brain, "chat", &json!({ "message": "otters" })).await;
+    let calls = result["structuredContent"]["receipt"]["tool_calls"]
+        .as_array()
+        .unwrap();
+    assert_eq!(calls.len(), 0);
+    assert_eq!(
+        seen.lock().unwrap()[0]["messages"]
+            .as_array()
+            .unwrap()
+            .len(),
+        2
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_question_longer_than_a_query_still_recalls() {
+    let (base_url, _seen) = listening_model().await;
+    let brain = listening_brain(&base_url, 3, 0.0);
+    let result = call_one(&brain, "chat", &json!({ "message": "é".repeat(5000) })).await;
+    let entry = &result["structuredContent"]["receipt"]["tool_calls"][0];
+    assert_eq!(entry["status"], "ran", "{entry}");
 }

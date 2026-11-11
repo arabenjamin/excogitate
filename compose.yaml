@@ -6,7 +6,9 @@ services:
       context: .
       target: brain
     image: excogitate:local
-    env_file: .env
+    env_file:
+      - path: .env
+        required: false
     stdin_open: true
     extra_hosts:
       # So a model server on this machine can be reached as host.docker.internal.

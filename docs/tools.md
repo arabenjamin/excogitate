@@ -13,7 +13,9 @@ counts against the run's write budget.
 ## `memory`
 
 One flat argument object, with an `operation` of `store`, `search`, `get`,
-`update` or `delete`. The schema states which fields each one needs.
+`update` or `delete`. The schema states which fields each one needs. A search
+can set `min_similarity` to keep only notes close in meaning, and each hit
+reports its `similarity`.
 
 | The brain sets | To |
 |---|---|

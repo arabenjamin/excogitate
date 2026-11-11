@@ -15,4 +15,4 @@ Keys are read from whatever variable the configuration names:
 [credential](tools.md#configuration) in `http_request`. Put them in `.env`,
 which is never committed and never copied into the image.
 
-With Docker, `.env` must exist, and it can be empty.
+With Docker, `.env` is optional. A local model server needs no keys.

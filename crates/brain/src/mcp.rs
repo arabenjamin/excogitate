@@ -8,10 +8,10 @@ use plugin_api::{Effect, Tool, ToolContext, ToolDefinition, ToolFailure, ToolOut
 use protocol::{DataClass, RunId, Trust};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use serde_json::{Value, json};
 use std::sync::Arc;
 
-use crate::Brain;
+use crate::{Brain, BrainConfig};
 
 /// What chats are for, which decides whether they may pay.
 const CHAT_PURPOSE: &str = "chat";
@@ -20,6 +20,11 @@ const TOOL_PURPOSE: &str = "tool";
 /// A client isn't a small model, so it can take a whole result.
 const DIRECT_RESULT_CHARS: usize = 500_000;
 const MAX_MESSAGE: usize = 32_000;
+/// The words of the turn that holds the harness's search. A small model
+/// often returned nothing at all when this turn was blank.
+const RECALL_TURN: &str = "Checking my memory first.";
+/// The longest query `memory` takes.
+const MAX_RECALL_QUERY: usize = 1024;
 const MAX_ANSWER: usize = 1_000_000;
 const MAX_REASON: usize = 2048;
 
@@ -49,6 +54,58 @@ fn session_for(
         },
     )
     .map_err(|error| setup_failed(&error))
+}
+
+/// The harness's own memory search, before a chat's first round. A small
+/// model often doesn't think to look. What it finds joins the transcript as a
+/// call already made, and if nothing is close enough the model sees nothing,
+/// because irrelevant notes make it say it doesn't know things it does.
+async fn recall(
+    config: &BrainConfig,
+    session: &mut Session,
+    question: &str,
+    messages: &mut Vec<Message>,
+) {
+    if config.recall_limit == 0 {
+        return;
+    }
+    let query: String = question.chars().take(MAX_RECALL_QUERY).collect();
+    let mut arguments = json!({
+        "operation": "search",
+        "query": query,
+        "limit": config.recall_limit,
+    });
+    if config.recall_min_similarity > 0.0
+        && let Some(fields) = arguments.as_object_mut()
+    {
+        fields.insert(
+            "min_similarity".to_owned(),
+            json!(config.recall_min_similarity),
+        );
+    }
+    let call = ToolCall {
+        id: "recall".to_owned(),
+        name: "memory".to_owned(),
+        arguments: arguments.to_string(),
+    };
+    let Some(reply) = session.dispatch_for_harness(&call).await else {
+        return;
+    };
+    if reply.status == CallStatus::Ran && found_something(&reply.content) {
+        let mut assistant = Message::assistant(RECALL_TURN);
+        assistant.tool_calls.push(call);
+        messages.push(assistant);
+        messages.push(Message::tool(reply.call_id, reply.content));
+    }
+}
+
+/// True unless the reply is a search that found nothing.
+fn found_something(reply: &str) -> bool {
+    let parsed = serde_json::from_str::<Value>(reply).ok();
+    let hits = parsed
+        .as_ref()
+        .and_then(|value| value.pointer("/result/hits"));
+    !hits.and_then(Value::as_array).is_some_and(Vec::is_empty)
 }
 
 /// What a client asks.
@@ -94,18 +151,21 @@ impl Tool for ChatTool {
         let args: ChatArgs = serde_json::from_value(arguments)
             .map_err(|error| ToolFailure(schema::bounded(&error.to_string())))?;
         let brain = &self.0;
+        let question = args.message;
         let offered = brain
             .registry
             .definitions()
             .into_iter()
             .map(|definition| definition.name)
             .collect();
-        let session = session_for(brain, offered, CHAT_PURPOSE, brain.config.max_result_chars)?;
+        let mut session = session_for(brain, offered, CHAT_PURPOSE, brain.config.max_result_chars)?;
+        let mut messages = vec![
+            Message::system(brain.config.system_prompt.clone()),
+            Message::user(question.clone()),
+        ];
+        recall(&brain.config, &mut session, &question, &mut messages).await;
         let conversation = Conversation {
-            messages: vec![
-                Message::system(brain.config.system_prompt.clone()),
-                Message::user(args.message),
-            ],
+            messages,
             max_output_tokens: brain.config.max_output_tokens,
             temperature: None,
         };

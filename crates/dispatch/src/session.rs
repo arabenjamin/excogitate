@@ -139,6 +139,7 @@ pub struct Session {
     calls_not_recorded: u64,
     events_lost: u32,
     answer_cut_off: bool,
+    by_harness: bool,
 }
 
 /// A refusal on its way back to the model.
@@ -193,6 +194,7 @@ impl Session {
             calls_not_recorded: 0,
             events_lost: 0,
             answer_cut_off: false,
+            by_harness: false,
         })
     }
 
@@ -383,6 +385,20 @@ impl Session {
         });
     }
 
+    /// Makes a call on the harness's own initiative, with every check a
+    /// model's call gets. The receipt says the model didn't ask for it.
+    /// Returns `None`, and makes no call, if it would leave the model no tool
+    /// calls of its own.
+    pub async fn dispatch_for_harness(&mut self, call: &ToolCall) -> Option<ToolReply> {
+        if self.totals.tool_calls.saturating_add(1) >= self.config.budget.max_tool_calls {
+            return None;
+        }
+        self.by_harness = true;
+        let reply = self.dispatch(call).await;
+        self.by_harness = false;
+        Some(reply)
+    }
+
     /// Handles one tool call. It always returns a reply for the model: a
     /// result, or a structured refusal or failure it can act on.
     pub async fn dispatch(&mut self, call: &ToolCall) -> ToolReply {
@@ -493,6 +509,7 @@ impl Session {
             effect,
             truncated: false,
             untrusted: false,
+            by_harness: self.by_harness,
             duration_ms: 0,
             cost_usd_micros: 0,
             detail: Some(detail.clone()),
@@ -576,6 +593,7 @@ impl Session {
             effect: Some(effect),
             truncated: finished.truncated,
             untrusted: finished.untrusted,
+            by_harness: self.by_harness,
             duration_ms,
             cost_usd_micros: finished.cost_usd_micros,
             detail: finished.detail,

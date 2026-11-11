@@ -148,6 +148,37 @@ async fn embedding_is_paid_for_by_the_run() {
     assert_eq!(*metered.scopes.lock().unwrap(), vec![want, want, want]);
 }
 
+#[tokio::test]
+async fn min_similarity_keeps_only_close_notes() {
+    let metered = Arc::new(Metered::default());
+    let store: Arc<dyn Store> = Arc::new(MemoryStore::new(3));
+    let with_vectors = MemoryTool::new(Memory::new(
+        store,
+        Some(metered as Arc<dyn Embedder>),
+        ChunkConfig::default(),
+    ));
+    stored_id(&with_vectors, "otters", private()).await;
+    let found =
+        |min: f64| json!({ "operation": "search", "query": "otters", "min_similarity": min });
+    let close = call(&with_vectors, found(0.99), private()).await.unwrap();
+    assert_eq!(close.value["hits"].as_array().unwrap().len(), 1);
+    assert!(close.value["hits"][0]["similarity"].as_f64().unwrap() > 0.99);
+
+    // Found by keyword alone, so there's no similarity to go on.
+    let no_vectors = MemoryTool::new(memory());
+    stored_id(&no_vectors, "otters", private()).await;
+    let filtered = call(&no_vectors, found(0.1), private()).await.unwrap();
+    assert_eq!(filtered.value["hits"].as_array().unwrap().len(), 0);
+    let unfiltered = call(
+        &no_vectors,
+        json!({ "operation": "search", "query": "otters" }),
+        private(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(unfiltered.value["hits"].as_array().unwrap().len(), 1);
+}
+
 #[test]
 fn its_schemas_are_strict() {
     let definition = MemoryTool::new(memory()).definition();

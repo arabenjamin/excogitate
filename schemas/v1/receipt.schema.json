@@ -207,6 +207,10 @@
       "additionalProperties": false,
       "description": "One tool call, as it really went.",
       "properties": {
+        "by_harness": {
+          "description": "True if the harness made this call, and the model didn't ask for it.",
+          "type": "boolean"
+        },
         "cost_usd_micros": {
           "description": "What it spent, in millionths of a dollar.",
           "format": "uint64",
@@ -272,6 +276,7 @@
         "status",
         "truncated",
         "untrusted",
+        "by_harness",
         "duration_ms",
         "cost_usd_micros"
       ],
