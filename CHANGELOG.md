@@ -3,6 +3,21 @@
 All notable changes are listed here. The file is generated from the
 Conventional Commits by [git-cliff](https://git-cliff.org) (`cliff.toml`).
 
+## [0.3.0] - 2026-11-11
+
+### Added
+
+- **dispatch:** Record each run's trajectory and serve it over REST
+- **workflow:** Probe an agent under a candidate harness
+- **harness:** Find evidence-backed edits to an agent
+- **harness:** Adopt supported edits on their own, with revert and holds
+- **harness:** Pick what to improve from real runs that went wrong
+
+### Fixed
+
+- **store:** Finish the writer before a dropped store is gone
+- **harness:** What the first real-model run found
+
 ## [0.2.0] - 2026-11-11
 
 ### Added
