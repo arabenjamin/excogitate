@@ -8,6 +8,8 @@ use std::time::Duration;
 use chrono::Utc;
 use events::EventSink;
 use model::Catalog;
+use plugin_api::Plugin;
+use plugin_host::PluginsConfig;
 use store::Store;
 use store_duckdb::{DuckDbConfig, DuckDbSink, DuckDbStore};
 use tokio::sync::watch;
@@ -17,7 +19,7 @@ use work::{
 
 use crate::assemble::embedding_dimension;
 use crate::http::check_owner_key;
-use crate::{Config, ConfigError, Runtime, RuntimeError};
+use crate::{Config, ConfigError, Plugins, Runtime, RuntimeError};
 
 /// The vector width of a store created with no embedding model configured.
 const DEFAULT_DIMENSION: usize = 1024;
@@ -104,6 +106,7 @@ struct Places {
     data: PathBuf,
     extensions: PathBuf,
     definitions: PathBuf,
+    plugins: Option<PathBuf>,
 }
 
 impl Places {
@@ -117,6 +120,7 @@ impl Places {
             data: path("DATA_DIR", "data"),
             extensions: path("EXTENSION_DIR", ".cache/duckdb-extensions"),
             definitions: path("DEFINITIONS", "definitions"),
+            plugins: variable("PLUGINS").map(PathBuf::from),
         }
     }
 }
@@ -213,7 +217,7 @@ struct Opened {
     definitions: PathBuf,
 }
 
-async fn open(product: &str) -> Result<Opened, RunError> {
+async fn open(product: &str, compiled: &[Arc<dyn Plugin>]) -> Result<Opened, RunError> {
     let prefix = product.to_uppercase();
     let variable = |name: &str| {
         std::env::var(format!("{prefix}_{name}"))
@@ -239,9 +243,23 @@ async fn open(product: &str) -> Result<Opened, RunError> {
     let sink: Arc<dyn EventSink> =
         Arc::new(DuckDbSink::open(Some(&places.data.join("events.duckdb")))?);
     let workers = config.workers;
-    let runtime = Runtime::assemble(store.shared(), sink, catalog, config, &|name| {
-        std::env::var(name).ok()
-    })?;
+    let grants = match &places.plugins {
+        Some(path) => PluginsConfig::from_yaml(&read(path)?).map_err(RuntimeError::from)?,
+        None => PluginsConfig::default(),
+    };
+    let plugins = Plugins {
+        compiled: compiled.to_vec(),
+        grants,
+    };
+    let runtime = Runtime::build(
+        store.shared(),
+        sink,
+        catalog,
+        config,
+        &|name| std::env::var(name).ok(),
+        plugins,
+    )
+    .await?;
     Ok(Opened {
         store,
         runtime,
@@ -256,8 +274,12 @@ async fn open(product: &str) -> Result<Opened, RunError> {
 /// # Errors
 ///
 /// [`RunError`] if it can't start or the connection fails.
-pub async fn run_stdio(product: &str, version: &str) -> Result<(), RunError> {
-    let Opened { store, runtime, .. } = open(product).await?;
+pub async fn run_stdio(
+    product: &str,
+    version: &str,
+    plugins: &[Arc<dyn Plugin>],
+) -> Result<(), RunError> {
+    let Opened { store, runtime, .. } = open(product, plugins).await?;
     let tools = runtime.mcp_tools();
     drop(runtime);
     let served = plugin_api::serve_stdio(product, version, tools)
@@ -316,7 +338,11 @@ async fn stop_signal() {
 /// # Errors
 ///
 /// [`RunError`] if it can't start, or a definition file is wrong.
-pub async fn run_server(product: &str, version: &str) -> Result<(), RunError> {
+pub async fn run_server(
+    product: &str,
+    version: &str,
+    plugins: &[Arc<dyn Plugin>],
+) -> Result<(), RunError> {
     let prefix = product.to_uppercase();
     let owner_key = std::env::var(format!("{prefix}_OWNER_KEY")).unwrap_or_default();
     check_owner_key(&owner_key).map_err(|problem| RunError::OwnerKey {
@@ -332,7 +358,7 @@ pub async fn run_server(product: &str, version: &str) -> Result<(), RunError> {
         runtime,
         workers,
         definitions,
-    } = open(product).await?;
+    } = open(product, plugins).await?;
     let runtime = runtime.with_definitions(definitions.clone());
     let count = runtime.load_definitions(&definitions, Utc::now()).await?;
     let router = runtime.http_router(product, version, &owner_key)?;
@@ -342,7 +368,15 @@ pub async fn run_server(product: &str, version: &str) -> Result<(), RunError> {
             path: bind.clone(),
             source,
         })?;
-    eprintln!("{count} definitions loaded, {workers} workers, listening on {bind}");
+    let installed = runtime.plugins().join(", ");
+    let installed = if installed.is_empty() {
+        "none".to_owned()
+    } else {
+        installed
+    };
+    eprintln!(
+        "{count} definitions loaded, plugins: {installed}, {workers} workers, listening on {bind}"
+    );
 
     let transport: Arc<dyn JobTransport> = Arc::new(StoreTransport(store.shared()));
     let options = WorkerOptions {

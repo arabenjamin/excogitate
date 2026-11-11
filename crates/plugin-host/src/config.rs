@@ -32,6 +32,16 @@ pub struct PluginConfig {
     pub capabilities: Vec<PluginCapability>,
 }
 
+impl Default for PluginsConfig {
+    /// Grants nothing: what a deployment without `plugins.yaml` has.
+    fn default() -> Self {
+        Self {
+            version: 1,
+            plugins: Vec::new(),
+        }
+    }
+}
+
 impl PluginsConfig {
     /// Reads and checks `plugins.yaml`.
     ///

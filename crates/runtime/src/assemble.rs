@@ -8,7 +8,8 @@ use dispatch::ToolRegistry;
 use events::EventSink;
 use memory::{ChunkConfig, Embedder, GatewayEmbedder, Memory};
 use model::{Capability, Catalog, Gateway, OpenAiClient};
-use plugin_api::Tool;
+use plugin_api::{Plugin, Tool};
+use plugin_host::{HostError, PluginHost, PluginsConfig};
 use store::Store;
 use tools::{HttpConfigError, HttpRequestTool, MemoryTool};
 use workflow::{Engine, EngineLimits};
@@ -36,6 +37,19 @@ pub enum RuntimeError {
     /// A setting names something that doesn't exist.
     #[error("{0}")]
     Config(String),
+    /// A plugin was refused. Nothing starts with a plugin missing.
+    #[error(transparent)]
+    Plugin(#[from] HostError),
+}
+
+/// The plugins to install, and what the deployment grants them.
+#[derive(Debug, Clone, Default)]
+pub struct Plugins {
+    /// The plugins compiled into this binary.
+    pub compiled: Vec<Arc<dyn Plugin>>,
+    /// What each may use, from `plugins.yaml`. A plugin not listed there is
+    /// granted nothing, so one that asks for a capability is refused.
+    pub grants: PluginsConfig,
 }
 
 /// A runtime ready to serve.
@@ -51,6 +65,8 @@ pub struct Runtime {
     pub(crate) definitions: Option<Arc<PathBuf>>,
     /// Held while a change to an agent's file is made, so two never race.
     pub(crate) changing: Arc<tokio::sync::Mutex<()>>,
+    /// The plugins installed, by name.
+    pub(crate) plugins: Arc<Vec<String>>,
 }
 
 /// The width of the vectors, if the catalog has an embedding model.
@@ -77,13 +93,50 @@ impl Runtime {
         config: Config,
         secret_of: &dyn Fn(&str) -> Option<String>,
     ) -> Result<Self, RuntimeError> {
+        let (gateway, registry) = Self::bundled(&store, catalog, &config, secret_of)?;
+        Self::finish(store, sink, gateway, registry, config)
+    }
+
+    /// Puts the parts together with plugins installed. Each is checked
+    /// against its manifest and granted only what `plugins.grants` allows;
+    /// any refusal stops the build.
+    ///
+    /// # Errors
+    ///
+    /// [`RuntimeError`] if a part can't be set up or a plugin is refused.
+    pub async fn build(
+        store: Arc<dyn Store>,
+        sink: Arc<dyn EventSink>,
+        catalog: Catalog,
+        config: Config,
+        secret_of: &dyn Fn(&str) -> Option<String>,
+        plugins: Plugins,
+    ) -> Result<Self, RuntimeError> {
+        let (gateway, registry) = Self::bundled(&store, catalog, &config, secret_of)?;
+        let mut host = PluginHost::new(Arc::clone(&store), plugins.grants, registry);
+        for plugin in &plugins.compiled {
+            host.install_compiled(plugin.as_ref()).await?;
+        }
+        let installed = host.installed();
+        let mut runtime = Self::finish(store, sink, gateway, host.into_registry(), config)?;
+        runtime.plugins = Arc::new(installed);
+        Ok(runtime)
+    }
+
+    /// The gateway, and a registry holding the two bundled tools.
+    fn bundled(
+        store: &Arc<dyn Store>,
+        catalog: Catalog,
+        config: &Config,
+        secret_of: &dyn Fn(&str) -> Option<String>,
+    ) -> Result<(Arc<Gateway>, ToolRegistry), RuntimeError> {
         let dimension = embedding_dimension(&catalog);
         let client =
             OpenAiClient::new().map_err(|error| RuntimeError::Client(error.to_string()))?;
         let gateway = Arc::new(Gateway::new(
             catalog,
             Arc::new(client),
-            Arc::new(StoreLedger(Arc::clone(&store))),
+            Arc::new(StoreLedger(Arc::clone(store))),
         ));
         let embedder = dimension.map(|width| {
             Arc::new(GatewayEmbedder::new(
@@ -92,10 +145,21 @@ impl Runtime {
                 EMBEDDING_PURPOSE,
             )) as Arc<dyn Embedder>
         });
-        let memory = Memory::new(Arc::clone(&store), embedder, ChunkConfig::default());
+        let memory = Memory::new(Arc::clone(store), embedder, ChunkConfig::default());
         let mut registry = ToolRegistry::new();
         registry.register(Arc::new(MemoryTool::new(memory)))?;
         registry.register(Arc::new(HttpRequestTool::new(&config.http, secret_of)?))?;
+        Ok((gateway, registry))
+    }
+
+    /// The rest, once every tool is in the registry.
+    fn finish(
+        store: Arc<dyn Store>,
+        sink: Arc<dyn EventSink>,
+        gateway: Arc<Gateway>,
+        registry: ToolRegistry,
+        config: Config,
+    ) -> Result<Self, RuntimeError> {
         let names: Vec<String> = registry
             .definitions()
             .into_iter()
@@ -132,7 +196,14 @@ impl Runtime {
             config: Arc::new(config),
             definitions: None,
             changing: Arc::new(tokio::sync::Mutex::new(())),
+            plugins: Arc::new(Vec::new()),
         })
+    }
+
+    /// The plugins installed, by name.
+    #[must_use]
+    pub fn plugins(&self) -> &[String] {
+        &self.plugins
     }
 
     /// Says where the definition files are, so Harness² can change an agent's

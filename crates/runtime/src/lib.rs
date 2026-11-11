@@ -1,9 +1,11 @@
 //! Where the parts become one runtime: configuration, assembly, and the tools
-//! it offers over MCP. The binary only calls [`run_stdio`] and [`run_server`].
+//! it offers over MCP. A binary only calls [`main`] with its [`Program`]:
+//! its name, its version and the plugins compiled into it.
 
 #![deny(clippy::string_slice, clippy::indexing_slicing)]
 
 mod assemble;
+mod cli;
 mod config;
 mod connect;
 mod definitions;
@@ -14,7 +16,8 @@ mod ledger;
 mod mcp;
 mod run;
 
-pub use assemble::{Runtime, RuntimeError};
+pub use assemble::{Plugins, Runtime, RuntimeError};
+pub use cli::{Program, main};
 pub use config::{Config, ConfigError, HarnessConfig, ServerConfig};
 pub use connect::relay;
 pub use harness::{PickArgs, Picked};
@@ -25,4 +28,5 @@ pub use http::{
 };
 pub use jobs::WorkflowArgs;
 pub use mcp::{ChatArgs, ChatReply, ToolEnvelope};
+pub use plugin_host::PluginsConfig;
 pub use run::{RunError, run_connect, run_server, run_stdio};

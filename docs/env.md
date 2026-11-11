@@ -13,6 +13,7 @@ Every variable starts with the product's name in capitals. The image and
 | `EXCOGITATE_NEO4J_PASSWORD` | none | With `STORE=neo4j`: the password. Required. |
 | `EXCOGITATE_NEO4J_USER` | `neo4j` | With `STORE=neo4j`: the user. |
 | `EXCOGITATE_NEO4J_DATABASE` | the server's default | With `STORE=neo4j`: the database to use. |
+| `EXCOGITATE_PLUGINS` | none | `plugins.yaml`: what each compiled-in plugin may use (schema: [`schemas/v1/plugins_config.schema.json`](../schemas/v1/plugins_config.schema.json)). Without it, nothing is granted. See [plugins](plugins.md#two-ways-to-run). |
 | `EXCOGITATE_DEFINITIONS` | `definitions` | Where agent, workflow and schedule files live. See [workflows](workflows.md). |
 | `EXCOGITATE_OWNER_KEY` | none | The `server` command won't start without it. At least 32 characters. See [the API](api.md). |
 | `EXCOGITATE_BIND` | `127.0.0.1:8080` | Where the server listens. |
