@@ -8,7 +8,7 @@
 mod strict;
 mod validate;
 
-pub use strict::{EXTENSION_KEY, Violation, check_strict};
+pub use strict::{EXTENSION_KEY, Violation, check_strict, for_model};
 pub use validate::{InvalidSchema, Problem, Refusal, Validator, bounded};
 
 use schemars::JsonSchema;

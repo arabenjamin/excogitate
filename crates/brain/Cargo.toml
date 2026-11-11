@@ -1,0 +1,36 @@
+[package]
+name = "brain"
+description = "Puts the parts together, and serves them over MCP."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[dependencies]
+async-trait.workspace = true
+dispatch = { path = "../dispatch" }
+events = { path = "../events" }
+memory = { path = "../memory" }
+model = { path = "../model" }
+plugin-api = { path = "../plugin-api" }
+protocol = { path = "../protocol" }
+schema = { path = "../schema" }
+schemars.workspace = true
+serde.workspace = true
+serde-saphyr.workspace = true
+serde_json.workspace = true
+store = { path = "../store" }
+store-duckdb = { path = "../store-duckdb" }
+thiserror.workspace = true
+tools = { path = "../tools" }
+
+[dev-dependencies]
+axum.workspace = true
+chaos-model = { path = "../chaos-model" }
+store-memory = { path = "../store-memory" }
+tokio.workspace = true
+
+[lints]
+workspace = true

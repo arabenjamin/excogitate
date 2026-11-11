@@ -205,7 +205,7 @@ impl Session {
             .map(|registered| ToolSpec {
                 name: registered.definition.name.clone(),
                 description: registered.definition.description.clone(),
-                parameters: registered.definition.input_schema.clone(),
+                parameters: schema::for_model(&registered.definition.input_schema),
             })
             .collect()
     }

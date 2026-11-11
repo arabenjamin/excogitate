@@ -58,6 +58,15 @@ impl ToolRegistry {
         Self::default()
     }
 
+    /// What each registered tool declares, by name.
+    #[must_use]
+    pub fn definitions(&self) -> Vec<ToolDefinition> {
+        self.tools
+            .values()
+            .map(|registered| registered.definition.clone())
+            .collect()
+    }
+
     /// Adds a tool, after checking what it declares.
     ///
     /// # Errors

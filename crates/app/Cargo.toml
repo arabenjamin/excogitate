@@ -13,8 +13,10 @@ publish = false
 plugin-example = ["dep:plugin-example"]
 
 [dependencies]
+brain = { path = "../brain" }
 plugin-api = { path = "../plugin-api" }
 plugin-example = { path = "../../plugins/example", optional = true }
+tokio.workspace = true
 
 [[bin]]
 name = "excogitate"

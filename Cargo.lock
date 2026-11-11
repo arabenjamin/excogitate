@@ -68,8 +68,10 @@ checksum = "940b3a0ca603d1eade50a4846a2afffd5ef57a9feac2c0e2ec2e14f9ead76000"
 name = "app"
 version = "0.0.0"
 dependencies = [
+ "brain",
  "plugin-api",
  "plugin-example",
+ "tokio",
 ]
 
 [[package]]
@@ -445,6 +447,32 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 3.0.10",
+]
+
+[[package]]
+name = "brain"
+version = "0.0.0"
+dependencies = [
+ "async-trait",
+ "axum",
+ "chaos-model",
+ "dispatch",
+ "events",
+ "memory",
+ "model",
+ "plugin-api",
+ "protocol",
+ "schema",
+ "schemars",
+ "serde",
+ "serde-saphyr",
+ "serde_json",
+ "store",
+ "store-duckdb",
+ "store-memory",
+ "thiserror",
+ "tokio",
+ "tools",
 ]
 
 [[package]]
@@ -2382,6 +2410,7 @@ dependencies = [
 name = "schema-gen"
 version = "0.0.0"
 dependencies = [
+ "brain",
  "dispatch",
  "model",
  "plugin-api",

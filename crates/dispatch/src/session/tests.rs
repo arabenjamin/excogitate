@@ -980,6 +980,60 @@ async fn a_conversation_runs_tools_and_ends_with_the_answer() {
 }
 
 #[tokio::test]
+async fn a_direct_call_is_recorded_as_one() {
+    let tool = Fixture::new("reader", Effect::Read, Behavior::Good);
+    let mut session = session_with(&[tool], &["reader"], budget());
+    session.dispatch(&call("reader", GOOD_ARGS)).await;
+    let receipt = session.finish(Outcome::Direct).await;
+    assert_eq!(receipt.outcome, Outcome::Direct);
+}
+
+/// Has a root condition in its schema, as the `memory` tool does.
+#[derive(Debug)]
+struct Conditional;
+
+#[async_trait]
+impl Tool for Conditional {
+    fn definition(&self) -> ToolDefinition {
+        ToolDefinition {
+            name: "conditional".to_owned(),
+            description: "a fixture".to_owned(),
+            input_schema: json!({
+                "type": "object",
+                "additionalProperties": false,
+                "properties": { "a": { "type": "integer" }, "b": { "type": "integer" } },
+                "allOf": [{ "if": { "required": ["a"] }, "then": { "required": ["b"] } }]
+            }),
+            output_schema: json!({ "type": "object", "additionalProperties": false }),
+            effect: Effect::Read,
+        }
+    }
+
+    async fn run(&self, _: Value, _: ToolContext) -> Result<ToolOutput, ToolFailure> {
+        Ok(ToolOutput {
+            value: json!({}),
+            trust: Trust::Trusted,
+            cost_usd_micros: 0,
+        })
+    }
+}
+
+#[tokio::test]
+async fn root_conditions_are_hidden_from_the_model_but_still_enforced() {
+    let mut registry = ToolRegistry::new();
+    registry.register(Arc::new(Conditional)).unwrap();
+    let mut session = Session::new(
+        Arc::new(registry),
+        Arc::new(MemorySink::new()),
+        config(&["conditional"], budget()),
+    )
+    .unwrap();
+    assert_eq!(session.tool_specs()[0].parameters.get("allOf"), None);
+    let reply = session.dispatch(&call("conditional", r#"{"a":1}"#)).await;
+    assert_eq!(reply.status, CallStatus::Refused);
+}
+
+#[tokio::test]
 async fn an_empty_reply_is_not_an_answer() {
     let client = Scripted::new(vec![says("  \n", FinishReason::Stop)]);
     let result = converse_with(FREE, client, &[], &[], budget()).await;
