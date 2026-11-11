@@ -11,6 +11,7 @@ mod budget;
 mod receipt;
 mod session;
 mod tool;
+mod trajectory;
 
 pub use budget::{Budget, BudgetKind};
 pub use plugin_api::{Effect, Tool, ToolContext, ToolDefinition, ToolFailure, ToolOutput};
@@ -20,3 +21,6 @@ pub use session::{
     parse_arguments,
 };
 pub use tool::{RegistryError, ToolRegistry};
+pub use trajectory::{
+    RunSubject, Speaker, Step, TimedStep, Trajectory, harness_id, read_trajectory,
+};

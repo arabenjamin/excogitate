@@ -27,9 +27,11 @@ fn generated() -> BTreeMap<&'static str, Value> {
         ("job_list", schema_of::<brain::JobList>()),
         ("job_view", schema_of::<brain::JobView>()),
         ("openai_chat_request", schema_of::<brain::OpenAiRequest>()),
+        ("run_list", schema_of::<brain::RunList>()),
         ("run_request", schema_of::<brain::RunRequest>()),
         ("run_started", schema_of::<brain::RunStarted>()),
         ("schedule", schema_of::<work::Schedule>()),
+        ("trajectory", schema_of::<dispatch::Trajectory>()),
         ("workflow", schema_of::<workflow::Workflow>()),
         ("workflow_run", schema_of::<workflow::WorkflowRun>()),
     ])

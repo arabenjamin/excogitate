@@ -5,6 +5,7 @@
 mod mcp;
 mod openai;
 mod rest;
+mod runs;
 
 use std::collections::BTreeSet;
 use std::future::Future;
@@ -35,6 +36,7 @@ pub use openai::OpenAiRequest;
 pub use rest::{
     DefinitionList, DefinitionView, JobList, JobStatusView, JobView, RunRequest, RunStarted,
 };
+pub use runs::{RunList, RunView};
 
 /// The shortest owner key accepted.
 const MIN_KEY_CHARS: usize = 32;
@@ -319,6 +321,7 @@ impl Brain {
             .merge(mcp::routes())
             .merge(openai::routes())
             .merge(rest::routes())
+            .merge(runs::routes())
             .fallback(nowhere)
             .layer(middleware::from_fn_with_state(app.clone(), guard));
         Ok(Router::new()

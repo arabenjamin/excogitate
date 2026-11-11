@@ -2,7 +2,7 @@ use std::collections::VecDeque;
 use std::sync::Mutex;
 
 use async_trait::async_trait;
-use events::{EventError, EventPage, MemorySink};
+use events::{EventError, EventKind, EventPage, MemorySink, RunPage, RunQuery};
 use model::{
     Catalog, ChatResponse, FinishReason, MemoryLedger, Message, Model, ModelClient, ModelError,
     Usage,
@@ -125,6 +125,10 @@ fn config(offered: &[&str], budget: Budget) -> SessionConfig {
         data_class: DataClass::Private,
         purpose: "work".to_owned(),
         max_result_chars: 1000,
+        subject: crate::RunSubject {
+            agent: "test".to_owned(),
+            harness: "test".to_owned(),
+        },
     }
 }
 
@@ -824,6 +828,10 @@ impl EventSink for BrokenSink {
     async fn read_run(&self, _: RunId, _: usize, _: usize) -> Result<EventPage, EventError> {
         Err(EventError("disk full".to_owned()))
     }
+
+    async fn list_runs(&self, _: &RunQuery) -> Result<RunPage, EventError> {
+        Err(EventError("disk full".to_owned()))
+    }
 }
 
 #[tokio::test]
@@ -841,7 +849,8 @@ async fn a_lost_event_shows_on_the_receipt_and_does_not_stop_the_run() {
     let reply = session.dispatch(&call("reader", GOOD_ARGS)).await;
     assert_eq!(reply.status, CallStatus::Ran);
     let receipt = session.finish(Outcome::Answered).await;
-    assert_eq!(receipt.events_lost, 2);
+    // The start and the call, then the end.
+    assert_eq!(receipt.events_lost, 3);
 }
 
 #[tokio::test]
@@ -867,12 +876,24 @@ async fn every_call_reaches_the_sink() {
     assert_eq!(
         kinds,
         [
+            EventKind::RunStarted,
             EventKind::ToolCall,
             EventKind::ToolCall,
             EventKind::RunEnded
         ]
     );
-    assert_eq!(page.events[1].body["refusal"], "not_offered");
+    assert_eq!(page.events[2].body["refusal"], "not_offered");
+    let trajectory = crate::read_trajectory(sink.as_ref(), run, 10)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(trajectory.agent.as_deref(), Some("test"));
+    // No model answered, so the run is corrected to `model_failed`.
+    assert_eq!(
+        trajectory.calls,
+        "reader ran → ghost refused → model_failed"
+    );
+    assert_eq!(trajectory.unreadable, 0);
 }
 
 #[test]
@@ -1161,4 +1182,67 @@ async fn a_harness_call_leaves_the_model_at_least_one_of_its_own() {
     assert_eq!(reply, None);
     assert_eq!(reader.run_count(), 0);
     assert_eq!(session.budget_hit(), None);
+}
+
+#[tokio::test]
+async fn a_conversation_reads_back_as_its_trajectory() {
+    let client = Scripted::new(vec![calls("reader"), says("done", FinishReason::Stop)]);
+    let reader = Fixture::new("reader", Effect::Read, Behavior::Good);
+    let mut registry = ToolRegistry::new();
+    registry.register(reader as Arc<dyn Tool>).unwrap();
+    let sink = Arc::new(MemorySink::new());
+    let run_config = config(&["reader"], budget());
+    let run = run_config.run;
+    let session = Session::new(
+        Arc::new(registry),
+        Arc::clone(&sink) as Arc<dyn EventSink>,
+        run_config,
+    )
+    .unwrap();
+    let catalog = Catalog::from_yaml(FREE, |_| None).unwrap();
+    let gateway = Gateway::new(catalog, client, Arc::new(MemoryLedger::new()));
+    session
+        .converse(
+            &gateway,
+            Conversation {
+                messages: vec![Message::system("be brief"), Message::user("hello")],
+                max_output_tokens: 400,
+                temperature: None,
+            },
+        )
+        .await;
+    let trajectory = crate::read_trajectory(sink.as_ref(), run, 100)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(trajectory.calls, "reader ran → answered");
+    let steps: Vec<&crate::Step> = trajectory.steps.iter().map(|timed| &timed.step).collect();
+    assert!(matches!(steps[0], crate::Step::Started { offered, .. } if offered == &["reader"]));
+    assert!(matches!(
+        steps[1],
+        crate::Step::Message { role: crate::Speaker::System, content, .. } if content == "be brief"
+    ));
+    assert!(matches!(
+        steps[2],
+        crate::Step::Message { role: crate::Speaker::User, content, .. } if content == "hello"
+    ));
+    assert!(matches!(steps[3], crate::Step::Model { tool_calls: 1, .. }));
+    assert!(matches!(
+        steps[4],
+        crate::Step::Tool {
+            index: 0,
+            effect: Some(Effect::Read),
+            by_harness: false,
+            ..
+        }
+    ));
+    assert!(matches!(steps[5], crate::Step::Model { reply: Some(reply), .. } if reply == "done"));
+    assert!(matches!(
+        steps[6],
+        crate::Step::Ended {
+            outcome: Outcome::Answered,
+            ..
+        }
+    ));
+    assert_eq!(steps.len(), 7);
 }

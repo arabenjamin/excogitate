@@ -53,4 +53,7 @@ Before changing the pinned version, call `DuckDbStore::export`, and update
 the version in the fetch script (a test checks they match).
 
 **The event sink.** `DuckDbSink` keeps telemetry and trajectories in a file of
-its own, so they never compete with the store's writer.
+its own, so they never compete with the store's writer. A small run index,
+written in the same transaction as each run's first and last event, lets runs
+be listed by agent and harness. A sink written before the index existed lists
+only runs that started after it did.

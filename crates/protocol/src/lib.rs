@@ -66,6 +66,26 @@ impl fmt::Display for RunId {
     }
 }
 
+/// Text that isn't a run id.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NotARunId;
+
+impl fmt::Display for NotARunId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("a run id is a UUID")
+    }
+}
+
+impl std::error::Error for NotARunId {}
+
+impl std::str::FromStr for RunId {
+    type Err = NotARunId;
+
+    fn from_str(text: &str) -> Result<Self, Self::Err> {
+        uuid::Uuid::parse_str(text).map(Self).map_err(|_| NotARunId)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -73,6 +93,13 @@ mod tests {
     #[test]
     fn data_is_private_unless_marked() {
         assert_eq!(DataClass::default(), DataClass::Private);
+    }
+
+    #[test]
+    fn a_run_id_reads_back_from_its_text() {
+        let run = RunId::generate();
+        assert_eq!(run.to_string().parse::<RunId>(), Ok(run));
+        assert_eq!("not-a-run".parse::<RunId>(), Err(NotARunId));
     }
 
     #[test]

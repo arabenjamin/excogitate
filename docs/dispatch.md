@@ -54,6 +54,29 @@ Every run ends in one outcome: `answered`, `refused`, `budget_hit`,
 `tool_failed`, `model_failed`, or `direct` for a single tool call made with
 no model. A claim the record contradicts is corrected.
 
+## Trajectories
+
+A run's trajectory is everything it saw and did, in order: what ran and under
+which harness, the messages the model started from, each model call and each
+tool call with its arguments and reply, and how the run ended. It goes to the
+event sink, apart from the store, one typed step per event
+([schema](../schemas/v1/trajectory.schema.json)). Harness² will compare
+trajectories, and a person can read one over [REST](api.md#runs).
+
+- **A harness id** is a hash of what decides how a run behaves. For a chat,
+  that's the brain's prompt, tools, budget and recall settings. For an agent,
+  it's its instructions, tools and own limits. A client's own system message
+  is input, so it's not part of the id. Two runs with the same id ran under the
+  same harness.
+- **The calls line** sums a run up in one line, such as
+  `memory ran (harness) → http_request refused → answered`. Read it first: it
+  keeps runs from being confused with each other.
+- **Long text is cut** at 16,000 characters and says so.
+- **A lost event doesn't stop the run.** The receipt counts it in
+  `events_lost`.
+- **Trajectories hold private data,** the same as the run, and they're never
+  deleted yet. Retention is still to come.
+
 ## Testing against a hostile model
 
 `crates/chaos-model` is an OpenAI-wire server that plays a seeded script of

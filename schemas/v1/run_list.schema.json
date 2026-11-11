@@ -1,0 +1,76 @@
+{
+  "$defs": {
+    "RunView": {
+      "additionalProperties": false,
+      "description": "A run, as the API lists it.",
+      "properties": {
+        "agent": {
+          "description": "What ran: `chat`, `agent:<name>` or `tool:<name>`.",
+          "maxLength": 128,
+          "type": "string"
+        },
+        "ended_at": {
+          "description": "When it ended. None while it runs, or if it was cut short.",
+          "format": "date-time",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "harness": {
+          "description": "The harness it ran under. Runs with the same id had the same\ninstructions, tools and limits.",
+          "maxLength": 64,
+          "type": "string"
+        },
+        "outcome": {
+          "description": "How it ended.",
+          "maxLength": 32,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "run": {
+          "description": "Its id, which `GET /api/v1/runs/{id}` takes.",
+          "maxLength": 36,
+          "type": "string"
+        },
+        "started_at": {
+          "description": "When it started.",
+          "format": "date-time",
+          "type": "string"
+        }
+      },
+      "required": [
+        "run",
+        "agent",
+        "harness",
+        "started_at"
+      ],
+      "type": "object"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "One page of runs, newest first.",
+  "properties": {
+    "has_more": {
+      "description": "True if there are more past this page.",
+      "type": "boolean"
+    },
+    "items": {
+      "description": "The runs.",
+      "items": {
+        "$ref": "#/$defs/RunView"
+      },
+      "maxItems": 200,
+      "type": "array"
+    }
+  },
+  "required": [
+    "items",
+    "has_more"
+  ],
+  "title": "RunList",
+  "type": "object"
+}

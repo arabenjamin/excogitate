@@ -86,6 +86,19 @@ A run isn't retried, because that would repeat what its earlier steps did.
 is what it produced. For a workflow, that's the
 [run report](workflows.md#a-run), including each step of a run that failed.
 
+### Runs
+
+Every chat, agent step and tool call is a run, with a receipt and a
+[trajectory](dispatch.md#trajectories).
+
+`GET /api/v1/runs?agent=&harness=&limit=&offset=`
+([schema](../schemas/v1/run_list.schema.json)) lists runs, newest first. `agent`
+is `chat`, `agent:<name>` or `tool:<name>`. `harness` is a harness id: runs with
+the same one had the same instructions, tools and limits.
+
+`GET /api/v1/runs/{id}` is the run's
+[trajectory](../schemas/v1/trajectory.schema.json). The id is a receipt's `run`.
+
 ### Definitions
 
 `GET /api/v1/definitions/{kind}?limit=&offset=` and

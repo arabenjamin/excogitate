@@ -133,6 +133,10 @@ async fn run_seed(seed: u64, budget: Budget) -> Ran {
             data_class: DataClass::Private,
             purpose: "test".to_owned(),
             max_result_chars: 2000,
+            subject: dispatch::RunSubject {
+                agent: "test".to_owned(),
+                harness: "test".to_owned(),
+            },
         },
     )
     .unwrap();
@@ -313,6 +317,10 @@ async fn a_lying_token_count_ends_the_run_at_the_token_budget() {
             data_class: DataClass::Private,
             purpose: "test".to_owned(),
             max_result_chars: 2000,
+            subject: dispatch::RunSubject {
+                agent: "test".to_owned(),
+                harness: "test".to_owned(),
+            },
         },
     )
     .unwrap();

@@ -4,7 +4,8 @@
 use model::{ChatRequest, FinishReason, Gateway, Message};
 use schema::bounded;
 
-use super::{ModelStop, Session};
+use super::{ModelStop, Session, event_text};
+use crate::trajectory::Step;
 use crate::{BudgetKind, Outcome, Receipt};
 
 /// What a run is asked to do.
@@ -72,6 +73,7 @@ impl Session {
             max_output_tokens,
             temperature,
         } = conversation;
+        self.record_messages(&messages).await;
         loop {
             let request = ChatRequest {
                 messages: messages.clone(),
@@ -98,6 +100,23 @@ impl Session {
                 let reply = self.dispatch(call).await;
                 messages.push(Message::tool(reply.call_id, reply.content));
             }
+        }
+    }
+
+    /// Records what the model is given to start from, so a trajectory shows
+    /// the task and the instructions it ran under.
+    async fn record_messages(&mut self, messages: &[Message]) {
+        for message in messages {
+            self.emit(Step::Message {
+                role: message.role.into(),
+                content: event_text(&message.content),
+                tool_calls: message
+                    .tool_calls
+                    .iter()
+                    .map(|call| super::recorded_name(&call.name))
+                    .collect(),
+            })
+            .await;
         }
     }
 

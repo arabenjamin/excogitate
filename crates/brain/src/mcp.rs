@@ -3,7 +3,8 @@
 
 use async_trait::async_trait;
 use dispatch::{
-    CallStatus, ChatResult, Conversation, Outcome, Receipt, Session, SessionConfig, SessionError,
+    CallStatus, ChatResult, Conversation, Outcome, Receipt, RunSubject, Session, SessionConfig,
+    SessionError, harness_id,
 };
 use model::{Message, ToolCall};
 use plugin_api::{Effect, Tool, ToolContext, ToolDefinition, ToolFailure, ToolOutput};
@@ -37,11 +38,28 @@ fn setup_failed(error: &SessionError) -> ToolFailure {
     ToolFailure(schema::bounded(&error.to_string()))
 }
 
+/// What decides how a chat behaves, for its harness id. A client's own
+/// instructions are part of its input, not of the harness.
+fn chat_subject(config: &BrainConfig, offered: &[String]) -> RunSubject {
+    RunSubject {
+        agent: "chat".to_owned(),
+        harness: harness_id(&json!({
+            "system_prompt": config.system_prompt,
+            "offered": offered,
+            "budget": config.budget,
+            "max_result_chars": config.max_result_chars,
+            "recall_limit": config.recall_limit,
+            "recall_min_similarity": config.recall_min_similarity,
+        })),
+    }
+}
+
 fn session_for(
     brain: &Brain,
     offered: Vec<String>,
     purpose: &str,
     max_result_chars: usize,
+    subject: RunSubject,
 ) -> Result<Session, ToolFailure> {
     Session::new(
         Arc::clone(&brain.registry),
@@ -53,6 +71,7 @@ fn session_for(
             data_class: DataClass::Private,
             purpose: purpose.to_owned(),
             max_result_chars,
+            subject,
         },
     )
     .map_err(|error| setup_failed(&error))
@@ -220,13 +239,20 @@ impl Brain {
             temperature,
             max_output_tokens,
         } = input;
-        let offered = self
+        let offered: Vec<String> = self
             .registry
             .definitions()
             .into_iter()
             .map(|definition| definition.name)
             .collect();
-        let mut session = session_for(self, offered, purpose, self.config.max_result_chars)?;
+        let subject = chat_subject(&self.config, &offered);
+        let mut session = session_for(
+            self,
+            offered,
+            purpose,
+            self.config.max_result_chars,
+            subject,
+        )?;
         let system = match extra_system {
             Some(extra) => format!("{}\n\n{extra}", self.config.system_prompt),
             None => self.config.system_prompt.clone(),
@@ -293,11 +319,16 @@ impl Tool for DispatchedTool {
 
     async fn run(&self, arguments: Value, _: ToolContext) -> Result<ToolOutput, ToolFailure> {
         let name = self.definition.name.clone();
+        let subject = RunSubject {
+            agent: format!("tool:{name}"),
+            harness: harness_id(&json!({ "tool": name, "budget": self.brain.config.budget })),
+        };
         let mut session = session_for(
             &self.brain,
             vec![name.clone()],
             TOOL_PURPOSE,
             DIRECT_RESULT_CHARS,
+            subject,
         )?;
         let call = ToolCall {
             id: "direct".to_owned(),
