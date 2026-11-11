@@ -71,6 +71,9 @@ fn read_reply<T: DeserializeOwned>(
     validator: &Validator,
 ) -> Result<T, String> {
     let reply = &completion.response;
+    if reply.content.trim().is_empty() {
+        return Err("the reply was empty".to_owned());
+    }
     let Some(value) = first_json_object(&reply.content) else {
         return Err(if reply.finish == FinishReason::Length {
             "the reply was cut off before a complete JSON object".to_owned()
@@ -335,6 +338,17 @@ models:
         assert!(first.contains("no complete JSON"));
         assert_ne!(repair, "");
         assert_eq!(client.called().len(), 2);
+    }
+
+    #[tokio::test]
+    async fn an_empty_reply_says_it_was_empty() {
+        // A reasoning model can spend its turn thinking and say nothing.
+        let (result, _) = run(vec![Ok(text("")), Ok(text("  "))]).await;
+        let StructuredError::Refused { first, repair, .. } = result.unwrap_err() else {
+            panic!();
+        };
+        assert_eq!(first, "the reply was empty");
+        assert_eq!(repair, "the reply was empty");
     }
 
     #[tokio::test]

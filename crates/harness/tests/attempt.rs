@@ -589,3 +589,25 @@ async fn only_a_supported_edit_that_meets_every_rule_is_adopted() {
     .unwrap_err();
     assert!(error.contains("supports no change"), "{error}");
 }
+
+#[tokio::test]
+async fn a_citation_that_doesnt_hold_is_dropped_and_the_rest_still_count() {
+    let mixed = json!([
+        { "run": "R", "step": 2, "quote": "What is the answer" },
+        { "run": "R3", "step": 3, "quote": "I don't know" }
+    ]);
+    let setup = setup(vec![
+        say("I don't know."),
+        editor(LOOK_FIRST, &mixed, "You help."),
+        look(),
+        say("The answer is 42."),
+        composer(&json!([mitigated("A")]), "adopt", Some("A")),
+    ])
+    .await;
+    let attempt = attempt(&setup).await;
+    assert_eq!(attempt.status, Status::Supported, "{attempt:#?}");
+    let tried = &attempt.candidates[0];
+    assert_eq!(tried.cites.len(), 1);
+    assert_eq!(tried.dropped.len(), 1);
+    assert!(tried.dropped[0].contains("not what it did"), "{tried:?}");
+}

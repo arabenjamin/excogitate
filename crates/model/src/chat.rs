@@ -133,6 +133,10 @@ pub struct Usage {
     pub input_tokens: u32,
     /// Tokens written.
     pub output_tokens: u32,
+    /// What the server says the call cost, in millionths of a dollar, if it
+    /// says. A router that sends calls to several upstreams at different
+    /// prices reports this, and it can be more than the listed price.
+    pub reported_cost_usd_micros: Option<u64>,
 }
 
 /// A model's reply.

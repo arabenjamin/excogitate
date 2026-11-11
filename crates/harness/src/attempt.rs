@@ -89,9 +89,14 @@ pub struct Candidate {
     /// What changed, as the editor put it.
     #[schemars(length(max = 1000))]
     pub change: String,
-    /// The editor's evidence.
+    /// The editor's evidence that held.
     #[schemars(length(max = 8))]
     pub cites: Vec<Cite>,
+    /// The editor's citations that didn't hold, and why. They count for
+    /// nothing.
+    #[serde(default)]
+    #[schemars(length(max = 8), inner(length(max = 2048)))]
+    pub dropped: Vec<String>,
     /// Why it wasn't tried, if it wasn't.
     #[schemars(length(max = 2048))]
     pub refused: Option<String>,
@@ -331,10 +336,11 @@ impl Loop<'_> {
                 system_prompt: draft.system_prompt,
                 change: draft.change,
                 cites: draft.cites,
+                dropped: Vec::new(),
                 refused: None,
                 probe: None,
             };
-            candidate.refused = Self::refusal(&candidate, &agent, &request.task, &reference);
+            candidate.refused = Self::refusal(&mut candidate, &agent, &request.task, &reference);
             if candidate.refused.is_none() {
                 let edit = Agent {
                     system_prompt: candidate.system_prompt.clone(),
@@ -359,8 +365,10 @@ impl Loop<'_> {
     }
 
     /// Why a candidate can't be tried, if it can't.
+    /// Why a candidate can't be tried, if it can't. Citations that don't hold
+    /// are dropped, and recorded as dropped.
     fn refusal(
-        candidate: &Candidate,
+        candidate: &mut Candidate,
         agent: &Agent,
         task: &str,
         reference: &Rendered,
@@ -375,11 +383,20 @@ impl Loop<'_> {
         if candidate.cites.is_empty() {
             return Some("it cites no step of run R".to_owned());
         }
-        candidate
-            .cites
-            .iter()
-            .find_map(|cite| cite.check(&[reference]).err())
-            .map(|why| format!("its evidence: {why}"))
+        let mut held = Vec::new();
+        for cite in std::mem::take(&mut candidate.cites) {
+            match cite.check(&[reference]) {
+                Ok(()) => held.push(cite),
+                Err(why) => candidate.dropped.push(schema::bounded(&why)),
+            }
+        }
+        candidate.cites = held;
+        candidate.cites.is_empty().then(|| {
+            format!(
+                "none of its citations of run R hold: {}",
+                candidate.dropped.join("; ")
+            )
+        })
     }
 
     async fn decide(
@@ -487,6 +504,7 @@ impl Loop<'_> {
             system_prompt: merged,
             change: reply.reason,
             cites: Vec::new(),
+            dropped: Vec::new(),
             refused: None,
             probe: None,
         };

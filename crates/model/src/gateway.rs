@@ -223,7 +223,12 @@ impl Gateway {
                 let cost = response
                     .usage
                     .map_or(candidate.worst_case_usd_micros, |usage| {
-                        model.price.cost(usage.input_tokens, usage.output_tokens)
+                        // Charge the higher of the price and what the server
+                        // billed, so a cap never undercounts.
+                        model
+                            .price
+                            .cost(usage.input_tokens, usage.output_tokens)
+                            .max(usage.reported_cost_usd_micros.unwrap_or(0))
                     });
                 Ok((response, cost))
             })
@@ -311,6 +316,7 @@ pub(crate) mod test_support {
             usage: Some(Usage {
                 input_tokens: 1_000_000,
                 output_tokens: 0,
+                reported_cost_usd_micros: None,
             }),
         }
     }
@@ -473,6 +479,39 @@ models:
             .await
             .unwrap();
         assert_eq!(done.cost_usd_micros, 41);
+    }
+
+    #[tokio::test]
+    async fn a_billed_cost_above_the_price_is_what_counts() {
+        let mut reply = text("a");
+        if let Some(usage) = reply.usage.as_mut() {
+            usage.reported_cost_usd_micros = Some(5_000);
+        }
+        let client = Arc::new(Scripted::new([Ok(reply)]));
+        let done = gateway(client)
+            .chat(&priced_policy(), &request())
+            .await
+            .unwrap();
+        assert_eq!(done.cost_usd_micros, 5_000);
+    }
+
+    #[tokio::test]
+    async fn a_billed_cost_below_the_price_doesnt_lower_it() {
+        let mut reply = text("a");
+        if let Some(usage) = reply.usage.as_mut() {
+            usage.reported_cost_usd_micros = Some(0);
+        }
+        let priced = gateway(Arc::new(Scripted::new([Ok(text("a"))])))
+            .chat(&priced_policy(), &request())
+            .await
+            .unwrap()
+            .cost_usd_micros;
+        let done = gateway(Arc::new(Scripted::new([Ok(reply)])))
+            .chat(&priced_policy(), &request())
+            .await
+            .unwrap();
+        assert_eq!(done.cost_usd_micros, priced);
+        assert!(priced > 0);
     }
 
     #[tokio::test]
