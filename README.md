@@ -65,8 +65,8 @@ The plan has four layers: a store port (DuckDB by default), a model port
 (any OpenAI-wire endpoint), a dispatcher that validates every call, and the
 agents, workflows and Harness² on top. `docs/` describes each one as it is
 built: so far, [the store port](docs/store.md), [the model
-port](docs/models.md), [dispatch](docs/dispatch.md), [plugins](docs/plugins.md) and
-[schemas](docs/schemas.md).
+port](docs/models.md), [memory and retrieval](docs/memory.md), [dispatch](docs/dispatch.md),
+[plugins](docs/plugins.md) and [schemas](docs/schemas.md).
 
 ## Writing a plugin
 

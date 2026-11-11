@@ -1,0 +1,30 @@
+[package]
+name = "memory"
+description = "Long-term memory: notes, chunking by tokens, and hybrid retrieval."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[dependencies]
+async-trait.workspace = true
+chrono.workspace = true
+model = { path = "../model" }
+protocol = { path = "../protocol" }
+schema = { path = "../schema" }
+sha2 = "0.10"
+store = { path = "../store" }
+thiserror.workspace = true
+
+[dev-dependencies]
+proptest.workspace = true
+serde.workspace = true
+serde-saphyr.workspace = true
+store-duckdb = { path = "../store-duckdb" }
+store-memory = { path = "../store-memory" }
+tokio.workspace = true
+
+[lints]
+workspace = true
