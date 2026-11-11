@@ -35,7 +35,7 @@ const MAX_RECORDED_NAME_CHARS: usize = 64;
 /// How much of arguments or a reply goes in a trajectory event.
 const MAX_EVENT_CHARS: usize = 16_000;
 
-/// How one run is set up. All of it comes from the brain, none from a model.
+/// How one run is set up. All of it comes from the runtime, none from a model.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SessionConfig {
     /// The run.

@@ -183,7 +183,7 @@ fn payloads() -> BTreeMap<String, Value> {
     BTreeMap::from([("chat".to_owned(), payload)])
 }
 
-/// What the brain does at startup: read, check everything, then save.
+/// What the runtime does at startup: read, check everything, then save.
 async fn sync(store: &dyn Store, root: &std::path::Path) -> Result<usize, DefinitionError> {
     let files = read_definition_files(root, &[(DefinitionKind::Schedule, "schedules")])?;
     for file in &files {

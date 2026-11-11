@@ -75,12 +75,12 @@
         },
         {
           "const": "http",
-          "description": "HTTP through the brain.",
+          "description": "HTTP through the runtime.",
           "type": "string"
         },
         {
           "const": "model",
-          "description": "Model calls through the brain.",
+          "description": "Model calls through the runtime.",
           "type": "string"
         }
       ]
@@ -222,7 +222,7 @@
     },
     "capabilities": {
       "default": [],
-      "description": "What it needs from the brain.",
+      "description": "What it needs from the runtime.",
       "items": {
         "$ref": "#/$defs/PluginCapability"
       },

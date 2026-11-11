@@ -75,7 +75,7 @@
           "type": "null"
         }
       ],
-      "description": "Its limits. The brain's default if left out. A workflow's remaining\nmoney and time still apply."
+      "description": "Its limits. The runtime's default if left out. A workflow's remaining\nmoney and time still apply."
     },
     "description": {
       "description": "What it's for.",

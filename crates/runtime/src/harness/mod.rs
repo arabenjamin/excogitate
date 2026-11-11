@@ -1,4 +1,4 @@
-//! Harness² in the brain: attempts run as jobs, and are kept as records.
+//! Harness² in the runtime: attempts run as jobs, and are kept as records.
 
 use std::time::Duration;
 
@@ -11,7 +11,7 @@ use store::{
 };
 use work::{JobFailure, JobHandler};
 
-use crate::Brain;
+use crate::Runtime;
 
 mod adopt;
 mod pick;
@@ -26,9 +26,9 @@ pub(crate) const HARNESS_KIND: &str = "harness";
 /// Runs one attempt to improve an agent, and keeps it. An attempt that
 /// couldn't finish is a failed job, with the attempt as its result.
 #[derive(Debug)]
-pub(crate) struct HarnessJob(pub(crate) Brain);
+pub(crate) struct HarnessJob(pub(crate) Runtime);
 
-impl Brain {
+impl Runtime {
     /// Makes sure the store knows Harness²'s record type.
     pub(crate) async fn harness_records(&self) -> Result<(), StoreError> {
         self.workflows

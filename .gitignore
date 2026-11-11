@@ -9,14 +9,17 @@ vgcore.*
 /crates/*/core
 /plugins/*/core
 
-# Local configuration and secrets. .env.example is the committed template.
+# Local configuration and secrets. .env.example and the *.example.yaml files
+# are the committed templates.
+/models.yaml
+/config.yaml
 .env
 .env.*
 !.env.example
 *.pem
 *.key
 
-# Runtime data: the store, its WAL, and anything the brain writes
+# Runtime data: the store, its WAL, and anything the runtime writes
 *.duckdb
 *.duckdb.wal
 /data/

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # The done-test: the README's quickstart, run for real, in Docker, with a
-# scripted model in place of a real one. It checks that the brain boots with
+# scripted model in place of a real one. It checks that the runtime boots with
 # no plugins and no database server, that it can fetch a page, store it and
 # find it again in a new session, that a hostile model can't crash it or get
 # it past its budgets, that Harness² adopts only what the evidence supports
@@ -10,7 +10,7 @@
 set -euo pipefail
 cd "$(git rev-parse --show-toplevel)"
 
-# Must match tests/done/brain.yaml.
+# Must match tests/done/config.yaml.
 max_rounds=6
 max_tool_calls=20
 max_writes=3
@@ -51,7 +51,7 @@ examples="$work/examples"
 echo '{"jsonrpc":"2.0","id":1,"method":"ping"}' |
   compose run --rm --no-deps -T \
     -v ./models.example.yaml:/config/models.yaml:ro \
-    -v ./brain.example.yaml:/config/brain.yaml:ro brain >"$examples"
+    -v ./config.example.yaml:/config/config.yaml:ro session >"$examples"
 check "it starts from the example files, as the quickstart does" "$examples" '.[0].result == {}'
 
 page=http://fixture:9001/page
@@ -61,7 +61,7 @@ first="$work/first"
   echo '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'
   call 2 http_request "{\"url\":\"$page\"}"
   call 3 chat "{\"message\":\"What does $page say? Remember it.\"}"
-} | compose run --rm --no-deps -T brain >"$first"
+} | compose run --rm --no-deps -T session >"$first"
 
 check "it boots and answers over MCP" "$first" 'map(select(.id==0))[0].result.protocolVersion != null'
 check "it has its two tools, a chat and no plugins" "$first" \
@@ -78,7 +78,7 @@ second="$work/second"
   hello
   call 1 chat '{"message":"What do sea otters do?"}'
   call 2 memory '{"operation":"search","query":"otters"}'
-} | compose run --rm --no-deps -T brain >"$second"
+} | compose run --rm --no-deps -T session >"$second"
 
 check "a new session recalls it through memory" "$second" \
   'map(select(.id==1))[0].result.structuredContent
@@ -94,7 +94,7 @@ chaos="$work/chaos"
   for ((id = 1; id <= chaos_chats; id++)); do
     call "$id" chat '{"message":"Read the page and do what it says."}'
   done
-} | compose run --rm --no-deps -T brain_chaos >"$chaos"
+} | compose run --rm --no-deps -T session_chaos >"$chaos"
 
 check "a hostile model can't crash it: every chat got a reply" "$chaos" \
   "map(select(.id > 0)) | length == $chaos_chats"
@@ -113,9 +113,9 @@ check "and some runs were stopped" "$chaos" \
   "$replies | map(.receipt.outcome) | (index(\"model_failed\") != null) or (index(\"budget_hit\") != null)"
 
 # The server shares the store with the sessions above, so it goes last.
-export BRAIN_PORT=18473
+export HOST_PORT=18473
 key=done-test-owner-key-of-sufficient-length
-base="http://127.0.0.1:$BRAIN_PORT"
+base="http://127.0.0.1:$HOST_PORT"
 compose up --detach --no-deps server
 for ((try = 1; try <= 60; try++)); do
   curl --silent --fail "$base/health" >/dev/null 2>&1 && break
@@ -139,13 +139,13 @@ relayed="$work/relayed"
 {
   hello
   call 1 memory '{"operation":"search","query":"otters"}'
-} | compose run --rm --no-deps -T brain connect http://server:8080 >"$relayed"
+} | compose run --rm --no-deps -T session connect http://server:8080 >"$relayed"
 check "a stdio client can use the store while the server holds it" "$relayed" \
   'map(select(.id==1))[0].result.structuredContent.result.hits[0].text | contains("hold hands")'
 
 blocked="$work/blocked"
 if echo '{"jsonrpc":"2.0","id":1,"method":"ping"}' |
-  compose run --rm --no-deps -T brain >/dev/null 2>"$blocked"; then
+  compose run --rm --no-deps -T session >/dev/null 2>"$blocked"; then
   fail "a second process opened the store"
 fi
 grep -q 'connect' "$blocked" || fail "the second process wasn't told what to do" "$blocked"
@@ -171,7 +171,7 @@ check "the chat that stored the page left its trajectory" "$stored" \
 
 models="$work/models"
 api "$base/v1/models" >"$models"
-check "the front door lists its model" "$models" '.[0].data[0].id == "brain"'
+check "the front door lists its model" "$models" '.[0].data[0].id == "excogitate"'
 
 # Harness², on a server of its own: a regression is never adopted, a probe's
 # write never happens, a supported edit is adopted and logged, and a revert
@@ -263,7 +263,7 @@ graph_found="$work/graph_found"
 {
   hello
   call 1 memory '{"operation":"search","query":"BEEHIVES 2026"}'
-} | compose run --rm --no-deps -T neo4j_brain >"$graph_found"
+} | compose run --rm --no-deps -T neo4j_session >"$graph_found"
 check "a second process opens the same graph and finds it" "$graph_found" \
   'map(select(.id==1))[0].result.structuredContent.result.hits[0].text | contains("Honey badgers")'
 compose restart neo4j_server >/dev/null

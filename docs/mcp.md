@@ -12,7 +12,7 @@ and relays each message to the server, with the owner key from
 `EXCOGITATE_OWNER_KEY`:
 
 ```sh
-docker compose run --rm -T --no-deps brain connect http://server:8080
+docker compose run --rm -T --no-deps session connect http://server:8080
 ```
 
 The address defaults to `http://127.0.0.1:8080`. If the server can't be reached or
@@ -22,7 +22,7 @@ refuses the key, that message gets an error and the session carries on.
 
 | Tool | What it does |
 |---|---|
-| `chat` | Asks the brain. It reads URLs and uses its memory, and returns `answer`, `stopped_because` and the full `receipt`. |
+| `chat` | Asks Excogitate. It reads URLs and uses its memory, and returns `answer`, `stopped_because` and the full `receipt`. |
 | `memory` | [The memory tool](tools.md), called directly. |
 | `http_request` | [The fetch tool](tools.md), called directly. |
 
@@ -100,6 +100,6 @@ embedding model, or 1024 if there isn't one, so add the embedding model first
 if yours is a different width.
 
 A priced provider's daily cap is kept in the store, so a restart can't reset
-it. If the brain dies mid-call, that call's reservation stays on the books
+it. If Excogitate dies mid-call, that call's reservation stays on the books
 until the day ends: it can overcount a day's spend, and never undercount it.
 If the store can't be reached, priced calls are refused.

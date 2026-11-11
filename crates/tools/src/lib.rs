@@ -1,10 +1,10 @@
-//! The two tools the brain ships with: `memory`, so a model can keep what it
+//! The two tools the runtime ships with: `memory`, so a model can keep what it
 //! learns, and `http_request`, so it has something to learn from. Everything
 //! else comes from plugins.
 //!
 //! Both treat the model as an adversary. Its arguments say what it wants;
 //! where data may go, who may see it and how far it can be trusted are set by
-//! the brain.
+//! the runtime.
 
 #![deny(clippy::string_slice, clippy::indexing_slicing)]
 

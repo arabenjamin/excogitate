@@ -26,7 +26,7 @@ pub struct Agent {
     #[serde(default)]
     #[schemars(length(max = 16), inner(length(max = 64)))]
     pub tools: Vec<String>,
-    /// Its limits. The brain's default if left out. A workflow's remaining
+    /// Its limits. The runtime's default if left out. A workflow's remaining
     /// money and time still apply.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub budget: Option<Budget>,

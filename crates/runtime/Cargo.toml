@@ -1,5 +1,5 @@
 [package]
-name = "brain"
+name = "runtime"
 description = "Puts the parts together, and serves them over MCP."
 version.workspace = true
 edition.workspace = true

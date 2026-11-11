@@ -13,7 +13,7 @@ use store::DefinitionKind;
 use work::{DefinitionError, DefinitionFile, Schedule, read_definition_files, save_definitions};
 use workflow::{Agent, Workflow, check_agent, check_workflow};
 
-use crate::Brain;
+use crate::Runtime;
 use crate::jobs::{WORKFLOW_KIND, WorkflowArgs};
 
 const DIRECTORIES: [(DefinitionKind, &str); 3] = [
@@ -56,9 +56,9 @@ fn check_scheduled_workflow(
         .map_err(|refusal| invalid(file, format!("its inputs: {refusal}")))
 }
 
-fn check_files(files: &[DefinitionFile], brain: &Brain) -> Result<(), DefinitionError> {
+fn check_files(files: &[DefinitionFile], runtime: &Runtime) -> Result<(), DefinitionError> {
     let of_kind = |kind| files.iter().filter(move |file| file.kind == kind);
-    let tools: BTreeMap<_, _> = brain
+    let tools: BTreeMap<_, _> = runtime
         .registry
         .definitions()
         .into_iter()
@@ -75,7 +75,7 @@ fn check_files(files: &[DefinitionFile], brain: &Brain) -> Result<(), Definition
         check_workflow(&workflow, &tools, &agents).map_err(|problem| invalid(file, problem))?;
         workflows.insert(file.name.as_str(), workflow);
     }
-    let payloads = brain
+    let payloads = runtime
         .job_handlers()
         .iter()
         .map(|handler| (handler.kind().to_owned(), handler.payload_schema()))
@@ -89,7 +89,7 @@ fn check_files(files: &[DefinitionFile], brain: &Brain) -> Result<(), Definition
     Ok(())
 }
 
-impl Brain {
+impl Runtime {
     /// Reads and checks every definition file under `root`, then makes the
     /// store match them, all at once. Returns how many there are.
     ///
@@ -123,7 +123,7 @@ mod tests {
     use work::JobHandler;
 
     use super::*;
-    use crate::BrainConfig;
+    use crate::Config;
     use crate::jobs::{ChatJob, WorkflowJob};
 
     const CATALOG: &str = "version: 1\nproviders:\n  - {name: c, base_url: 'http://127.0.0.1:9', no_log: true, timeout_secs: 1}\n\
@@ -138,7 +138,7 @@ mod tests {
     struct Fixture {
         root: PathBuf,
         store: Arc<MemoryStore>,
-        brain: Brain,
+        runtime: Runtime,
     }
 
     impl Fixture {
@@ -150,15 +150,19 @@ mod tests {
                 std::fs::create_dir_all(root.join(directory)).unwrap();
             }
             let store = Arc::new(MemoryStore::new(3));
-            let brain = Brain::assemble(
+            let runtime = Runtime::assemble(
                 Arc::clone(&store) as Arc<dyn store::Store>,
                 Arc::new(MemorySink::new()),
                 Catalog::from_yaml(CATALOG, |_| None).unwrap(),
-                BrainConfig::default(),
+                Config::default(),
                 &|_| None,
             )
             .unwrap();
-            Self { root, store, brain }
+            Self {
+                root,
+                store,
+                runtime,
+            }
         }
 
         fn write(&self, path: &str, text: &str) {
@@ -166,7 +170,7 @@ mod tests {
         }
 
         async fn load(&self) -> Result<usize, DefinitionError> {
-            self.brain.load_definitions(&self.root, Utc::now()).await
+            self.runtime.load_definitions(&self.root, Utc::now()).await
         }
 
         async fn stored(&self, kind: DefinitionKind) -> usize {
@@ -196,7 +200,7 @@ mod tests {
         }
 
         async fn run_job(&self, payload: Value) -> Result<Value, String> {
-            WorkflowJob(self.brain.clone())
+            WorkflowJob(self.runtime.clone())
                 .run(&Self::job(payload))
                 .await
                 .map_err(|failure| failure.message)
@@ -330,7 +334,10 @@ mod tests {
         let fixture = Fixture::new("chat-failed");
         let mut job = Fixture::job(json!({ "message": "hi" }));
         job.kind = "chat".to_owned();
-        let failure = ChatJob(fixture.brain.clone()).run(&job).await.unwrap_err();
+        let failure = ChatJob(fixture.runtime.clone())
+            .run(&job)
+            .await
+            .unwrap_err();
         let receipt = failure.result.unwrap();
         assert_eq!(
             receipt.pointer("/receipt/outcome"),

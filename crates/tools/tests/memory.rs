@@ -63,7 +63,7 @@ async fn stored_id(tool: &MemoryTool, text: &str, context: ToolContext) -> Strin
     output.value["id"].as_str().unwrap().to_owned()
 }
 
-/// A note from the owner, the way the brain's own code would write it.
+/// A note from the owner, the way the runtime's own code would write it.
 async fn owners_note(memory: &Memory) -> NoteId {
     memory
         .store(

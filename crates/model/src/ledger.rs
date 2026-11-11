@@ -19,7 +19,7 @@ pub trait SpendLedger: Send + Sync + std::fmt::Debug {
 }
 
 /// A ledger in memory, for tests. A restart forgets the day's spend, so the
-/// brain itself keeps its ledger in the store.
+/// runtime itself keeps its ledger in the store.
 #[derive(Debug, Default)]
 pub struct MemoryLedger(Mutex<HashMap<(String, NaiveDate), u64>>);
 

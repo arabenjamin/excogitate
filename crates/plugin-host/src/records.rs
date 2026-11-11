@@ -1,5 +1,5 @@
 //! The records capability: the store port, narrowed to one plugin's own
-//! records, with provenance set by the brain.
+//! records, with provenance set by the runtime.
 
 use std::sync::Arc;
 

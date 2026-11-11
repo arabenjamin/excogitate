@@ -20,7 +20,7 @@ use uuid::Uuid;
 use work::{Enqueued, JobFailure, JobHandler, JobTransport, StoreTransport};
 
 use super::HARNESS_KIND;
-use crate::Brain;
+use crate::Runtime;
 
 /// The kind of job that picks what to improve.
 pub(crate) const PICK_KIND: &str = "harness_pick";
@@ -63,7 +63,7 @@ fn attempt_job_id(agent: &str, day: chrono::NaiveDate) -> JobId {
     JobId::from_uuid(Uuid::new_v5(&Uuid::NAMESPACE_OID, seed.as_bytes()))
 }
 
-impl Brain {
+impl Runtime {
     /// Agents tried in the last day.
     async fn tried_lately(&self) -> Result<BTreeSet<String>, String> {
         let since = Utc::now() - Span::hours(REST_HOURS);
@@ -213,7 +213,7 @@ impl Brain {
 
 /// Picks what to improve, as a job.
 #[derive(Debug)]
-pub(crate) struct PickJob(pub(crate) Brain);
+pub(crate) struct PickJob(pub(crate) Runtime);
 
 #[async_trait]
 impl JobHandler for PickJob {

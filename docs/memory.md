@@ -1,7 +1,7 @@
 # Memory and retrieval
 
-`crates/memory` stores notes and finds them again. The `memory` tool and the
-brain's own loops both use it, through the store port.
+`crates/memory` stores notes and finds them again. The `memory` tool and
+Excogitate's own loops both use it, through the store port.
 
 ## Storing
 

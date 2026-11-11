@@ -57,7 +57,7 @@ staged, the format check, the name check and the unit tests. `commit-msg` checks
 - **The name:** the product's name appears only in the places
   `scripts/name-allowlist` lists (the binary, the image, the env prefix, the
   docs). `scripts/check_name.sh` fails anywhere else, which keeps a rename
-  a small scripted change. Inside code, say "the brain" or use `crate::`.
+  a small scripted change. Inside code, say "the runtime" or use `crate::`.
 
 ## Reviewing a public API
 

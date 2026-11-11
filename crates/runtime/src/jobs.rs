@@ -1,4 +1,4 @@
-//! The kinds of job the brain runs.
+//! The kinds of job the runtime runs.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -12,7 +12,7 @@ use store::Job;
 use work::{JobFailure, JobHandler};
 use workflow::RunOutcome;
 
-use crate::Brain;
+use crate::Runtime;
 use crate::mcp::{ChatArgs, ChatReply};
 
 /// What scheduled chats are for, which decides whether they may pay.
@@ -38,7 +38,7 @@ pub struct WorkflowArgs {
 /// Runs a chat as a job. A run that doesn't end in an answer is a failed
 /// job, so it can't look as though it worked.
 #[derive(Debug)]
-pub(crate) struct ChatJob(pub(crate) Brain);
+pub(crate) struct ChatJob(pub(crate) Runtime);
 
 #[async_trait]
 impl JobHandler for ChatJob {
@@ -83,7 +83,7 @@ impl JobHandler for ChatJob {
 /// Runs a workflow as a job. One that stops at a failed step is a failed
 /// job, naming the step.
 #[derive(Debug)]
-pub(crate) struct WorkflowJob(pub(crate) Brain);
+pub(crate) struct WorkflowJob(pub(crate) Runtime);
 
 #[async_trait]
 impl JobHandler for WorkflowJob {
@@ -125,8 +125,8 @@ impl JobHandler for WorkflowJob {
     }
 }
 
-impl Brain {
-    /// Every kind of job this brain runs.
+impl Runtime {
+    /// Every kind of job this runtime runs.
     #[must_use]
     pub fn job_handlers(&self) -> Vec<Arc<dyn JobHandler>> {
         vec![

@@ -16,4 +16,4 @@ CLAUDE.local.md
 .cache/
 fuzz/
 models.yaml
-brain.yaml
+config.yaml

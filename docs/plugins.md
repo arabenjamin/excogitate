@@ -20,7 +20,7 @@ installed.
 
 ## Capabilities
 
-A plugin reaches the brain only through capabilities it declared and the
+A plugin reaches Excogitate only through capabilities it declared and the
 deployment granted, in `plugins.yaml` (schema:
 `schemas/v1/plugins_config.schema.json`). Anything not listed there is granted
 nothing.
@@ -28,10 +28,10 @@ nothing.
 | Capability | What it gives | Status |
 |---|---|---|
 | `records` | The plugin's own records in the store, and no one else's. | Available |
-| `http` | HTTP through the brain's network rules. | Interface only; a plugin asking for it is refused until the host has it |
-| `model` | One-shot model calls, routed and charged by the brain. | Interface only, as above |
+| `http` | HTTP through Excogitate's network rules. | Interface only; a plugin asking for it is refused until the host has it |
+| `model` | One-shot model calls, routed and charged by Excogitate. | Interface only, as above |
 
-No capability lets a plugin call another tool. The brain sets each record's
+No capability lets a plugin call another tool. Excogitate sets each record's
 provenance, and the privacy class comes from the run.
 
 ## Two ways to run
@@ -43,4 +43,4 @@ cargo feature. The default build has no plugins.
 stdio, installed with `PluginHost::install_service`. The process gets an empty
 environment apart from the variables its spec names, its schemas must match its
 manifest, and everything it returns is labelled untrusted. A separate process
-can't reach the brain's capabilities, so its manifest can't ask for any.
+can't reach Excogitate's capabilities, so its manifest can't ask for any.

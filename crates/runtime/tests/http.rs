@@ -6,12 +6,12 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
-use brain::{Brain, BrainConfig};
 use chaos_model::{ChaosServer, ChaosStep};
 use chrono::Utc;
 use events::MemorySink;
 use model::Catalog;
 use reqwest::{Client, Response, StatusCode};
+use runtime::{Config, Runtime};
 use schema::{Validator, check_strict};
 use serde_json::{Value, json};
 use store::Store;
@@ -24,7 +24,7 @@ const KEY: &str = "an-owner-key-of-sufficient-length-1234";
 struct Running {
     url: String,
     client: Client,
-    brain: Brain,
+    runtime: Runtime,
     store: Arc<MemoryStore>,
     model: ChaosServer,
     root: PathBuf,
@@ -36,7 +36,7 @@ impl Drop for Running {
     }
 }
 
-async fn start(name: &str, script: Vec<ChaosStep>, config: BrainConfig) -> Running {
+async fn start(name: &str, script: Vec<ChaosStep>, config: Config) -> Running {
     let model = ChaosServer::start(script).await.unwrap();
     let yaml = format!(
         "version: 1\nproviders:\n  - {{name: c, base_url: '{}', no_log: true, timeout_secs: 10}}\n\
@@ -46,7 +46,7 @@ async fn start(name: &str, script: Vec<ChaosStep>, config: BrainConfig) -> Runni
     let store = Arc::new(MemoryStore::new(3));
     let root = std::env::temp_dir().join(format!("http-{name}-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&root);
-    let brain = Brain::assemble(
+    let runtime = Runtime::assemble(
         Arc::clone(&store) as Arc<dyn Store>,
         Arc::new(MemorySink::new()),
         Catalog::from_yaml(&yaml, |_| None).unwrap(),
@@ -55,14 +55,14 @@ async fn start(name: &str, script: Vec<ChaosStep>, config: BrainConfig) -> Runni
     )
     .unwrap()
     .with_definitions(root.clone());
-    let router = brain.http_router("test", "1", KEY).unwrap();
+    let router = runtime.http_router("test", "1", KEY).unwrap();
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let url = format!("http://{}", listener.local_addr().unwrap());
     tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
     Running {
         url,
         client: Client::new(),
-        brain,
+        runtime,
         store,
         model,
         root,
@@ -70,9 +70,9 @@ async fn start(name: &str, script: Vec<ChaosStep>, config: BrainConfig) -> Runni
 }
 
 async fn quiet(name: &str, script: Vec<ChaosStep>) -> Running {
-    let config = BrainConfig {
+    let config = Config {
         recall_limit: 0,
-        ..BrainConfig::default()
+        ..Config::default()
     };
     start(name, script, config).await
 }
@@ -102,7 +102,7 @@ impl Running {
         let file = self.root.join(path);
         std::fs::create_dir_all(file.parent().unwrap()).unwrap();
         std::fs::write(file, text).unwrap();
-        self.brain
+        self.runtime
             .load_definitions(&self.root, Utc::now())
             .await
             .unwrap();
@@ -114,7 +114,7 @@ impl Running {
         let worker = Arc::new(
             Worker::new(
                 Arc::new(StoreTransport(store)),
-                self.brain.job_handlers(),
+                self.runtime.job_handlers(),
                 WorkerOptions {
                     poll: Duration::from_millis(5),
                     ..WorkerOptions::default()
@@ -219,12 +219,17 @@ async fn a_wrong_key_is_refused() {
 #[tokio::test]
 async fn a_short_key_is_never_served_with() {
     let running = quiet("short", vec![]).await;
-    assert!(running.brain.http_router("test", "1", "too-short").is_err());
+    assert!(
+        running
+            .runtime
+            .http_router("test", "1", "too-short")
+            .is_err()
+    );
 }
 
 #[tokio::test]
 async fn a_browser_origin_needs_listing_even_with_the_key() {
-    let mut config = BrainConfig::default();
+    let mut config = Config::default();
     config.server.allowed_origins = vec!["https://mine.example".to_owned()];
     let running = start("origin", vec![], config).await;
     let url = format!("{}/v1/models", running.url);
@@ -383,7 +388,7 @@ async fn bridged(url: &str, key: &str, lines: &[Value]) -> Vec<Value> {
     ) + "
 ";
     let mut output = Vec::new();
-    brain::relay(url, key, input.as_bytes(), &mut output)
+    runtime::relay(url, key, input.as_bytes(), &mut output)
         .await
         .unwrap();
     String::from_utf8(output)
@@ -449,7 +454,7 @@ async fn a_server_thats_down_is_an_error_and_the_session_goes_on() {
 #[tokio::test]
 async fn a_line_that_isnt_json_gets_an_error() {
     let mut output = Vec::new();
-    brain::relay("http://127.0.0.1:9", KEY, &b"{nope\n"[..], &mut output)
+    runtime::relay("http://127.0.0.1:9", KEY, &b"{nope\n"[..], &mut output)
         .await
         .unwrap();
     let reply: Value = serde_json::from_slice(&output).unwrap();
@@ -460,7 +465,7 @@ async fn a_line_that_isnt_json_gets_an_error() {
 
 fn ask(extra: &Value) -> Value {
     let mut body = json!({
-        "model": "brain",
+        "model": "test",
         "messages": [{ "role": "user", "content": "hi" }],
     });
     for (key, value) in extra.as_object().unwrap() {
@@ -473,7 +478,7 @@ fn ask(extra: &Value) -> Value {
 async fn the_front_door_lists_its_one_model() {
     let running = quiet("models", vec![]).await;
     let listed = body_of(running.get("/v1/models").await).await;
-    assert_eq!(listed["data"][0]["id"], "brain");
+    assert_eq!(listed["data"][0]["id"], "test");
     assert_eq!(listed["data"].as_array().unwrap().len(), 1);
 }
 
@@ -572,9 +577,9 @@ async fn the_front_door_refuses_in_its_clients_format() {
 
 #[tokio::test]
 async fn past_the_limit_a_request_is_turned_away() {
-    let mut config = BrainConfig {
+    let mut config = Config {
         recall_limit: 0,
-        ..BrainConfig::default()
+        ..Config::default()
     };
     config.server.max_concurrent_requests = 1;
     config.http.allowed_ranges = vec!["127.0.0.1/32".to_owned()];
@@ -759,7 +764,7 @@ async fn bad_queries_are_refused() {
 #[tokio::test]
 async fn an_error_has_one_shape_everywhere_in_the_api() {
     let running = quiet("errors", vec![]).await;
-    let schema = schema::schema_of::<brain::ApiError>();
+    let schema = schema::schema_of::<runtime::ApiError>();
     assert_eq!(check_strict(&schema), vec![]);
     let validator = Validator::from_schema(&schema).unwrap();
     for path in ["/api/v1/jobs?limit=0", "/nowhere"] {
@@ -781,7 +786,7 @@ async fn a_chat_leaves_a_trajectory_that_meets_its_schema() {
     assert_eq!(listed["items"].as_array().unwrap().len(), 1, "{listed}");
     assert_eq!(listed["items"][0]["run"], run.as_str());
     assert_eq!(listed["items"][0]["outcome"], "answered");
-    Validator::from_schema(&schema::schema_of::<brain::RunList>())
+    Validator::from_schema(&schema::schema_of::<runtime::RunList>())
         .unwrap()
         .check(&listed)
         .unwrap();
@@ -913,7 +918,7 @@ async fn an_attempt_started_over_rest_is_kept_and_can_be_read() {
             .contains("known-answer"),
         "{kept}"
     );
-    Validator::from_schema(&schema::schema_of::<brain::AttemptView>())
+    Validator::from_schema(&schema::schema_of::<runtime::AttemptView>())
         .unwrap()
         .check(&kept)
         .unwrap();
@@ -969,15 +974,15 @@ async fn a_bad_attempt_request_is_refused_before_it_queues() {
 }
 
 #[test]
-fn a_probe_read_that_isnt_a_tool_stops_the_brain_starting() {
-    let config = BrainConfig {
-        harness: brain::HarnessConfig {
+fn a_probe_read_that_isnt_a_tool_stops_the_runtime_starting() {
+    let config = Config {
+        harness: runtime::HarnessConfig {
             probe_reads: vec!["ghost".to_owned()],
-            ..brain::HarnessConfig::default()
+            ..runtime::HarnessConfig::default()
         },
-        ..BrainConfig::default()
+        ..Config::default()
     };
-    let error = Brain::assemble(
+    let error = Runtime::assemble(
         Arc::new(MemoryStore::new(3)),
         Arc::new(MemorySink::new()),
         Catalog::from_yaml("version: 1\nproviders: []\nmodels: []\n", |_| None).unwrap(),
@@ -1102,7 +1107,7 @@ async fn a_supported_edit_is_adopted_logged_and_can_be_reverted() {
     assert_eq!(change["judge_model"], "c");
     assert!(change["notice"].as_str().unwrap().contains("no webhook"));
     assert_eq!(change["evidence"][0]["quote"], "It is 42.");
-    Validator::from_schema(&schema::schema_of::<brain::ChangeList>())
+    Validator::from_schema(&schema::schema_of::<runtime::ChangeList>())
         .unwrap()
         .check(&listed)
         .unwrap();
@@ -1213,13 +1218,13 @@ async fn an_owners_edit_after_a_change_stands_and_holds_the_agent() {
 
 #[tokio::test]
 async fn adoption_can_be_turned_off() {
-    let config = BrainConfig {
+    let config = Config {
         recall_limit: 0,
-        harness: brain::HarnessConfig {
+        harness: runtime::HarnessConfig {
             adopt: false,
-            ..brain::HarnessConfig::default()
+            ..runtime::HarnessConfig::default()
         },
-        ..BrainConfig::default()
+        ..Config::default()
     };
     let running = start("adopt-off", supported_attempt(), config).await;
     running.define("agents/helper.yaml", HELPER_FILE).await;
@@ -1338,7 +1343,7 @@ async fn an_agent_that_fails_the_same_way_twice_is_picked_once_a_day() {
             .unwrap()
             .starts_with("About otters")
     );
-    Validator::from_schema(&schema::schema_of::<brain::Picked>())
+    Validator::from_schema(&schema::schema_of::<runtime::Picked>())
         .unwrap()
         .check(result)
         .unwrap();

@@ -1,4 +1,4 @@
-//! The store port. Typed traits in the brain's own types, only for the kinds
+//! The store port. Typed traits in the runtime's own types, only for the kinds
 //! the core uses, and one generic kind ([`Record`]) for plugin data.
 //!
 //! Three rules shape it:

@@ -5,7 +5,7 @@
   "properties": {
     "catch_up_seconds": {
       "default": 3600,
-      "description": "How late a run may start after the brain was down. An older run is\nskipped.",
+      "description": "How late a run may start after the runtime was down. An older run is\nskipped.",
       "format": "uint32",
       "maximum": 604800,
       "minimum": 0,

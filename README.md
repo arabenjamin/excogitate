@@ -58,7 +58,7 @@ git clone https://github.com/arabenjamin/excogitate.git
 cd excogitate
 cp .env.example .env
 cp models.example.yaml models.yaml   # then point it at your model server
-cp brain.example.yaml brain.yaml
+cp config.example.yaml config.yaml
 echo "EXCOGITATE_OWNER_KEY=$(openssl rand -hex 32)" >> .env
 docker compose up -d --build
 ```
@@ -70,11 +70,11 @@ source .env
 curl http://127.0.0.1:8080/v1/chat/completions \
   -H "Authorization: Bearer $EXCOGITATE_OWNER_KEY" \
   -H 'Content-Type: application/json' \
-  -d '{"model":"brain","messages":[{"role":"user","content":"Read https://example.com and remember what it says."}]}'
+  -d '{"model":"excogitate","messages":[{"role":"user","content":"Read https://example.com and remember what it says."}]}'
 ```
 
 The reply has the answer and a receipt of what actually ran. Memory lives in
-the `brain-data` volume, so it's still there after a restart.
+the `data` volume, so it's still there after a restart.
 
 Any OpenAI client works with the base URL `http://127.0.0.1:8080/v1`, and an MCP
 client with `http://127.0.0.1:8080/mcp`. Both use the key as a bearer token.
@@ -83,7 +83,7 @@ See [the API](docs/api.md). An MCP client that only speaks stdio can
 
 ## Configuration
 
-Settings live in `models.yaml` (see [models](docs/models.md)) and `brain.yaml`,
+Settings live in `models.yaml` (see [models](docs/models.md)) and `config.yaml`,
 both checked against their schemas at startup. Keys and paths are environment
 variables; [`docs/env.md`](docs/env.md) has the list.
 

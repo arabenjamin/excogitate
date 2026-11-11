@@ -98,7 +98,7 @@ async fn list_runs(
         limit: usize::try_from(limit).unwrap_or(usize::MAX),
     };
     let found = app
-        .brain
+        .runtime
         .sink
         .list_runs(&query)
         .await
@@ -116,7 +116,7 @@ async fn get_run(
     let run: RunId = id
         .parse()
         .map_err(|error: protocol::NotARunId| ApiError::invalid(&error.to_string()))?;
-    read_trajectory(app.brain.sink.as_ref(), run, MAX_STEPS)
+    read_trajectory(app.runtime.sink.as_ref(), run, MAX_STEPS)
         .await
         .map_err(|error| ApiError::internal(&error))?
         .map(Json)

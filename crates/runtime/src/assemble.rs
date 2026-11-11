@@ -1,4 +1,4 @@
-//! Builds the brain from its parts.
+//! Builds the runtime from its parts.
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -13,17 +13,17 @@ use store::Store;
 use tools::{HttpConfigError, HttpRequestTool, MemoryTool};
 use workflow::{Engine, EngineLimits};
 
-use crate::BrainConfig;
+use crate::Config;
 use crate::ledger::StoreLedger;
 use crate::mcp::{ChatTool, DispatchedTool};
 
 /// What embedding is for, which decides whether it may pay.
 const EMBEDDING_PURPOSE: &str = "memory";
 
-/// The brain couldn't be put together.
+/// The runtime couldn't be put together.
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
-pub enum BrainError {
+pub enum RuntimeError {
     /// `http_request` can't be set up.
     #[error(transparent)]
     Http(#[from] HttpConfigError),
@@ -38,13 +38,13 @@ pub enum BrainError {
     Config(String),
 }
 
-/// A brain ready to serve.
+/// A runtime ready to serve.
 #[derive(Debug, Clone)]
-pub struct Brain {
+pub struct Runtime {
     pub(crate) registry: Arc<ToolRegistry>,
     pub(crate) gateway: Arc<Gateway>,
     pub(crate) sink: Arc<dyn EventSink>,
-    pub(crate) config: Arc<BrainConfig>,
+    pub(crate) config: Arc<Config>,
     pub(crate) workflows: Engine,
     /// Where definition files live, once the server has loaded them. Harness²
     /// writes agent files here, and only here.
@@ -63,22 +63,23 @@ pub(crate) fn embedding_dimension(catalog: &Catalog) -> Option<usize> {
         .and_then(|model| model.embedding_dimension)
 }
 
-impl Brain {
+impl Runtime {
     /// Puts the parts together. `secret_of` looks up the keys configured for
     /// `http_request`.
     ///
     /// # Errors
     ///
-    /// [`BrainError`] if a part can't be set up.
+    /// [`RuntimeError`] if a part can't be set up.
     pub fn assemble(
         store: Arc<dyn Store>,
         sink: Arc<dyn EventSink>,
         catalog: Catalog,
-        config: BrainConfig,
+        config: Config,
         secret_of: &dyn Fn(&str) -> Option<String>,
-    ) -> Result<Self, BrainError> {
+    ) -> Result<Self, RuntimeError> {
         let dimension = embedding_dimension(&catalog);
-        let client = OpenAiClient::new().map_err(|error| BrainError::Client(error.to_string()))?;
+        let client =
+            OpenAiClient::new().map_err(|error| RuntimeError::Client(error.to_string()))?;
         let gateway = Arc::new(Gateway::new(
             catalog,
             Arc::new(client),
@@ -106,7 +107,7 @@ impl Brain {
             .iter()
             .find(|name| !names.contains(name))
         {
-            return Err(BrainError::Config(format!(
+            return Err(RuntimeError::Config(format!(
                 "harness.probe_reads names {missing}, which isn't a tool"
             )));
         }

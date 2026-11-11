@@ -17,7 +17,7 @@ use work::{
 
 use crate::assemble::embedding_dimension;
 use crate::http::check_owner_key;
-use crate::{Brain, BrainConfig, BrainError, ConfigError};
+use crate::{Config, ConfigError, Runtime, RuntimeError};
 
 /// The vector width of a store created with no embedding model configured.
 const DEFAULT_DIMENSION: usize = 1024;
@@ -29,7 +29,7 @@ const DEFAULT_BIND: &str = "127.0.0.1:8080";
 /// How long open requests get to finish once it's told to stop.
 const HTTP_GRACE: Duration = Duration::from_secs(25);
 
-/// The brain couldn't start, or its connection failed.
+/// The runtime couldn't start, or its connection failed.
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum RunError {
@@ -65,9 +65,9 @@ pub enum RunError {
     /// The event log couldn't be opened.
     #[error("the event log: {0}")]
     Events(#[from] events::EventError),
-    /// The brain couldn't be put together.
+    /// The runtime couldn't be put together.
     #[error(transparent)]
-    Brain(#[from] BrainError),
+    Runtime(#[from] RuntimeError),
     /// The connection failed.
     #[error("the connection failed: {0}")]
     Serve(std::io::Error),
@@ -170,7 +170,7 @@ async fn open_store(
     match variable("STORE").as_deref() {
         None | Some("duckdb") => Ok(OpenStore::DuckDb(Arc::new(DuckDbStore::open(
             &DuckDbConfig {
-                path: Some(places.data.join("brain.duckdb")),
+                path: Some(places.data.join("store.duckdb")),
                 extension_dir: places.extensions.clone(),
                 embedding_dimension: dimension,
             },
@@ -208,7 +208,7 @@ async fn open_store(
 /// Everything both ways of running share.
 struct Opened {
     store: OpenStore,
-    brain: Brain,
+    runtime: Runtime,
     workers: u32,
     definitions: PathBuf,
 }
@@ -222,10 +222,14 @@ async fn open(product: &str) -> Result<Opened, RunError> {
     };
     let places = Places::from(&variable);
     let catalog = Catalog::from_yaml(&read(&places.models)?, |name| std::env::var(name).ok())?;
-    let config = match &places.config {
-        Some(path) => BrainConfig::from_yaml(&read(path)?)?,
-        None => BrainConfig::default(),
+    let mut config = match &places.config {
+        Some(path) => Config::from_yaml(&read(path)?)?,
+        None => Config::default(),
     };
+    // Unless the configuration names another, requests say which program sent them.
+    if config.http.user_agent == tools::HttpConfig::default().user_agent {
+        product.clone_into(&mut config.http.user_agent);
+    }
     std::fs::create_dir_all(&places.data).map_err(|source| RunError::File {
         path: places.data.display().to_string(),
         source,
@@ -235,12 +239,12 @@ async fn open(product: &str) -> Result<Opened, RunError> {
     let sink: Arc<dyn EventSink> =
         Arc::new(DuckDbSink::open(Some(&places.data.join("events.duckdb")))?);
     let workers = config.workers;
-    let brain = Brain::assemble(store.shared(), sink, catalog, config, &|name| {
+    let runtime = Runtime::assemble(store.shared(), sink, catalog, config, &|name| {
         std::env::var(name).ok()
     })?;
     Ok(Opened {
         store,
-        brain,
+        runtime,
         workers,
         definitions: places.definitions,
     })
@@ -253,9 +257,9 @@ async fn open(product: &str) -> Result<Opened, RunError> {
 ///
 /// [`RunError`] if it can't start or the connection fails.
 pub async fn run_stdio(product: &str, version: &str) -> Result<(), RunError> {
-    let Opened { store, brain, .. } = open(product).await?;
-    let tools = brain.mcp_tools();
-    drop(brain);
+    let Opened { store, runtime, .. } = open(product).await?;
+    let tools = runtime.mcp_tools();
+    drop(runtime);
     let served = plugin_api::serve_stdio(product, version, tools)
         .await
         .map_err(RunError::Serve);
@@ -325,13 +329,13 @@ pub async fn run_server(product: &str, version: &str) -> Result<(), RunError> {
         .unwrap_or_else(|| DEFAULT_BIND.to_owned());
     let Opened {
         store,
-        brain,
+        runtime,
         workers,
         definitions,
     } = open(product).await?;
-    let brain = brain.with_definitions(definitions.clone());
-    let count = brain.load_definitions(&definitions, Utc::now()).await?;
-    let router = brain.http_router(product, version, &owner_key)?;
+    let runtime = runtime.with_definitions(definitions.clone());
+    let count = runtime.load_definitions(&definitions, Utc::now()).await?;
+    let router = runtime.http_router(product, version, &owner_key)?;
     let listener = tokio::net::TcpListener::bind(&bind)
         .await
         .map_err(|source| RunError::File {
@@ -347,7 +351,7 @@ pub async fn run_server(product: &str, version: &str) -> Result<(), RunError> {
     };
     let worker = Worker::new(
         Arc::clone(&transport),
-        brain.job_handlers(),
+        runtime.job_handlers(),
         options,
         format!("{product}-{}", std::process::id()),
     )
@@ -382,7 +386,7 @@ pub async fn run_server(product: &str, version: &str) -> Result<(), RunError> {
             let _ = stop.send(true);
         },
     );
-    drop(brain);
+    drop(runtime);
     store.close();
     served.map_err(RunError::Serve)
 }

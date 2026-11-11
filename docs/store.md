@@ -1,6 +1,6 @@
 # The store port
 
-`crates/store` defines what the brain needs from storage. Nothing outside a
+`crates/store` defines what Excogitate needs from storage. Nothing outside a
 store implementation knows which database is underneath.
 
 ## What's in it

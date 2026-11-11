@@ -1,9 +1,9 @@
 # The bundled tools
 
-Two tools come with the brain: `memory`, so a model can keep what it learns,
+Two tools come with Excogitate: `memory`, so a model can keep what it learns,
 and `http_request`, so it has something to learn from. Everything else comes
 from plugins. Both are in `crates/tools`, and both treat the model as an
-adversary: its arguments say what it wants, and the brain decides where data
+adversary: its arguments say what it wants, and Excogitate decides where data
 may go, who may see it and how far it can be trusted.
 
 Each call's real effect goes on the receipt. `memory` counts as a read for
@@ -17,7 +17,7 @@ One flat argument object, with an `operation` of `store`, `search`, `get`,
 can set `min_similarity` to keep only notes close in meaning, and each hit
 reports its `similarity`.
 
-| The brain sets | To |
+| Excogitate sets | To |
 |---|---|
 | Privacy class | The run's. A model can't widen it. |
 | What a run can see | Everything for a private run, only public notes for a public one. |
@@ -49,7 +49,7 @@ successful call that reports a 404.
 - **Redirects.** They're followed by hand, up to a limit, and each hop is
   checked. A model's headers stop at the origin it named. 301, 302 and 303
   become `GET` and lose the body.
-- **Keys.** The brain attaches a key to requests for its exact host, from
+- **Keys.** Excogitate attaches a key to requests for its exact host, from
   an environment variable the model never sees. A request carrying a key won't
   follow a redirect to another origin, and says so in the result. Keys go over
   https unless `allow_insecure` is set. If a response echoes a key, it's

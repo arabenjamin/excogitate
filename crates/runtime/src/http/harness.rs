@@ -61,7 +61,7 @@ async fn start(
         .parse(raw)
         .map_err(|refusal| ApiError::refused(&refusal))?;
     let known = app
-        .brain
+        .runtime
         .workflows
         .agent(&request.agent)
         .await
@@ -112,7 +112,7 @@ async fn list(
         ));
     }
     let found = app
-        .brain
+        .runtime
         .attempts(status, page_of(&params)?)
         .await
         .map_err(|error| ApiError::internal(&error))?;
@@ -135,7 +135,7 @@ async fn get_one(
         .map(RecordId::from_uuid)
         .map_err(|_| ApiError::invalid("an attempt id is a UUID"))?;
     let data = app
-        .brain
+        .runtime
         .attempt(id)
         .await
         .map_err(|error| ApiError::internal(&error))?
@@ -244,7 +244,10 @@ async fn list_changes(
             "status must be live, reverted or replaced",
         ));
     }
-    let found = app.brain.changes(agent, status, page_of(&params)?).await?;
+    let found = app
+        .runtime
+        .changes(agent, status, page_of(&params)?)
+        .await?;
     Ok(Json(ChangeList {
         items: found
             .items
@@ -263,7 +266,7 @@ async fn get_change(
     Path(id): Path<String>,
 ) -> Result<Json<ChangeView>, ApiError> {
     let id = change_id(&id)?;
-    let change = app.brain.change(id).await?;
+    let change = app.runtime.change(id).await?;
     Ok(Json(ChangeView {
         id: id.to_string(),
         change,
@@ -275,7 +278,7 @@ async fn revert(
     Path(id): Path<String>,
 ) -> Result<Json<ChangeView>, ApiError> {
     let id = change_id(&id)?;
-    let change = app.brain.revert(id).await?;
+    let change = app.runtime.revert(id).await?;
     Ok(Json(ChangeView {
         id: id.to_string(),
         change,
@@ -287,7 +290,7 @@ async fn list_holds(
     Query(params): Params,
 ) -> Result<Json<HoldList>, ApiError> {
     only(&params, &["limit", "offset"])?;
-    let found = app.brain.holds(page_of(&params)?).await?;
+    let found = app.runtime.holds(page_of(&params)?).await?;
     Ok(Json(HoldList {
         items: found.items,
         has_more: found.has_more,
@@ -306,7 +309,7 @@ async fn hold(
         .hold_request
         .parse(raw)
         .map_err(|refusal| ApiError::refused(&refusal))?;
-    let held = app.brain.set_hold(agent, Some(request.reason)).await?;
+    let held = app.runtime.set_hold(agent, Some(request.reason)).await?;
     held.map(Json)
         .ok_or_else(|| ApiError::internal(&"the hold wasn't kept"))
 }
@@ -316,7 +319,7 @@ async fn release(
     Path(agent): Path<String>,
 ) -> Result<StatusCode, ApiError> {
     let agent = agent_name(&agent)?;
-    app.brain.set_hold(agent, None).await?;
+    app.runtime.set_hold(agent, None).await?;
     Ok(StatusCode::NO_CONTENT)
 }
 

@@ -86,7 +86,7 @@ first.
 refuses a `message` that refers to a step. `context` is labelled as data for the
 model, and the text inside it can't end that label. A `message` can use `inputs`.
 
-An agent uses the brain's `budget` unless it sets its own. Either way, it can't
+An agent uses Excogitate's `budget` unless it sets its own. Either way, it can't
 use more than what's left of the run's money and time. Models are chosen with
 the purpose `workflow`, which is what a provider's `paid_for` matches.
 
@@ -110,7 +110,7 @@ output, its cost, and each step's status and receipt. An output over 200,000
 characters is cut, becomes text and has `output_truncated` set. A run that fails
 is a dead job, and `last_error` says which step and why.
 
-`workflow_time_limit_seconds` in `brain.yaml` limits a whole run, 1800 by default.
+`workflow_time_limit_seconds` in `config.yaml` limits a whole run, 1800 by default.
 Like any job, a run isn't retried unless its schedule sets `max_attempts`, because
 a retry repeats what the earlier steps did.
 

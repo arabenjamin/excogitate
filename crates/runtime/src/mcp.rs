@@ -14,7 +14,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::sync::Arc;
 
-use crate::{Brain, BrainConfig};
+use crate::{Config, Runtime};
 
 /// What chats are for, which decides whether they may pay.
 const CHAT_PURPOSE: &str = "chat";
@@ -31,7 +31,7 @@ const MAX_RECALL_QUERY: usize = 1024;
 const MAX_ANSWER: usize = 1_000_000;
 const MAX_REASON: usize = 2048;
 
-const CHAT_DESCRIPTION: &str = "Ask the brain something. It can read URLs and use its long-term \
+const CHAT_DESCRIPTION: &str = "Ask the assistant something. It can read URLs and use its long-term \
 memory, and it returns its answer with a receipt of what actually ran.";
 
 fn setup_failed(error: &SessionError) -> ToolFailure {
@@ -40,7 +40,7 @@ fn setup_failed(error: &SessionError) -> ToolFailure {
 
 /// What decides how a chat behaves, for its harness id. A client's own
 /// instructions are part of its input, not of the harness.
-fn chat_subject(config: &BrainConfig, offered: &[String]) -> RunSubject {
+fn chat_subject(config: &Config, offered: &[String]) -> RunSubject {
     RunSubject {
         agent: "chat".to_owned(),
         harness: harness_id(&json!({
@@ -55,19 +55,19 @@ fn chat_subject(config: &BrainConfig, offered: &[String]) -> RunSubject {
 }
 
 fn session_for(
-    brain: &Brain,
+    runtime: &Runtime,
     offered: Vec<String>,
     purpose: &str,
     max_result_chars: usize,
     subject: RunSubject,
 ) -> Result<Session, ToolFailure> {
     Session::new(
-        Arc::clone(&brain.registry),
-        Arc::clone(&brain.sink),
+        Arc::clone(&runtime.registry),
+        Arc::clone(&runtime.sink),
         SessionConfig {
             run: RunId::generate(),
             offered,
-            budget: brain.config.budget,
+            budget: runtime.config.budget,
             data_class: DataClass::Private,
             purpose: purpose.to_owned(),
             max_result_chars,
@@ -83,7 +83,7 @@ fn session_for(
 /// call already made, and if nothing is close enough the model sees nothing,
 /// because irrelevant notes make it say it doesn't know things it does.
 async fn recall(
-    config: &BrainConfig,
+    config: &Config,
     session: &mut Session,
     question: &str,
     messages: &mut Vec<Message>,
@@ -133,7 +133,7 @@ fn found_something(reply: &str) -> bool {
 /// What a chat starts from.
 #[derive(Debug)]
 pub(crate) struct ChatInput {
-    /// Added after the brain's own instructions, never in place of them.
+    /// Added after the runtime's own instructions, never in place of them.
     pub(crate) extra_system: Option<String>,
     /// Earlier turns, oldest first.
     pub(crate) history: Vec<Message>,
@@ -178,13 +178,13 @@ impl From<ChatResult> for ChatReply {
     }
 }
 
-/// One conversation with the brain.
+/// One conversation with the runtime.
 #[derive(Debug)]
-pub(crate) struct ChatTool(Brain);
+pub(crate) struct ChatTool(Runtime);
 
 impl ChatTool {
-    pub(crate) const fn new(brain: Brain) -> Self {
-        Self(brain)
+    pub(crate) const fn new(runtime: Runtime) -> Self {
+        Self(runtime)
     }
 }
 
@@ -210,7 +210,7 @@ impl Tool for ChatTool {
     }
 }
 
-impl Brain {
+impl Runtime {
     /// Runs one chat, as its own run, on behalf of `purpose`.
     pub(crate) async fn chat(
         &self,
@@ -298,13 +298,16 @@ pub struct ToolEnvelope {
 /// One bundled tool, called directly by a client.
 #[derive(Debug)]
 pub(crate) struct DispatchedTool {
-    brain: Brain,
+    runtime: Runtime,
     definition: ToolDefinition,
 }
 
 impl DispatchedTool {
-    pub(crate) const fn new(brain: Brain, definition: ToolDefinition) -> Self {
-        Self { brain, definition }
+    pub(crate) const fn new(runtime: Runtime, definition: ToolDefinition) -> Self {
+        Self {
+            runtime,
+            definition,
+        }
     }
 }
 
@@ -322,10 +325,10 @@ impl Tool for DispatchedTool {
         let name = self.definition.name.clone();
         let subject = RunSubject {
             agent: format!("tool:{name}"),
-            harness: harness_id(&json!({ "tool": name, "budget": self.brain.config.budget })),
+            harness: harness_id(&json!({ "tool": name, "budget": self.runtime.config.budget })),
         };
         let mut session = session_for(
-            &self.brain,
+            &self.runtime,
             vec![name.clone()],
             TOOL_PURPOSE,
             DIRECT_RESULT_CHARS,

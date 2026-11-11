@@ -33,7 +33,7 @@ pub struct ServiceSpec {
     /// Its arguments.
     pub args: Vec<String>,
     /// The environment variables it may see. Its environment is otherwise
-    /// empty, so the brain's secrets don't reach it.
+    /// empty, so the runtime's secrets don't reach it.
     pub env_allow: Vec<String>,
     /// How long one call may take.
     pub timeout_secs: u32,
@@ -311,7 +311,7 @@ mod tests {
         r#"read line; printf '{"id":1,"result":{"seen":"%s"}}\n' "$CARGO_MANIFEST_DIR""#;
 
     #[tokio::test]
-    async fn the_brains_environment_does_not_reach_a_service() {
+    async fn the_runtimes_environment_does_not_reach_a_service() {
         let connection = Connection::open(&shell(SHOW_ENV, &[], 10)).unwrap();
         let result = connection.request("x", json!({})).await.unwrap();
         assert_eq!(result["seen"], "");

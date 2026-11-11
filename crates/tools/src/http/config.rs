@@ -46,7 +46,7 @@ impl Method {
     }
 }
 
-/// A key the brain attaches to requests for one host. The model never sees
+/// A key the runtime attaches to requests for one host. The model never sees
 /// its value.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -99,7 +99,8 @@ pub struct HttpConfig {
     /// How many redirects it follows.
     #[schemars(range(max = 10))]
     pub max_redirects: u32,
-    /// The `User-Agent` it sends.
+    /// The `User-Agent` it sends. Left at the default, the server sends the
+    /// program's name instead.
     #[schemars(length(min = 1, max = 256))]
     pub user_agent: String,
 }
@@ -140,7 +141,7 @@ impl Default for HttpConfig {
             max_read_bytes: 4 * 1024 * 1024,
             max_body_chars: 50_000,
             max_redirects: 5,
-            user_agent: "brain".to_owned(),
+            user_agent: "runtime".to_owned(),
         }
     }
 }

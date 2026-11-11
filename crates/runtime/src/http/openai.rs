@@ -1,7 +1,8 @@
 //! The `OpenAI`-compatible front door. A client sees one model, and behind it
-//! the whole brain: memory, tools, budgets and routing.
+//! the whole runtime: memory, tools, budgets and routing.
 
 use std::convert::Infallible;
+use std::sync::Arc;
 use std::time::Duration;
 
 use axum::Router;
@@ -24,7 +25,6 @@ use super::{ApiError, App, json_body};
 use crate::mcp::ChatInput;
 
 /// The one model a client sees.
-pub(super) const MODEL_ID: &str = "brain";
 const PURPOSE: &str = "chat";
 const MAX_CONTENT: usize = 1_000_000;
 
@@ -158,9 +158,13 @@ fn holds_something(field: Option<&Value>) -> bool {
 }
 
 /// Turns a client's request into a chat, or says why it can't be one.
-fn chat_input(request: OpenAiRequest, server_limit: u32) -> Result<ChatInput, String> {
-    if request.model != MODEL_ID {
-        return Err(format!("the only model here is {MODEL_ID}"));
+fn chat_input(
+    request: OpenAiRequest,
+    model_id: &str,
+    server_limit: u32,
+) -> Result<ChatInput, String> {
+    if request.model != model_id {
+        return Err(format!("the only model here is {model_id}"));
     }
     if holds_something(request.tools.as_ref()) {
         return Err("this server runs its own tools, so `tools` must be empty".to_owned());
@@ -256,7 +260,7 @@ fn answered(result: ChatResult) -> Result<(String, Receipt), (String, Box<Receip
     }
 }
 
-fn whole_reply(result: ChatResult) -> Response {
+fn whole_reply(result: ChatResult, model_id: &str) -> Response {
     match answered(result) {
         Ok((answer, receipt)) => {
             let (id, created) = identity(&receipt);
@@ -264,7 +268,7 @@ fn whole_reply(result: ChatResult) -> Response {
                 "id": id,
                 "object": "chat.completion",
                 "created": created,
-                "model": MODEL_ID,
+                "model": model_id,
                 "choices": [{
                     "index": 0,
                     "message": { "role": "assistant", "content": answer },
@@ -285,9 +289,9 @@ fn event(data: &Value) -> Event {
     Event::default().data(data.to_string())
 }
 
-/// The events of a finished run. The brain doesn't stream tokens: the answer
+/// The events of a finished run. The runtime doesn't stream tokens: the answer
 /// is a single chunk, sent when the run is over.
-fn stream_events(result: ChatResult) -> Vec<Event> {
+fn stream_events(result: ChatResult, model_id: &str) -> Vec<Event> {
     let mut events = match answered(result) {
         Ok((answer, receipt)) => {
             let (id, created) = identity(&receipt);
@@ -296,7 +300,7 @@ fn stream_events(result: ChatResult) -> Vec<Event> {
                     "id": id,
                     "object": "chat.completion.chunk",
                     "created": created,
-                    "model": MODEL_ID,
+                    "model": model_id,
                     "choices": [{ "index": 0, "delta": delta, "finish_reason": finish }],
                 });
                 if let (Some(body), Some(extra)) = (body.as_object_mut(), extra.as_object()) {
@@ -323,10 +327,10 @@ fn stream_events(result: ChatResult) -> Vec<Event> {
     events
 }
 
-async fn list_models() -> axum::Json<Value> {
+async fn list_models(State(app): State<App>) -> axum::Json<Value> {
     axum::Json(json!({
         "object": "list",
-        "data": [{ "id": MODEL_ID, "object": "model", "created": 0, "owned_by": "local" }],
+        "data": [{ "id": app.model_id.as_ref(), "object": "model", "created": 0, "owned_by": "local" }],
     }))
 }
 
@@ -340,8 +344,8 @@ async fn chat_completions(State(app): State<App>, headers: HeaderMap, body: Byte
         Err(refusal) => return invalid(&refusal.to_string()),
     };
     let streaming = request.stream.unwrap_or(false);
-    let server_limit = app.brain.config.max_output_tokens;
-    let input = match chat_input(request, server_limit) {
+    let server_limit = app.runtime.config.max_output_tokens;
+    let input = match chat_input(request, &app.model_id, server_limit) {
         Ok(input) => input,
         Err(why) => return invalid(&why),
     };
@@ -349,16 +353,17 @@ async fn chat_completions(State(app): State<App>, headers: HeaderMap, body: Byte
         Ok(permit) => permit,
         Err(error) => return from_api(&error),
     };
-    let brain = app.brain.clone();
+    let runtime = app.runtime.clone();
+    let model_id = Arc::clone(&app.model_id);
     // Spawned before any reply, so a client hanging up can't cut a run short.
     let run = tokio::spawn(async move {
         let _held = permit;
-        brain.chat_with(input, PURPOSE).await
+        runtime.chat_with(input, PURPOSE).await
     });
     if streaming {
         let events = stream::once(async move {
             match run.await {
-                Ok(Ok(result)) => stream_events(result),
+                Ok(Ok(result)) => stream_events(result, &model_id),
                 Ok(Err(failure)) => vec![event(&error_body("server_error", &failure.0, None))],
                 Err(error) => vec![event(&error_body("server_error", &error.to_string(), None))],
             }
@@ -369,7 +374,7 @@ async fn chat_completions(State(app): State<App>, headers: HeaderMap, body: Byte
             .into_response()
     } else {
         match run.await {
-            Ok(Ok(result)) => whole_reply(result),
+            Ok(Ok(result)) => whole_reply(result, &model_id),
             Ok(Err(failure)) => wire_error(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "server_error",
@@ -392,6 +397,8 @@ mod tests {
     use super::*;
     use proptest::prelude::*;
 
+    const MODEL_ID: &str = "product";
+
     fn request(extra: &Value) -> OpenAiRequest {
         let mut body = json!({
             "model": MODEL_ID,
@@ -404,7 +411,7 @@ mod tests {
     }
 
     fn refused(extra: &Value) -> String {
-        chat_input(request(extra), 100).unwrap_err()
+        chat_input(request(extra), MODEL_ID, 100).unwrap_err()
     }
 
     #[test]
@@ -419,6 +426,7 @@ mod tests {
                     { "type": "text", "text": "three" }, { "type": "text", "text": "four" }
                 ] },
             ] })),
+            MODEL_ID,
             100,
         )
         .unwrap();
@@ -429,7 +437,11 @@ mod tests {
 
     #[test]
     fn a_client_cant_raise_the_servers_output_limit() {
-        let limit = |extra: Value| chat_input(request(&extra), 100).unwrap().max_output_tokens;
+        let limit = |extra: Value| {
+            chat_input(request(&extra), MODEL_ID, 100)
+                .unwrap()
+                .max_output_tokens
+        };
         assert_eq!(limit(json!({})), 100);
         assert_eq!(limit(json!({ "max_tokens": 5000 })), 100);
         assert_eq!(limit(json!({ "max_tokens": 5 })), 5);
@@ -465,7 +477,7 @@ mod tests {
     #[test]
     fn harmless_empties_are_accepted() {
         let extra = json!({ "tools": [], "response_format": { "type": "text" }, "top_p": 1 });
-        chat_input(request(&extra), 100).unwrap();
+        chat_input(request(&extra), MODEL_ID, 100).unwrap();
     }
 
     proptest! {
@@ -479,7 +491,7 @@ mod tests {
                     .get(usize::from(*role)).copied().unwrap_or("user");
                 json!({ "role": name, "content": text })
             }).collect();
-            let _ = chat_input(request(&json!({ "messages": messages })), 10);
+            let _ = chat_input(request(&json!({ "messages": messages })), MODEL_ID, 10);
         }
     }
 }

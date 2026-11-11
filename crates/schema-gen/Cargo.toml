@@ -9,7 +9,7 @@ repository.workspace = true
 publish = false
 
 [dependencies]
-brain = { path = "../brain" }
+runtime = { path = "../runtime" }
 plugin-api = { path = "../plugin-api" }
 plugin-host = { path = "../plugin-host" }
 dispatch = { path = "../dispatch" }

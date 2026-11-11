@@ -1,5 +1,5 @@
 # Files where the product's name may appear. Everywhere else, code says "the
-# brain" or uses crate paths, so a rename stays a small scripted change.
+# runtime" or uses crate paths, so a rename stays a small scripted change.
 # One path or git pathspec glob per line.
 README.md
 CHANGELOG.md
@@ -20,5 +20,6 @@ Dockerfile
 compose.yaml
 .env.example
 tests/done/*
+scripts/done_test.sh
 scripts/name-allowlist
 scripts/check_name.sh

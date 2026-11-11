@@ -1,4 +1,4 @@
-//! The memory service: what the `memory` tool and the brain's own loops use.
+//! The memory service: what the `memory` tool and the runtime's own loops use.
 
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -33,7 +33,7 @@ pub struct NewNote {
     pub source_url: Option<String>,
 }
 
-/// What the brain says about where a note came from. None of it is the model's.
+/// What the runtime says about where a note came from. None of it is the model's.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NoteOrigin {
     /// Who may see it.

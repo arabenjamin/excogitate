@@ -21,7 +21,7 @@ or roles yet, so whoever holds the key is the owner.
 proxy in front before exposing it, or the key crosses the network in clear text.
 
 **A request with an `Origin` header is refused** unless `server.allowed_origins`
-in `brain.yaml` lists that origin, and no CORS headers are sent. This keeps web
+in `config.yaml` lists that origin, and no CORS headers are sent. This keeps web
 pages away from a server on your machine.
 
 A body can be at most 8 MiB. Chats and tool calls run at most
@@ -41,15 +41,15 @@ session and opens no event stream, so `GET` answers 405.
 ## The front door
 
 Point any OpenAI client at `http://127.0.0.1:8080/v1`. It sees one model,
-`brain`, and behind it the whole brain: memory, tools, budgets and routing. The
+`excogitate`, and behind it all of Excogitate: memory, tools, budgets and routing. The
 models that actually answer are the ones in `models.yaml`.
 
-- Your `system` and `developer` messages are added after the brain's own
+- Your `system` and `developer` messages are added after Excogitate's own
   instructions and don't replace them.
 - `max_tokens` can only lower the server's own limit.
 - Replies carry an extra `receipt` of what actually ran.
-- With `stream: true`, the answer arrives as one chunk when the run ends. The
-  brain doesn't stream tokens, and sends keep-alive comments while it works.
+- With `stream: true`, the answer arrives as one chunk when the run ends. Excogitate
+  doesn't stream tokens, and sends keep-alive comments while it works.
 - A run that ends without an answer is a 502 of type `run_stopped`, with its
   receipt. While streaming, it's an `error` event.
 

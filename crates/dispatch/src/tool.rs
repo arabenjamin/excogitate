@@ -38,7 +38,7 @@ pub(crate) struct Registered {
     pub(crate) output: Validator,
 }
 
-/// Every tool the brain has. What a run may call is a subset of these.
+/// Every tool the runtime has. What a run may call is a subset of these.
 #[derive(Debug, Default)]
 pub struct ToolRegistry {
     tools: BTreeMap<String, Registered>,

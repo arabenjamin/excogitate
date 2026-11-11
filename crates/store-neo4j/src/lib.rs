@@ -1,5 +1,5 @@
 //! A store on a Neo4j database. It implements the same port as the default
-//! store and passes the same conformance suite, so the brain above it can't
+//! store and passes the same conformance suite, so the runtime above it can't
 //! tell which one it has. `docs/store.md` describes the graph it writes.
 //!
 //! Every write in a unit runs in one Neo4j transaction. The job queue and

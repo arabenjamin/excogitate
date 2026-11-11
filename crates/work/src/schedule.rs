@@ -57,7 +57,7 @@ pub struct Schedule {
     #[serde(default = "one")]
     #[schemars(range(min = 1, max = 10))]
     pub max_attempts: u32,
-    /// How late a run may start after the brain was down. An older run is
+    /// How late a run may start after the runtime was down. An older run is
     /// skipped.
     #[serde(default = "hour")]
     #[schemars(range(max = 604_800))]

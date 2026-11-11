@@ -1,21 +1,21 @@
 # What scripts/done_test.sh adds to compose.yaml: a scripted model, a hostile
-# one, and settings that point the brain at them.
+# one, and settings that point the runtime at them.
 services:
-  brain:
+  session:
     environment:
       EXCOGITATE_OWNER_KEY: done-test-owner-key-of-sufficient-length
     volumes:
       - ./tests/done/models.yaml:/config/models.yaml:ro
-      - ./tests/done/brain.yaml:/config/brain.yaml:ro
+      - ./tests/done/config.yaml:/config/config.yaml:ro
 
   server:
     environment:
       EXCOGITATE_OWNER_KEY: done-test-owner-key-of-sufficient-length
     volumes:
       - ./tests/done/models.yaml:/config/models.yaml:ro
-      - ./tests/done/brain.yaml:/config/brain.yaml:ro
+      - ./tests/done/config.yaml:/config/config.yaml:ro
 
-  brain_chaos:
+  session_chaos:
     image: excogitate:local
     stdin_open: true
     read_only: true
@@ -23,7 +23,7 @@ services:
       - /tmp
     volumes:
       - ./tests/done/models.chaos.yaml:/config/models.yaml:ro
-      - ./tests/done/brain.yaml:/config/brain.yaml:ro
+      - ./tests/done/config.yaml:/config/config.yaml:ro
       - chaos-data:/data
 
   fixture:
@@ -77,7 +77,7 @@ services:
       - 127.0.0.1:${HARNESS_PORT:-18475}:8080
     volumes:
       - ./tests/done/models.harness.yaml:/config/models.yaml:ro
-      - ./tests/done/brain.harness.yaml:/config/brain.yaml:ro
+      - ./tests/done/config.harness.yaml:/config/config.yaml:ro
       - ${HARNESS_DEFINITIONS:-./definitions}:/config/definitions
       - harness-data:/data
 
@@ -112,12 +112,12 @@ services:
       - 127.0.0.1:${NEO4J_PORT:-18477}:8080
     volumes:
       - ./tests/done/models.yaml:/config/models.yaml:ro
-      - ./tests/done/brain.yaml:/config/brain.yaml:ro
+      - ./tests/done/config.yaml:/config/config.yaml:ro
       - neo4j-server-data:/data
 
   # A stdio session on the same graph, beside the server. The event log
   # stays in a file, so it has a data directory of its own.
-  neo4j_brain:
+  neo4j_session:
     image: excogitate:local
     stdin_open: true
     read_only: true
@@ -126,11 +126,11 @@ services:
     environment: *on_neo4j
     volumes:
       - ./tests/done/models.yaml:/config/models.yaml:ro
-      - ./tests/done/brain.yaml:/config/brain.yaml:ro
-      - neo4j-brain-data:/data
+      - ./tests/done/config.yaml:/config/config.yaml:ro
+      - neo4j-session-data:/data
 
 volumes:
   chaos-data:
   harness-data:
   neo4j-server-data:
-  neo4j-brain-data:
+  neo4j-session-data:

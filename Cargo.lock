@@ -68,9 +68,9 @@ checksum = "940b3a0ca603d1eade50a4846a2afffd5ef57a9feac2c0e2ec2e14f9ead76000"
 name = "app"
 version = "0.3.0"
 dependencies = [
- "brain",
  "plugin-api",
  "plugin-example",
+ "runtime",
  "tokio",
 ]
 
@@ -461,43 +461,6 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 3.0.10",
-]
-
-[[package]]
-name = "brain"
-version = "0.3.0"
-dependencies = [
- "async-trait",
- "axum",
- "chaos-model",
- "chrono",
- "dispatch",
- "events",
- "futures-util",
- "harness",
- "memory",
- "model",
- "plugin-api",
- "proptest",
- "protocol",
- "reqwest",
- "schema",
- "schemars",
- "serde",
- "serde-saphyr",
- "serde_json",
- "sha2",
- "store",
- "store-duckdb",
- "store-memory",
- "store-neo4j",
- "subtle",
- "thiserror 2.0.21",
- "tokio",
- "tools",
- "uuid",
- "work",
- "workflow",
 ]
 
 [[package]]
@@ -2692,6 +2655,43 @@ dependencies = [
 ]
 
 [[package]]
+name = "runtime"
+version = "0.3.0"
+dependencies = [
+ "async-trait",
+ "axum",
+ "chaos-model",
+ "chrono",
+ "dispatch",
+ "events",
+ "futures-util",
+ "harness",
+ "memory",
+ "model",
+ "plugin-api",
+ "proptest",
+ "protocol",
+ "reqwest",
+ "schema",
+ "schemars",
+ "serde",
+ "serde-saphyr",
+ "serde_json",
+ "sha2",
+ "store",
+ "store-duckdb",
+ "store-memory",
+ "store-neo4j",
+ "subtle",
+ "thiserror 2.0.21",
+ "tokio",
+ "tools",
+ "uuid",
+ "work",
+ "workflow",
+]
+
+[[package]]
 name = "rustc-hash"
 version = "2.1.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2875,12 +2875,12 @@ dependencies = [
 name = "schema-gen"
 version = "0.3.0"
 dependencies = [
- "brain",
  "dispatch",
  "harness",
  "model",
  "plugin-api",
  "plugin-host",
+ "runtime",
  "schema",
  "serde_json",
  "store",
