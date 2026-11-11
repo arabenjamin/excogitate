@@ -9,6 +9,7 @@ use plugin_api::{
 };
 use store::{Store, StoreError};
 
+use crate::guarded::{CapabilitySource, GuardedTool, SpendMeter};
 use crate::service::{self, ServiceError, ServiceSpec};
 use crate::{PluginsConfig, ScopedRecords};
 
@@ -88,6 +89,16 @@ pub struct PluginHost {
     config: PluginsConfig,
     registry: ToolRegistry,
     installed: BTreeSet<String>,
+    source: Option<Arc<dyn CapabilitySource>>,
+}
+
+/// What a plugin is handed, and how its tools must be guarded.
+struct Granted {
+    capabilities: Capabilities,
+    /// Set when it can call a model: its calls' cost is charged from here.
+    meter: Option<Arc<SpendMeter>>,
+    /// Whether it can bring in outside text, so its output is untrusted.
+    guarded: bool,
 }
 
 fn compare_tools(manifest: &PluginManifest, tools: &[Arc<dyn Tool>]) -> Result<(), HostError> {
@@ -132,7 +143,16 @@ impl PluginHost {
             config,
             registry,
             installed: BTreeSet::new(),
+            source: None,
         }
+    }
+
+    /// Where the `http` and `model` capabilities come from. Without one, a
+    /// plugin that asks for either is refused as not available.
+    #[must_use]
+    pub fn with_capabilities(mut self, source: Arc<dyn CapabilitySource>) -> Self {
+        self.source = Some(source);
+        self
     }
 
     fn claim_name(&self, manifest: &PluginManifest) -> Result<(), HostError> {
@@ -143,8 +163,13 @@ impl PluginHost {
     }
 
     /// Builds the capabilities a plugin declared, if each was granted.
-    fn capabilities(&self, manifest: &PluginManifest) -> Result<Capabilities, HostError> {
+    fn capabilities(&self, manifest: &PluginManifest) -> Result<Granted, HostError> {
         let mut capabilities = Capabilities::default();
+        let mut meter = None;
+        let not_available = |capability: &PluginCapability| HostError::NotAvailable {
+            plugin: manifest.name.clone(),
+            capability: *capability,
+        };
         for capability in &manifest.capabilities {
             if !self.config.granted(&manifest.name, *capability) {
                 return Err(HostError::NotGranted {
@@ -159,15 +184,30 @@ impl PluginHost {
                         &manifest.name,
                     )));
                 }
-                PluginCapability::Http | PluginCapability::Model => {
-                    return Err(HostError::NotAvailable {
-                        plugin: manifest.name.clone(),
-                        capability: *capability,
-                    });
+                PluginCapability::Http => {
+                    let source = self
+                        .source
+                        .as_ref()
+                        .ok_or_else(|| not_available(capability))?;
+                    capabilities.http = Some(source.http(&manifest.name));
+                }
+                PluginCapability::Model => {
+                    let source = self
+                        .source
+                        .as_ref()
+                        .ok_or_else(|| not_available(capability))?;
+                    let spent = Arc::new(SpendMeter::default());
+                    capabilities.model = Some(source.model(&manifest.name, Arc::clone(&spent)));
+                    meter = Some(spent);
                 }
             }
         }
-        Ok(capabilities)
+        let guarded = capabilities.http.is_some() || capabilities.model.is_some();
+        Ok(Granted {
+            capabilities,
+            meter,
+            guarded,
+        })
     }
 
     fn register_tools(
@@ -190,14 +230,27 @@ impl PluginHost {
     pub async fn install_compiled(&mut self, plugin: &dyn Plugin) -> Result<(), HostError> {
         let manifest = PluginManifest::from_yaml(plugin.manifest())?;
         self.claim_name(&manifest)?;
-        let capabilities = self.capabilities(&manifest)?;
+        let granted = self.capabilities(&manifest)?;
         let tools = plugin
-            .tools(&capabilities)
+            .tools(&granted.capabilities)
             .map_err(|source| HostError::Setup {
                 plugin: manifest.name.clone(),
                 source,
             })?;
         compare_tools(&manifest, &tools)?;
+        let tools = if granted.guarded {
+            tools
+                .into_iter()
+                .map(|inner| {
+                    Arc::new(GuardedTool {
+                        inner,
+                        meter: granted.meter.clone(),
+                    }) as Arc<dyn Tool>
+                })
+                .collect()
+        } else {
+            tools
+        };
         if let Some(records) = &manifest.records {
             self.store
                 .register_records(records)
@@ -396,7 +449,7 @@ mod tests {
         let manifest = PluginManifest::from_yaml(&manifest_text("")).unwrap();
         let capabilities = host.capabilities(&manifest).unwrap();
         assert!(matches!(
-            capabilities.records(),
+            capabilities.capabilities.records(),
             Err(CapabilityError::NotGranted(PluginCapability::Records))
         ));
     }

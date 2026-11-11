@@ -107,13 +107,17 @@ pub struct HttpRequest {
 pub struct HttpResponse {
     /// The status code.
     pub status: u16,
-    /// The body, cut to the host's limit.
+    /// The body, cut to the host's limit. Empty when there's none to give.
     pub body: String,
     /// Whether the body was cut.
     pub truncated: bool,
+    /// Why the body is missing, such as a type that isn't text.
+    pub note: Option<String>,
 }
 
-/// HTTP through the runtime.
+/// HTTP through the runtime, under the same network rules as the
+/// `http_request` tool. What comes back is untrusted, and so is everything
+/// a plugin holding this capability returns.
 #[async_trait]
 pub trait HttpCapability: Send + Sync + std::fmt::Debug {
     /// Makes a request. Private addresses are refused by the host.
@@ -121,19 +125,39 @@ pub trait HttpCapability: Send + Sync + std::fmt::Debug {
     /// # Errors
     ///
     /// [`CapabilityError`] if it's refused or fails.
-    async fn request(&self, request: HttpRequest) -> Result<HttpResponse, CapabilityError>;
+    async fn request(
+        &self,
+        request: HttpRequest,
+        context: ToolContext,
+    ) -> Result<HttpResponse, CapabilityError>;
+}
+
+/// A model's answer, and what it cost.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ModelReply {
+    /// The text it returned.
+    pub text: String,
+    /// The model that answered.
+    pub model: String,
+    /// What the call cost, in millionths of a dollar. The host charges it to
+    /// the run whatever the plugin reports.
+    pub cost_usd_micros: u64,
 }
 
 /// One-shot model calls, routed and charged by the runtime.
 #[async_trait]
 pub trait ModelCapability: Send + Sync + std::fmt::Debug {
-    /// Asks a model. The runtime picks the model, under the run's privacy class.
+    /// Asks a model. The runtime picks the model, under the run's privacy
+    /// class and within what's left of its budget.
     ///
     /// # Errors
     ///
     /// [`CapabilityError`] if it's refused or fails.
-    async fn complete(&self, prompt: &str, context: ToolContext)
-    -> Result<String, CapabilityError>;
+    async fn complete(
+        &self,
+        prompt: &str,
+        context: ToolContext,
+    ) -> Result<ModelReply, CapabilityError>;
 }
 
 /// The capabilities handed to a plugin: those it declared and was granted.

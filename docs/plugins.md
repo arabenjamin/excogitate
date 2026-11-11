@@ -25,11 +25,20 @@ deployment granted, in `plugins.yaml` (schema:
 `schemas/v1/plugins_config.schema.json`). Anything not listed there is granted
 nothing.
 
-| Capability | What it gives | Status |
-|---|---|---|
-| `records` | The plugin's own records in the store, and no one else's. | Available |
-| `http` | HTTP through Excogitate's network rules. | Interface only; a plugin asking for it is refused until the host has it |
-| `model` | One-shot model calls, routed and charged by Excogitate. | Interface only, as above |
+| Capability | What it gives |
+|---|---|
+| `records` | The plugin's own records in the store, and no one else's. |
+| `http` | HTTP through `http_request` itself, in raw mode: the same address guard, redirect checks, credentials and size limits a model's call gets, and the same argument schema. |
+| `model` | One-shot model calls through the gateway, under the calling run's privacy class and within what's left of its budget. |
+
+**What the host enforces for `http` and `model`.** A plugin holding either
+can bring in text from outside or from a model, so everything its tools
+return is labelled untrusted, whatever the plugin says. What its model calls
+cost is charged to the run's receipt and budget, even if the plugin reports
+less. The day's spend log sees every call. One gap: when the tool call
+itself fails, what its model calls cost is in the spend log but not on the
+run's receipt. A plugin's model calls are for `plugin:<name>`, so a paid
+provider serves them only if its `paid_for` lists that.
 
 No capability lets a plugin call another tool. Excogitate sets each record's
 provenance, and the privacy class comes from the run.
