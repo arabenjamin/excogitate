@@ -1,0 +1,122 @@
+# Made-up notes and questions for the retrieval eval. None of it is real.
+#
+# `synonyms` stands in for what an embedding model knows: the eval's test
+# embedder maps each word to its group before hashing, so a query can reach a
+# note through meaning alone. `kind` says which path a case is built to need.
+
+synonyms:
+  - [car, vehicle, automobile, sedan]
+  - [fix, repair, mend, service]
+  - [house, home, residence, cottage]
+  - [doctor, physician, clinic, medical]
+  - [money, budget, finances, spending]
+  - [boat, vessel, sailboat, ship]
+  - [garden, vegetables, allotment, planting]
+  - [dog, puppy, hound, canine]
+  - [travel, trip, journey, voyage]
+  - [bread, loaf, sourdough, baking]
+  - [roof, shingles, gutters, leak]
+  - [piano, keyboard, recital, lessons]
+
+# Words the stand-in embedder can't see, as a real one has no grip on rare
+# names. Anything with a digit in it is also invisible to it.
+unknown_to_embedders: [ausable, isopropyl, sage, mist]
+
+notes:
+  - id: oil
+    title: Sedan oil change
+    body: The sedan went to the garage for an oil change and new wiper blades in the spring.
+  - id: brakes
+    title: Brake pads
+    body: Replaced the front brake pads with part number BP-4471 after the squeal came back.
+  - id: tires
+    title: Winter tires
+    body: Winter tires are stored in the shed and go on the wheels when frost arrives.
+  - id: roof
+    title: Roof estimate
+    body: The contractor quoted 8200 dollars to replace the shingles and clean the gutters.
+  - id: cottage
+    title: Lake cottage rental
+    body: Rented the cottage by the lake for two weeks in July, with a canoe included.
+  - id: paint
+    title: Bedroom paint
+    body: The bedroom walls took two coats of a pale green called Sage Mist 311.
+  - id: clinic
+    title: Annual checkup
+    body: The physician at the clinic ordered blood work and said to come back in a year.
+  - id: dentist
+    title: Dentist visit
+    body: Two fillings on the left side, with the next cleaning booked for 14 March 2027.
+  - id: budget
+    title: Monthly budget
+    body: Spending on groceries ran over this month, so the eating out allowance was cut.
+  - id: taxes
+    title: Tax return
+    body: Filed the 2026 return early and expect a refund from form 1040-X corrections.
+  - id: sailboat
+    title: Sailboat storage
+    body: The sailboat is hauled out at the marina every November and shrink wrapped.
+  - id: kayak
+    title: Kayak trip
+    body: Paddled the kayak down the Ausable river and camped on a sandbar overnight.
+  - id: tomatoes
+    title: Tomato planting
+    body: Planting the tomatoes after the last frost worked better than starting them early.
+  - id: compost
+    title: Compost bin
+    body: Turning the compost weekly with a fork cut the smell and sped everything up.
+  - id: puppy
+    title: Puppy training
+    body: The puppy learned to sit and stay in three weeks with small treats after each try.
+  - id: vet
+    title: Vet appointment
+    body: The vet gave the rabies booster, lot number RB-2209, and trimmed the nails.
+  - id: flight
+    title: Flight to Lisbon
+    body: The voyage to Lisbon leaves on flight TP-218 with a four hour layover in Newark.
+  - id: passport
+    title: Passport renewal
+    body: The passport expires in June, and renewal takes about eight weeks by mail.
+  - id: sourdough
+    title: Sourdough starter
+    body: Feed the sourdough starter twice a day for a week before baking the first loaf.
+  - id: soup
+    title: Lentil soup
+    body: Lentil soup needs cumin and a squeeze of lemon right at the end of cooking.
+  - id: piano
+    title: Piano lessons
+    body: Weekly lessons moved to Thursday, and the recital is set for the end of May.
+  - id: bike
+    title: Bicycle chain
+    body: The bicycle chain snapped on the hill and a new 11-speed one fixed the shifting.
+  - id: router
+    title: Wifi router
+    body: Rebooting the router and moving it upstairs got rid of the dead spot in the den.
+  - id: printer
+    title: Printer jam
+    body: The printer kept jamming until the rear roller was cleaned with isopropyl alcohol.
+
+cases:
+  # Exact tokens: codes and numbers that only full text can match.
+  - {query: "BP-4471", expect: brakes, kind: keyword}
+  - {query: "form 1040-X", expect: taxes, kind: keyword}
+  - {query: "8200", expect: roof, kind: keyword}
+  - {query: "TP-218", expect: flight, kind: keyword}
+  - {query: "RB-2209", expect: vet, kind: keyword}
+  - {query: "Sage Mist 311", expect: paint, kind: keyword}
+  - {query: "Ausable", expect: kayak, kind: keyword}
+  - {query: "isopropyl", expect: printer, kind: keyword}
+  # Meaning: the query shares no word with the note.
+  - {query: "automobile", expect: oil, kind: semantic}
+  - {query: "residence", expect: cottage, kind: semantic}
+  - {query: "hound", expect: puppy, kind: semantic}
+  - {query: "ship", expect: sailboat, kind: semantic}
+  - {query: "journey", expect: flight, kind: semantic}
+  - {query: "finances", expect: budget, kind: semantic}
+  - {query: "allotment", expect: tomatoes, kind: semantic}
+  - {query: "keyboard", expect: piano, kind: semantic}
+  # Both: words from the note, with a synonym alongside.
+  - {query: "physician blood work", expect: clinic, kind: both}
+  - {query: "loaf starter feeding", expect: sourdough, kind: both}
+  - {query: "canine rabies booster", expect: vet, kind: both}
+  - {query: "residence canoe lake", expect: cottage, kind: both}
