@@ -32,7 +32,9 @@ schemas, budgets, and memory. Excogitate is that harness.
   runs, and adopts only the changes the evidence supports. It tells you of
   each one, and you can revert any of them.
 - **It needs no database server.** Memory, retrieval and the job queue live
-  in an embedded DuckDB file. Other stores plug in behind the same port.
+  in an embedded DuckDB file. Other stores plug in behind the same port,
+  and a [Neo4j store](docs/store.md#the-neo4j-store) comes with it, behind a
+  build feature.
 - **It takes no side on models.** It works with any endpoint that speaks the
   OpenAI wire format, local or cloud.
 - **It ships two tools,** `http_request` and `memory`. Everything else comes

@@ -22,10 +22,14 @@ pub const DIMENSION: usize = 3;
 
 /// Generates one `#[tokio::test]` per conformance case. The caller needs
 /// `tokio` as a dev-dependency.
+///
+/// A store whose cases share one database passes `held` and an expression
+/// giving `(store, guard)`. The guard is held until the case ends, so the
+/// cases can take turns with the database.
 #[macro_export]
 macro_rules! store_conformance {
-    ($make:expr) => {
-        $crate::store_conformance!(@cases $make;
+    (@list [$store:ident] $bind:pat = $make:expr) => {
+        $crate::store_conformance!(@cases [$store] ($bind) $make;
             note_round_trip, a_missing_note_is_none, creating_a_duplicate_note_conflicts,
             update_checks_the_version, find_note_by_hash_finds_the_copy,
             deleting_a_note_removes_its_chunks, chunks_list_in_order,
@@ -55,13 +59,19 @@ macro_rules! store_conformance {
             settling_never_goes_below_zero, jobs_list_newest_first_and_by_status
         );
     };
-    (@cases $make:expr; $($case:ident),+ $(,)?) => {
+    (@cases [$store:ident] ($bind:pat) $make:expr; $($case:ident),+ $(,)?) => {
         $(
             #[tokio::test]
             async fn $case() {
-                let store = $make;
-                $crate::cases::$case(&store).await;
+                let $bind = $make;
+                $crate::cases::$case(&$store).await;
             }
         )+
+    };
+    (held $make:expr) => {
+        $crate::store_conformance!(@list [store] (store, _held) = $make);
+    };
+    ($make:expr) => {
+        $crate::store_conformance!(@list [store] store = $make);
     };
 }

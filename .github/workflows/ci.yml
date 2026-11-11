@@ -101,6 +101,22 @@ jobs:
     needs: changes
     if: needs.changes.outputs.rust == 'true'
     runs-on: ubuntu-24.04
+    # A scratch database for the Neo4j store's conformance cases. Required,
+    # so they can't quietly skip here.
+    services:
+      neo4j:
+        image: neo4j:5.26.21-community@sha256:409728716bc239f9fa046368ac6ce6ef280f9e5f0bcb7cdd75031a4465cc192d
+        env:
+          NEO4J_AUTH: neo4j/conformance-only
+        ports:
+          - 7687:7687
+        options: >-
+          --health-cmd "cypher-shell -u neo4j -p conformance-only 'RETURN 1'"
+          --health-interval 5s --health-timeout 10s --health-retries 30
+    env:
+      NEO4J_TEST_URI: bolt://localhost:7687
+      NEO4J_TEST_PASSWORD: conformance-only
+      NEO4J_TEST_REQUIRED: "1"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - run: rustup toolchain install

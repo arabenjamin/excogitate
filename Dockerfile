@@ -3,7 +3,10 @@
 FROM rust:1.99.1-trixie AS build
 WORKDIR /src
 COPY . .
-RUN cargo build --locked --release -p app -p chaos-model --bin excogitate --bin fixture
+# Optional features, such as app/neo4j for the Neo4j store.
+ARG FEATURES=""
+RUN cargo build --locked --release -p app -p chaos-model --bin excogitate --bin fixture \
+    --features "$FEATURES"
 RUN mkdir /out \
     && cp target/release/excogitate target/release/fixture /out/ \
     && cp "$(find target/release/build -name libduckdb.so -print -quit)" /out/ \

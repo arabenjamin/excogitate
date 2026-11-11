@@ -81,6 +81,56 @@ services:
       - ${HARNESS_DEFINITIONS:-./definitions}:/config/definitions
       - harness-data:/data
 
+  # A scratch graph for the Neo4j store's section.
+  neo4j:
+    image: neo4j:5.26.21-community@sha256:409728716bc239f9fa046368ac6ce6ef280f9e5f0bcb7cdd75031a4465cc192d
+    environment:
+      NEO4J_AUTH: neo4j/done-test-only
+    healthcheck:
+      test: [CMD, cypher-shell, -u, neo4j, -p, done-test-only, RETURN 1]
+      interval: 2s
+      timeout: 10s
+      retries: 60
+
+  neo4j_server:
+    image: excogitate:local
+    command: [server]
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    environment: &on_neo4j
+      EXCOGITATE_OWNER_KEY: done-test-owner-key-of-sufficient-length
+      EXCOGITATE_BIND: 0.0.0.0:8080
+      EXCOGITATE_STORE: neo4j
+      EXCOGITATE_NEO4J_URI: bolt://neo4j:7687
+      EXCOGITATE_NEO4J_PASSWORD: done-test-only
+    ports:
+      - 127.0.0.1:${NEO4J_PORT:-18477}:8080
+    volumes:
+      - ./tests/done/models.yaml:/config/models.yaml:ro
+      - ./tests/done/brain.yaml:/config/brain.yaml:ro
+      - neo4j-server-data:/data
+
+  # A stdio session on the same graph, beside the server. The event log
+  # stays in a file, so it has a data directory of its own.
+  neo4j_brain:
+    image: excogitate:local
+    stdin_open: true
+    read_only: true
+    tmpfs:
+      - /tmp
+    environment: *on_neo4j
+    volumes:
+      - ./tests/done/models.yaml:/config/models.yaml:ro
+      - ./tests/done/brain.yaml:/config/brain.yaml:ro
+      - neo4j-brain-data:/data
+
 volumes:
   chaos-data:
   harness-data:
+  neo4j-server-data:
+  neo4j-brain-data:
