@@ -1,0 +1,190 @@
+{
+  "$defs": {
+    "Credential": {
+      "additionalProperties": false,
+      "description": "A key the brain attaches to requests for one host. The model never sees\nits value.",
+      "properties": {
+        "allow_insecure": {
+          "default": false,
+          "description": "Allow sending the key over plain http.",
+          "type": "boolean"
+        },
+        "env": {
+          "description": "The environment variable holding the key.",
+          "maxLength": 128,
+          "minLength": 1,
+          "type": "string"
+        },
+        "header": {
+          "description": "The header that carries it.",
+          "maxLength": 64,
+          "minLength": 1,
+          "type": "string"
+        },
+        "host": {
+          "description": "The exact host it's for. A subdomain doesn't count.",
+          "maxLength": 253,
+          "minLength": 1,
+          "type": "string"
+        },
+        "prefix": {
+          "default": "",
+          "description": "Text before the key, such as `Bearer `.",
+          "maxLength": 32,
+          "type": "string"
+        }
+      },
+      "required": [
+        "host",
+        "header",
+        "env"
+      ],
+      "type": "object"
+    },
+    "Method": {
+      "description": "An HTTP method.",
+      "oneOf": [
+        {
+          "const": "GET",
+          "description": "Reads.",
+          "type": "string"
+        },
+        {
+          "const": "HEAD",
+          "description": "Reads the headers only.",
+          "type": "string"
+        },
+        {
+          "const": "POST",
+          "description": "Creates or submits.",
+          "type": "string"
+        },
+        {
+          "const": "PUT",
+          "description": "Replaces.",
+          "type": "string"
+        },
+        {
+          "const": "PATCH",
+          "description": "Changes part of something.",
+          "type": "string"
+        },
+        {
+          "const": "DELETE",
+          "description": "Removes.",
+          "type": "string"
+        }
+      ]
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "Configuration for `http_request`.",
+  "properties": {
+    "allowed_methods": {
+      "default": [
+        "GET",
+        "HEAD"
+      ],
+      "description": "The methods a model may use. Any method but GET and HEAD can send\ndata out.",
+      "items": {
+        "$ref": "#/$defs/Method"
+      },
+      "maxItems": 6,
+      "minItems": 1,
+      "type": "array"
+    },
+    "allowed_ranges": {
+      "default": [],
+      "description": "Ranges it may reach even if blocked, such as a service on your own\nnetwork.",
+      "items": {
+        "maxLength": 64,
+        "type": "string"
+      },
+      "maxItems": 256,
+      "type": "array"
+    },
+    "blocked_ranges": {
+      "default": [
+        "0.0.0.0/8",
+        "10.0.0.0/8",
+        "100.64.0.0/10",
+        "127.0.0.0/8",
+        "169.254.0.0/16",
+        "172.16.0.0/12",
+        "192.0.0.0/24",
+        "192.168.0.0/16",
+        "198.18.0.0/15",
+        "224.0.0.0/4",
+        "240.0.0.0/4",
+        "::/96",
+        "fc00::/7",
+        "fe80::/10",
+        "fec0::/10",
+        "ff00::/8",
+        "64:ff9b::/96",
+        "64:ff9b:1::/48",
+        "2001::/32",
+        "2002::/16"
+      ],
+      "description": "Address ranges it may not reach, in CIDR form.",
+      "items": {
+        "maxLength": 64,
+        "type": "string"
+      },
+      "maxItems": 256,
+      "minItems": 1,
+      "type": "array"
+    },
+    "credentials": {
+      "default": [],
+      "description": "Keys to attach, by host.",
+      "items": {
+        "$ref": "#/$defs/Credential"
+      },
+      "maxItems": 64,
+      "type": "array"
+    },
+    "max_body_chars": {
+      "default": 50000,
+      "description": "The most text it returns.",
+      "format": "uint",
+      "maximum": 200000,
+      "minimum": 1,
+      "type": "integer"
+    },
+    "max_read_bytes": {
+      "default": 4194304,
+      "description": "The most of a response it reads.",
+      "format": "uint",
+      "maximum": 67108864,
+      "minimum": 1,
+      "type": "integer"
+    },
+    "max_redirects": {
+      "default": 5,
+      "description": "How many redirects it follows.",
+      "format": "uint32",
+      "maximum": 10,
+      "minimum": 0,
+      "type": "integer"
+    },
+    "timeout_seconds": {
+      "default": 30,
+      "description": "The most one call may take, redirects and reading included.",
+      "format": "uint64",
+      "maximum": 300,
+      "minimum": 1,
+      "type": "integer"
+    },
+    "user_agent": {
+      "default": "brain",
+      "description": "The `User-Agent` it sends.",
+      "maxLength": 256,
+      "minLength": 1,
+      "type": "string"
+    }
+  },
+  "title": "HttpConfig",
+  "type": "object"
+}

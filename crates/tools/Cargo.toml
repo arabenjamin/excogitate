@@ -1,0 +1,36 @@
+[package]
+name = "tools"
+description = "The two bundled tools: memory and http_request."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[dependencies]
+async-trait.workspace = true
+chrono.workspace = true
+html5ever = "0.40"
+ipnet = "2.12"
+memory = { path = "../memory" }
+plugin-api = { path = "../plugin-api" }
+protocol = { path = "../protocol" }
+reqwest = { version = "0.13", default-features = false, features = ["http2", "rustls"] }
+schema = { path = "../schema" }
+schemars.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+store = { path = "../store" }
+thiserror.workspace = true
+tokio = { workspace = true, features = ["net"] }
+url = "2.5"
+uuid = { workspace = true, features = ["serde"] }
+
+[dev-dependencies]
+axum.workspace = true
+proptest.workspace = true
+store-memory = { path = "../store-memory" }
+
+[lints]
+workspace = true

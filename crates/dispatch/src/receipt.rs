@@ -79,6 +79,8 @@ pub struct ToolEntry {
     pub untrusted: bool,
     /// How long it ran.
     pub duration_ms: u64,
+    /// What it spent, in millionths of a dollar.
+    pub cost_usd_micros: u64,
     /// What went wrong, when something did.
     #[schemars(length(max = 512))]
     pub detail: Option<String>,

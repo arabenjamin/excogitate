@@ -27,6 +27,10 @@ Every run has limits on rounds, tool calls, writes, tokens, money, request size
 and time, with no defaults (`schemas/v1/budget.schema.json`). A refused call
 still counts, so a loop of bad calls ends. Hitting one is final for the run.
 
+What a tool spends counts too. It's told how much money is left, and its cost
+goes on the receipt. A tool with both reads and writes says which each call
+is, so only real writes use the write budget.
+
 ## Receipts
 
 `Session::finish` returns the `Receipt`, built only from what dispatch saw.

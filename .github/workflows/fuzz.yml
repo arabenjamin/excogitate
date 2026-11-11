@@ -21,7 +21,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        target: [parse_chat, first_json_object, tool_arguments]
+        target: [parse_chat, first_json_object, tool_arguments, readable_text]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - run: rustup toolchain install "$NIGHTLY" --profile minimal

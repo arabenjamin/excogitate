@@ -62,6 +62,9 @@ pub struct ToolContext {
     pub run: RunId,
     /// The privacy class of the run's data.
     pub data_class: DataClass,
+    /// What's left of the run's money budget, in millionths of a dollar. A
+    /// tool that spends passes this on, so it can't overrun the run.
+    pub budget_usd_micros: u64,
 }
 
 /// What a tool returned.
@@ -72,6 +75,9 @@ pub struct ToolOutput {
     /// Whether it may be treated as instructions. Fetched content is
     /// untrusted, and the label goes to the model with it.
     pub trust: Trust,
+    /// What the call spent, in millionths of a dollar. It goes on the run's
+    /// receipt and against its budget.
+    pub cost_usd_micros: u64,
 }
 
 /// A tool could not do its job. Different from a poor result, which is still
@@ -85,6 +91,13 @@ pub struct ToolFailure(pub String);
 pub trait Tool: Send + Sync + std::fmt::Debug {
     /// What it declares about itself.
     fn definition(&self) -> ToolDefinition;
+
+    /// What this call can do to the world, once its arguments have met the
+    /// schema. Override it when one tool has both reads and writes; a read
+    /// must never be reported for something that changes anything.
+    fn effect_of(&self, _arguments: &Value) -> Effect {
+        self.definition().effect
+    }
 
     /// Does the work. `arguments` has already met the input schema.
     ///

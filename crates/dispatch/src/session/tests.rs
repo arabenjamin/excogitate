@@ -99,6 +99,7 @@ impl Tool for Fixture {
         Ok(ToolOutput {
             value,
             trust: self.trust,
+            cost_usd_micros: 0,
         })
     }
 }
@@ -294,6 +295,91 @@ async fn the_write_budget_stops_a_second_write() {
     assert_eq!(receipt.outcome, Outcome::BudgetHit);
     assert_eq!(receipt.budget_hit, Some(BudgetKind::Writes));
     assert_eq!(receipt.totals.writes, 1);
+}
+
+/// Spends money on each call, and counts as a read when its text says so.
+#[derive(Debug, Default)]
+struct Spender {
+    budgets_seen: Mutex<Vec<u64>>,
+}
+
+#[async_trait]
+impl Tool for Spender {
+    fn definition(&self) -> ToolDefinition {
+        ToolDefinition::for_types::<Input, Output>("spender", "a fixture", Effect::Write)
+    }
+
+    fn effect_of(&self, arguments: &Value) -> Effect {
+        if arguments["text"] == "read" {
+            Effect::Read
+        } else {
+            Effect::Write
+        }
+    }
+
+    async fn run(&self, _: Value, context: ToolContext) -> Result<ToolOutput, ToolFailure> {
+        self.budgets_seen
+            .lock()
+            .unwrap()
+            .push(context.budget_usd_micros);
+        Ok(ToolOutput {
+            value: json!({ "echoed": "hello" }),
+            trust: Trust::Trusted,
+            cost_usd_micros: 300,
+        })
+    }
+}
+
+fn spender_session(tool: &Arc<Spender>) -> Session {
+    let mut registry = ToolRegistry::new();
+    registry.register(tool.clone()).unwrap();
+    Session::new(
+        Arc::new(registry),
+        Arc::new(MemorySink::new()),
+        config(&["spender"], budget()),
+    )
+    .unwrap()
+}
+
+#[tokio::test]
+async fn what_a_tool_spends_reaches_the_budget_and_the_receipt() {
+    let tool = Arc::new(Spender::default());
+    let mut session = spender_session(&tool);
+    let read = r#"{"text":"read"}"#;
+    session.dispatch(&call("spender", read)).await;
+    session.dispatch(&call("spender", read)).await;
+    assert_eq!(*tool.budgets_seen.lock().unwrap(), vec![1000, 700]);
+    let receipt = session.finish(Outcome::Answered).await;
+    assert_eq!(receipt.totals.cost_usd_micros, 600);
+    assert_eq!(receipt.tool_calls[0].cost_usd_micros, 300);
+}
+
+#[tokio::test]
+async fn the_write_budget_goes_by_what_this_call_does() {
+    let tool = Arc::new(Spender::default());
+    let mut session = spender_session(&tool);
+    let read = r#"{"text":"read"}"#;
+    let write = r#"{"text":"write"}"#;
+    assert_eq!(
+        session.dispatch(&call("spender", read)).await.status,
+        CallStatus::Ran
+    );
+    assert_eq!(
+        session.dispatch(&call("spender", read)).await.status,
+        CallStatus::Ran
+    );
+    assert_eq!(
+        session.dispatch(&call("spender", write)).await.status,
+        CallStatus::Ran
+    );
+    assert_eq!(
+        session.dispatch(&call("spender", write)).await.status,
+        CallStatus::Refused
+    );
+    let receipt = session.finish(Outcome::Answered).await;
+    assert_eq!(receipt.totals.writes, 1);
+    assert_eq!(receipt.tool_calls[0].effect, Some(Effect::Read));
+    assert_eq!(receipt.tool_calls[2].effect, Some(Effect::Write));
 }
 
 #[tokio::test]

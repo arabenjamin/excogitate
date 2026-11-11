@@ -14,6 +14,7 @@ use serde_json::Value;
 fn generated() -> BTreeMap<&'static str, Value> {
     BTreeMap::from([
         ("budget", schema_of::<dispatch::Budget>()),
+        ("http_config", schema_of::<tools::HttpConfig>()),
         ("models_config", schema_of::<model::ModelsConfig>()),
         ("plugin_manifest", schema_of::<plugin_api::PluginManifest>()),
         ("plugins_config", schema_of::<plugin_host::PluginsConfig>()),

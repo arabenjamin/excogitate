@@ -13,7 +13,7 @@ mod fuse;
 mod service;
 
 pub use chunk::{ChunkConfig, Piece, chunk_text, estimate_tokens};
-pub use embed::{EmbedError, Embedder, GatewayEmbedder};
+pub use embed::{EmbedError, EmbedScope, Embedder, Embedding, GatewayEmbedder};
 pub use fuse::{FusedChunk, RRF_K, fuse};
 pub use service::{
     MAX_SEARCH_LIMIT, Memory, MemoryError, NewNote, NoteEdit, NoteHit, NoteOrigin, SearchMode,

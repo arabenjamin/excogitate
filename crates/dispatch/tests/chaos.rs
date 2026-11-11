@@ -70,6 +70,7 @@ impl Tool for Recording {
         Ok(ToolOutput {
             value: json!({ "page": self.page }),
             trust: Trust::Untrusted,
+            cost_usd_micros: 0,
         })
     }
 }

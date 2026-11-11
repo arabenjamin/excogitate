@@ -202,6 +202,12 @@
       "additionalProperties": false,
       "description": "One tool call, as it really went.",
       "properties": {
+        "cost_usd_micros": {
+          "description": "What it spent, in millionths of a dollar.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
         "detail": {
           "description": "What went wrong, when something did.",
           "maxLength": 512,
@@ -261,7 +267,8 @@
         "status",
         "truncated",
         "untrusted",
-        "duration_ms"
+        "duration_ms",
+        "cost_usd_micros"
       ],
       "type": "object"
     },

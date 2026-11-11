@@ -59,6 +59,8 @@ async fn call_tool(tools: &HashMap<String, Arc<dyn Tool>>, id: &Value, params: &
     let context = ToolContext {
         run: RunId::generate(),
         data_class: DataClass::Private,
+        // A separate process can't spend the run's money.
+        budget_usd_micros: 0,
     };
     let result = match tool.run(arguments, context).await {
         Ok(output) => json!({
@@ -203,6 +205,7 @@ mod tests {
             Ok(ToolOutput {
                 value: arguments,
                 trust: Trust::Untrusted,
+                cost_usd_micros: 0,
             })
         }
     }

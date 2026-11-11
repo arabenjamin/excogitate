@@ -10,7 +10,10 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use chrono::DateTime;
-use memory::{ChunkConfig, EmbedError, Embedder, Memory, NewNote, NoteOrigin, SearchMode};
+use memory::{
+    ChunkConfig, EmbedError, EmbedScope, Embedder, Embedding, Memory, NewNote, NoteOrigin,
+    SearchMode,
+};
 use protocol::{Actor, DataClass, Trust};
 use serde::Deserialize;
 use store::{ClassFilter, NoteId, PageRequest, Store};
@@ -105,8 +108,11 @@ impl Embedder for MeaningEmbedder {
         DIMENSION
     }
 
-    async fn embed(&self, inputs: &[String], _: DataClass) -> Result<Vec<Vec<f32>>, EmbedError> {
-        Ok(inputs.iter().map(|text| self.vector(text)).collect())
+    async fn embed(&self, inputs: &[String], _: EmbedScope) -> Result<Embedding, EmbedError> {
+        Ok(Embedding {
+            vectors: inputs.iter().map(|text| self.vector(text)).collect(),
+            cost_usd_micros: 0,
+        })
     }
 }
 
@@ -154,6 +160,7 @@ async fn load(golden: &Golden) -> Loaded {
                     trust: Trust::Trusted,
                     stored_by: Actor::new("eval"),
                 },
+                None,
                 DateTime::UNIX_EPOCH,
             )
             .await
@@ -171,6 +178,11 @@ async fn load(golden: &Golden) -> Loaded {
 }
 
 const K: u32 = 5;
+
+const SCOPE: EmbedScope = EmbedScope {
+    data_class: DataClass::Private,
+    budget_usd_micros: None,
+};
 
 /// Recall at K, and mean reciprocal rank, from each case's 1-based rank.
 #[expect(clippy::cast_precision_loss, reason = "small counts")]
@@ -191,7 +203,7 @@ fn rank_of(ids: &[NoteId], wanted: NoteId) -> Option<usize> {
 async fn hybrid_ids(loaded: &Loaded, query: &str) -> Vec<NoteId> {
     let results = loaded
         .memory
-        .search(query, ClassFilter::Any, DataClass::Private, K)
+        .search(query, ClassFilter::Any, SCOPE, K)
         .await
         .unwrap();
     assert_eq!(results.mode, SearchMode::Hybrid);
@@ -201,7 +213,7 @@ async fn hybrid_ids(loaded: &Loaded, query: &str) -> Vec<NoteId> {
 async fn keyword_ids(loaded: &Loaded, query: &str) -> Vec<NoteId> {
     let results = loaded
         .keyword_memory
-        .search(query, ClassFilter::Any, DataClass::Private, K)
+        .search(query, ClassFilter::Any, SCOPE, K)
         .await
         .unwrap();
     results.hits.iter().map(|hit| hit.note_id).collect()

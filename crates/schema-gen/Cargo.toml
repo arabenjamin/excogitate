@@ -16,6 +16,7 @@ model = { path = "../model" }
 schema = { path = "../schema" }
 serde_json.workspace = true
 store = { path = "../store" }
+tools = { path = "../tools" }
 
 [lints]
 workspace = true

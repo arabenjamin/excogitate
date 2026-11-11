@@ -318,6 +318,7 @@ mod tests {
             Ok(ToolOutput {
                 value: json!({}),
                 trust: Trust::Trusted,
+                cost_usd_micros: 0,
             })
         }
     }
@@ -354,6 +355,7 @@ mod tests {
         ToolContext {
             run: RunId::generate(),
             data_class: DataClass::Public,
+            budget_usd_micros: 0,
         }
     }
 
