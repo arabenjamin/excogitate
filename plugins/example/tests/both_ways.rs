@@ -7,7 +7,7 @@ use std::sync::Arc;
 use dispatch::{Budget, CallStatus, Outcome, Session, SessionConfig, ToolRegistry};
 use events::MemorySink;
 use model::ToolCall;
-use plugin_example::{ExamplePlugin, SERVICE_MANIFEST};
+use plugin_example::{ExamplePlugin, MANIFEST};
 use plugin_host::{HostError, PluginHost, PluginsConfig, ServiceSpec};
 use protocol::{DataClass, RunId};
 use serde_json::{Value, json};
@@ -143,21 +143,28 @@ fn service_spec() -> ServiceSpec {
 }
 
 fn service_host() -> PluginHost {
-    let store = Arc::new(MemoryStore::new(3));
+    service_host_on(Arc::new(MemoryStore::new(3)))
+}
+
+fn service_host_on(store: Arc<MemoryStore>) -> PluginHost {
     PluginHost::new(
         store as Arc<dyn Store>,
-        config("version: 1\nplugins: []\n"),
+        config(GRANTED),
         ToolRegistry::new(),
     )
 }
 
 #[tokio::test]
-async fn as_a_service_it_runs_in_its_own_process() {
-    let mut host = service_host();
-    host.install_service(SERVICE_MANIFEST, &service_spec())
+async fn as_a_service_it_runs_in_its_own_process_and_keeps_bookmarks() {
+    let store = Arc::new(MemoryStore::new(3));
+    let mut host = service_host_on(Arc::clone(&store));
+    host.install_service(MANIFEST, &service_spec())
         .await
         .unwrap();
-    let mut session = session(host.into_registry(), &["example_word_count"]);
+    let mut session = session(
+        host.into_registry(),
+        &["example_word_count", "example_bookmark_add"],
+    );
     let reply = session
         .dispatch(&call("example_word_count", &json!({ "text": "a b" })))
         .await;
@@ -165,12 +172,50 @@ async fn as_a_service_it_runs_in_its_own_process() {
     let parsed = body(&reply.content);
     assert_eq!(parsed["result"]["words"], 2);
     assert_eq!(parsed["untrusted"], true);
+
+    // Its records go back to the host's store over the connection, with the
+    // provenance the host sets.
+    let url = "https://example.com/b";
+    let added = session
+        .dispatch(&call("example_bookmark_add", &json!({ "url": url })))
+        .await;
+    assert_eq!(added.status, CallStatus::Ran, "{}", added.content);
+    let found = store
+        .query_records(RecordQuery {
+            record_type: "example.bookmark".to_owned(),
+            filters: vec![FieldFilter {
+                field: "url".to_owned(),
+                op: FieldOp::Eq,
+                value: FieldValue::Text(url.to_owned()),
+            }],
+            page: PageRequest::new(5, 0).unwrap(),
+        })
+        .await
+        .unwrap();
+    assert_eq!(found.items.len(), 1, "the record reached the host's store");
+    assert_eq!(
+        found.items.first().unwrap().provenance.stored_by.as_str(),
+        "plugin:example"
+    );
+}
+
+#[tokio::test]
+async fn as_a_service_without_the_grant_it_never_starts() {
+    let mut host = PluginHost::new(
+        Arc::new(MemoryStore::new(3)) as Arc<dyn Store>,
+        config("version: 1\nplugins: []\n"),
+        ToolRegistry::new(),
+    );
+    let mut spec = service_spec();
+    spec.command = "/nonexistent/would-fail-if-started".to_owned();
+    let error = host.install_service(MANIFEST, &spec).await.unwrap_err();
+    assert!(matches!(error, HostError::NotGranted { .. }), "{error}");
 }
 
 #[tokio::test]
 async fn a_service_serving_a_different_schema_is_refused() {
     let mut host = service_host();
-    let tampered = SERVICE_MANIFEST.replace("maxLength: 100000", "maxLength: 5");
+    let tampered = MANIFEST.replace("maxLength: 100000", "maxLength: 5");
     let error = host
         .install_service(&tampered, &service_spec())
         .await
@@ -181,7 +226,7 @@ async fn a_service_serving_a_different_schema_is_refused() {
 #[tokio::test]
 async fn a_service_serving_undeclared_tools_is_refused() {
     let mut host = service_host();
-    let (head, _) = SERVICE_MANIFEST.split_once("tools:").unwrap();
+    let (head, _) = MANIFEST.split_once("tools:").unwrap();
     let none = format!("{head}tools: []\n");
     let error = host
         .install_service(&none, &service_spec())
@@ -195,10 +240,7 @@ async fn a_service_that_cannot_start_says_so() {
     let mut host = service_host();
     let mut spec = service_spec();
     spec.command = "/nonexistent/plugin".to_owned();
-    let error = host
-        .install_service(SERVICE_MANIFEST, &spec)
-        .await
-        .unwrap_err();
+    let error = host.install_service(MANIFEST, &spec).await.unwrap_err();
     assert!(error.to_string().contains("couldn't start"), "{error}");
 }
 
@@ -208,9 +250,6 @@ async fn a_service_that_stops_answering_fails_visibly() {
     let mut spec = service_spec();
     // A program that exits at once, in place of a server.
     spec.command = "/bin/true".to_owned();
-    let error = host
-        .install_service(SERVICE_MANIFEST, &spec)
-        .await
-        .unwrap_err();
+    let error = host.install_service(MANIFEST, &spec).await.unwrap_err();
     assert!(error.to_string().contains("stopped"), "{error}");
 }

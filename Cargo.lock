@@ -2255,6 +2255,7 @@ name = "plugin-api"
 version = "0.3.0"
 dependencies = [
  "async-trait",
+ "chrono",
  "protocol",
  "schema",
  "schemars",
@@ -2264,6 +2265,7 @@ dependencies = [
  "store",
  "thiserror 2.0.21",
  "tokio",
+ "uuid",
 ]
 
 [[package]]

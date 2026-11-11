@@ -1,13 +1,10 @@
-//! The example plugin as its own process: an MCP server on stdio.
+//! The example plugin as its own process: an MCP server on stdio, with the
+//! same manifest, tools and capabilities as when it's compiled in. Its
+//! records go back to the host over the connection.
 
-use std::sync::Arc;
-
-use plugin_api::{Tool, serve_stdio};
-use plugin_example::{SERVICE_MANIFEST, WordCount};
+use plugin_example::ExamplePlugin;
 
 #[tokio::main(flavor = "current_thread")]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let tools: Vec<Arc<dyn Tool>> = vec![Arc::new(WordCount::from_manifest(SERVICE_MANIFEST)?)];
-    serve_stdio("example", env!("CARGO_PKG_VERSION"), tools).await?;
-    Ok(())
+async fn main() -> std::io::Result<()> {
+    plugin_api::serve_plugin_stdio(&ExamplePlugin).await
 }

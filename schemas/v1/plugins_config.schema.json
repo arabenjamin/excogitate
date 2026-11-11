@@ -37,11 +37,74 @@
           "maxLength": 32,
           "minLength": 1,
           "type": "string"
+        },
+        "process": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ProcessConfig"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "How to start it as its own process. Left out, it's a plugin compiled\ninto the binary."
         }
       },
       "required": [
         "name",
         "capabilities"
+      ],
+      "type": "object"
+    },
+    "ProcessConfig": {
+      "additionalProperties": false,
+      "description": "A plugin that runs as its own process.",
+      "properties": {
+        "args": {
+          "default": [],
+          "description": "Its arguments.",
+          "items": {
+            "maxLength": 1024,
+            "type": "string"
+          },
+          "maxItems": 32,
+          "type": "array"
+        },
+        "command": {
+          "description": "The program to run.",
+          "maxLength": 1024,
+          "minLength": 1,
+          "type": "string"
+        },
+        "env": {
+          "default": [],
+          "description": "The environment variables it may see. Its environment is otherwise\nempty.",
+          "items": {
+            "maxLength": 128,
+            "minLength": 1,
+            "type": "string"
+          },
+          "maxItems": 32,
+          "type": "array"
+        },
+        "manifest": {
+          "description": "Its manifest file. Its name must be this plugin's.",
+          "maxLength": 1024,
+          "minLength": 1,
+          "type": "string"
+        },
+        "timeout_secs": {
+          "default": 30,
+          "description": "How long one call may take, in seconds.",
+          "format": "uint32",
+          "maximum": 3600,
+          "minimum": 1,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "command",
+        "manifest"
       ],
       "type": "object"
     }

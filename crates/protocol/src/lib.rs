@@ -58,6 +58,18 @@ impl RunId {
     pub fn generate() -> Self {
         Self(uuid::Uuid::now_v7())
     }
+
+    /// This id from a stored or sent value.
+    #[must_use]
+    pub const fn from_uuid(id: uuid::Uuid) -> Self {
+        Self(id)
+    }
+
+    /// The value of this id.
+    #[must_use]
+    pub const fn as_uuid(&self) -> uuid::Uuid {
+        self.0
+    }
 }
 
 impl fmt::Display for RunId {

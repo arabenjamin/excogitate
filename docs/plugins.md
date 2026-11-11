@@ -95,11 +95,46 @@ saying which. A plugin's tools are offered to chats, may be named by agents
 and workflows, and are listed over MCP, all through dispatch, like the
 bundled ones.
 
-**As its own process.** Call `serve_stdio` from `main`: an MCP server over
-stdio, installed with `PluginHost::install_service`. The process gets an empty
-environment apart from the variables its spec names, its schemas must match its
-manifest, and everything it returns is labelled untrusted. A separate process
-can't reach Excogitate's capabilities, so its manifest can't ask for any.
-The server doesn't start these yet: `plugins.yaml` can't list one. That
-comes with capabilities over the process link, so a plugin can run on the
-stock image without a rebuild.
+**As its own process, on the stock image.** The same plugin crate, with no
+rebuild of Excogitate: a binary whose `main` is one line,
+
+```rust
+#[tokio::main(flavor = "current_thread")]
+async fn main() -> std::io::Result<()> {
+    plugin_api::serve_plugin_stdio(&my_plugin::MyPlugin).await
+}
+```
+
+and an entry in `plugins.yaml` that says how to start it:
+
+```yaml
+plugins:
+  - name: my_plugin
+    capabilities: [records, http]
+    process:
+      command: /config/plugins/my-plugin       # mount it read-only into the container
+      manifest: /config/plugins/my-plugin.yaml # the same plugin.yaml it compiles with
+      env: [MY_PLUGIN_TOKEN]                   # all it sees of the environment
+      timeout_secs: 30
+```
+
+It speaks MCP over stdio, and gets the capabilities its manifest declares as
+proxies: each call goes back to Excogitate over the same connection. The host
+holds it to the same rules as a compiled-in plugin, and some more:
+
+- **Only during a call.** Each tool call carries its run, and a capability
+  call must name a run the host is serving on that connection right now.
+  Between calls, or for another run, it's refused.
+- **The host's record, not the process's.** The run's privacy class and what's
+  left of its budget come from the host's own record of the call. The process
+  can't claim more.
+- **Granted or refused before it starts.** A plugin asking for a capability
+  `plugins.yaml` doesn't grant is never started. Its manifest's name must be
+  the entry's name, and the tools it serves must match the manifest exactly.
+- **Everything it returns is untrusted,** and what its model calls cost is
+  charged to the run.
+- **An empty environment** but the variables `env` names, and the call fails if
+  it takes longer than `timeout_secs`.
+
+`plugins/example` runs both ways from one `plugin.yaml`; its tests run it as a
+process, records and all.
