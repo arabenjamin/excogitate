@@ -18,7 +18,7 @@ pub use config::{BrainConfig, ConfigError, ServerConfig};
 pub use connect::relay;
 pub use http::{
     ApiError, DefinitionList, DefinitionView, HttpError, JobList, JobStatusView, JobView,
-    OpenAiRequest, RunRequest, RunStarted,
+    OpenAiRequest, RunList, RunRequest, RunStarted, RunView,
 };
 pub use jobs::WorkflowArgs;
 pub use mcp::{ChatArgs, ChatReply, ToolEnvelope};

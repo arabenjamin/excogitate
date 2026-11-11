@@ -5,7 +5,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use chrono::Utc;
-use events::{Event, EventKind, EventSink};
+use events::{Event, EventSink};
 use model::{
     Capability, ChatRequest, Completion, Gateway, GatewayError, Rejection, RoutePolicy, ToolCall,
     ToolSpec, estimate_tokens,
@@ -20,6 +20,7 @@ mod converse;
 pub use converse::{ChatResult, Conversation};
 
 use crate::tool::Registered;
+use crate::trajectory::{RunSubject, Step};
 use crate::{
     Budget, BudgetKind, CallStatus, ModelEntry, Outcome, Receipt, RefusalKind, ToolContext,
     ToolEntry, ToolRegistry, Totals,
@@ -49,6 +50,8 @@ pub struct SessionConfig {
     pub purpose: String,
     /// How much of a result goes back to the model, in characters.
     pub max_result_chars: usize,
+    /// What's running and under which harness, for its trajectory.
+    pub subject: RunSubject,
 }
 
 /// A session could not be set up.
@@ -140,6 +143,7 @@ pub struct Session {
     events_lost: u32,
     answer_cut_off: bool,
     by_harness: bool,
+    start_recorded: bool,
 }
 
 /// A refusal on its way back to the model.
@@ -195,6 +199,7 @@ impl Session {
             events_lost: 0,
             answer_cut_off: false,
             by_harness: false,
+            start_recorded: false,
         })
     }
 
@@ -235,16 +240,34 @@ impl Session {
         self.hit
     }
 
-    async fn emit(&mut self, kind: EventKind, body: Value) {
-        let event = Event {
+    fn event(&self, step: &Step) -> Event {
+        Event {
             run: self.config.run,
             at: Utc::now(),
-            kind,
+            kind: step.kind(),
             data_class: self.config.data_class,
-            body,
-        };
-        if self.sink.append(vec![event]).await.is_err() {
-            self.events_lost = self.events_lost.saturating_add(1);
+            body: step.body(),
+        }
+    }
+
+    /// Records a step. A run's first step is always its start, so every
+    /// trajectory says what ran and under which harness.
+    pub(crate) async fn emit(&mut self, step: Step) {
+        let mut events = Vec::with_capacity(2);
+        if !self.start_recorded {
+            self.start_recorded = true;
+            events.push(self.event(&Step::Started {
+                agent: self.config.subject.agent.clone(),
+                harness: self.config.subject.harness.clone(),
+                purpose: self.config.purpose.clone(),
+                offered: self.offered.iter().cloned().collect(),
+                budget: self.config.budget,
+            }));
+        }
+        let count = u32::try_from(events.len() + 1).unwrap_or(u32::MAX);
+        events.push(self.event(&step));
+        if self.sink.append(events).await.is_err() {
+            self.events_lost = self.events_lost.saturating_add(count);
         }
     }
 
@@ -309,15 +332,14 @@ impl Session {
         match result {
             Ok(completion) => {
                 self.record_model_success(&completion, estimate, request.max_output_tokens);
-                self.emit(
-                    EventKind::ModelCall,
-                    json!({
-                        "model": completion.model,
-                        "reply": event_text(&completion.response.content),
-                        "tool_calls": completion.response.tool_calls.len(),
-                        "cost_usd_micros": completion.cost_usd_micros,
-                    }),
-                )
+                self.emit(Step::Model {
+                    model: Some(completion.model.clone()),
+                    reply: Some(event_text(&completion.response.content)),
+                    tool_calls: u32::try_from(completion.response.tool_calls.len())
+                        .unwrap_or(u32::MAX),
+                    cost_usd_micros: completion.cost_usd_micros,
+                    error: None,
+                })
                 .await;
                 Ok(completion)
             }
@@ -327,10 +349,13 @@ impl Session {
                     _ => 0,
                 };
                 self.record_model_failure(bounded(&error.to_string()), failed);
-                self.emit(
-                    EventKind::ModelCall,
-                    json!({ "error": bounded(&error.to_string()) }),
-                )
+                self.emit(Step::Model {
+                    model: None,
+                    reply: None,
+                    tool_calls: 0,
+                    cost_usd_micros: 0,
+                    error: Some(bounded(&error.to_string())),
+                })
                 .await;
                 if let GatewayError::NoRoute(no_route) = &error
                     && no_route
@@ -502,6 +527,7 @@ impl Session {
         refused: Refused,
     ) -> ToolReply {
         let detail = bounded(&refused.detail);
+        let index = self.call_index();
         self.tool_calls.push(ToolEntry {
             tool: name.clone(),
             status: CallStatus::Refused,
@@ -514,15 +540,17 @@ impl Session {
             cost_usd_micros: 0,
             detail: Some(detail.clone()),
         });
-        self.emit(
-            EventKind::ToolCall,
-            json!({
-                "tool": name,
-                "status": CallStatus::Refused,
-                "refusal": refused.kind,
-                "arguments": event_text(&call.arguments),
-            }),
-        )
+        self.emit(Step::Tool {
+            index,
+            tool: name,
+            status: CallStatus::Refused,
+            refusal: Some(refused.kind),
+            effect,
+            by_harness: self.by_harness,
+            arguments: event_text(&call.arguments),
+            reply: Some(detail.clone()),
+            duration_ms: 0,
+        })
         .await;
         Self::reply(
             call,
@@ -586,6 +614,7 @@ impl Session {
                 ),
             },
         };
+        let index = self.call_index();
         self.tool_calls.push(ToolEntry {
             tool: name.clone(),
             status: finished.status,
@@ -598,21 +627,27 @@ impl Session {
             cost_usd_micros: finished.cost_usd_micros,
             detail: finished.detail,
         });
-        self.emit(
-            EventKind::ToolCall,
-            json!({
-                "tool": name,
-                "status": finished.status,
-                "arguments": event_text(&call.arguments),
-                "reply": event_text(&finished.content),
-            }),
-        )
+        self.emit(Step::Tool {
+            index,
+            tool: name,
+            status: finished.status,
+            refusal: None,
+            effect: Some(effect),
+            by_harness: self.by_harness,
+            arguments: event_text(&call.arguments),
+            reply: Some(event_text(&finished.content)),
+            duration_ms,
+        })
         .await;
         ToolReply {
             call_id: call.id.clone(),
             content: finished.content,
             status: finished.status,
         }
+    }
+
+    fn call_index(&self) -> u32 {
+        u32::try_from(self.tool_calls.len()).unwrap_or(u32::MAX)
     }
 
     fn reply(call: &ToolCall, status: CallStatus, content: String) -> ToolReply {
@@ -635,14 +670,11 @@ impl Session {
             (None, claimed) => claimed,
         };
         self.totals.duration_ms = millis(self.started.elapsed());
-        self.emit(
-            EventKind::RunEnded,
-            json!({
-                "outcome": outcome,
-                "budget_hit": self.hit,
-                "cost_usd_micros": self.totals.cost_usd_micros,
-            }),
-        )
+        self.emit(Step::Ended {
+            outcome,
+            budget_hit: self.hit,
+            cost_usd_micros: self.totals.cost_usd_micros,
+        })
         .await;
         Receipt {
             run: self.config.run.to_string(),

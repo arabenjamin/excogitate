@@ -12,8 +12,14 @@ use protocol::{DataClass, RunId};
 use serde_json::Value;
 
 /// The kind of an event. A closed list.
+///
+/// Two kinds feed the run index, so their bodies have fields a sink reads: a
+/// [`EventKind::RunStarted`] body has string `agent` and `harness` fields, and
+/// a [`EventKind::RunEnded`] body has a string `outcome`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum EventKind {
+    /// Who is running, under which harness, with what.
+    RunStarted,
     /// A message in the run's conversation.
     Message,
     /// A call to a model.
@@ -48,6 +54,87 @@ pub struct EventPage {
     pub has_more: bool,
 }
 
+/// A run, as the index shows it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RunSummary {
+    /// The run.
+    pub run: RunId,
+    /// What ran: `chat`, `agent:<name>` or `tool:<name>`.
+    pub agent: String,
+    /// The harness it ran under, as an id: two runs with the same id had the
+    /// same instructions, tools and limits.
+    pub harness: String,
+    /// When it started.
+    pub started_at: DateTime<Utc>,
+    /// When it ended. A run with none is still going, or was cut short.
+    pub ended_at: Option<DateTime<Utc>>,
+    /// How it ended.
+    pub outcome: Option<String>,
+}
+
+/// Which runs to list, newest first.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct RunQuery {
+    /// Only this agent's runs.
+    pub agent: Option<String>,
+    /// Only runs under this harness.
+    pub harness: Option<String>,
+    /// How many to skip.
+    pub offset: usize,
+    /// The most to return.
+    pub limit: usize,
+}
+
+/// A page of runs.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RunPage {
+    /// The runs, newest first.
+    pub runs: Vec<RunSummary>,
+    /// True when more match.
+    pub has_more: bool,
+}
+
+/// What the run index reads from an event, if it's one the index keeps.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum IndexEntry {
+    /// A run started.
+    Started {
+        /// What ran.
+        agent: String,
+        /// Its harness id.
+        harness: String,
+    },
+    /// A run ended.
+    Ended {
+        /// How.
+        outcome: String,
+    },
+}
+
+impl Event {
+    /// What this event adds to the run index. A start or an end without its
+    /// fields adds nothing, and the run's events are still kept.
+    #[must_use]
+    pub fn index_entry(&self) -> Option<IndexEntry> {
+        let text = |field: &str| {
+            self.body
+                .get(field)
+                .and_then(Value::as_str)
+                .map(str::to_owned)
+        };
+        match self.kind {
+            EventKind::RunStarted => Some(IndexEntry::Started {
+                agent: text("agent")?,
+                harness: text("harness")?,
+            }),
+            EventKind::RunEnded => Some(IndexEntry::Ended {
+                outcome: text("outcome")?,
+            }),
+            _ => None,
+        }
+    }
+}
+
 /// A sink could not do what was asked.
 #[derive(Debug, thiserror::Error)]
 #[error("event sink failed: {0}")]
@@ -75,6 +162,13 @@ pub trait EventSink: Send + Sync + std::fmt::Debug {
         offset: usize,
         limit: usize,
     ) -> Result<EventPage, EventError>;
+
+    /// Lists runs from the index, newest first.
+    ///
+    /// # Errors
+    ///
+    /// [`EventError`] if the sink can't be read.
+    async fn list_runs(&self, query: &RunQuery) -> Result<RunPage, EventError>;
 }
 
 /// A sink that keeps events in memory, for tests.
@@ -110,6 +204,44 @@ impl EventSink for MemorySink {
         let events: Vec<Event> = matching.by_ref().take(limit).cloned().collect();
         let has_more = matching.next().is_some();
         Ok(EventPage { events, has_more })
+    }
+
+    async fn list_runs(&self, query: &RunQuery) -> Result<RunPage, EventError> {
+        let all = self.0.lock().unwrap_or_else(PoisonError::into_inner);
+        let mut runs: Vec<RunSummary> = Vec::new();
+        for event in all.iter() {
+            match event.index_entry() {
+                Some(IndexEntry::Started { agent, harness }) => runs.push(RunSummary {
+                    run: event.run,
+                    agent,
+                    harness,
+                    started_at: event.at,
+                    ended_at: None,
+                    outcome: None,
+                }),
+                Some(IndexEntry::Ended { outcome }) => {
+                    if let Some(found) = runs.iter_mut().rev().find(|run| run.run == event.run) {
+                        found.ended_at = Some(event.at);
+                        found.outcome = Some(outcome);
+                    }
+                }
+                None => {}
+            }
+        }
+        let mut matching = runs
+            .into_iter()
+            .rev()
+            .filter(|run| query.agent.as_ref().is_none_or(|agent| *agent == run.agent))
+            .filter(|run| {
+                query
+                    .harness
+                    .as_ref()
+                    .is_none_or(|harness| *harness == run.harness)
+            })
+            .skip(query.offset);
+        let runs: Vec<RunSummary> = matching.by_ref().take(query.limit).collect();
+        let has_more = matching.next().is_some();
+        Ok(RunPage { runs, has_more })
     }
 }
 
@@ -152,5 +284,62 @@ mod tests {
         let rest = sink.read_run(run, 2, 2).await.unwrap();
         assert_eq!(rest.events, vec![event(run, 3)]);
         assert!(!rest.has_more);
+    }
+
+    fn started(run: RunId, agent: &str, at: i64) -> Event {
+        Event {
+            run,
+            at: DateTime::from_timestamp(at, 0).unwrap(),
+            kind: EventKind::RunStarted,
+            data_class: DataClass::Private,
+            body: json!({ "agent": agent, "harness": "h1" }),
+        }
+    }
+
+    fn ended(run: RunId, at: i64) -> Event {
+        Event {
+            run,
+            at: DateTime::from_timestamp(at, 0).unwrap(),
+            kind: EventKind::RunEnded,
+            data_class: DataClass::Private,
+            body: json!({ "outcome": "answered" }),
+        }
+    }
+
+    #[tokio::test]
+    async fn runs_list_newest_first_with_how_they_ended() {
+        let sink = MemorySink::new();
+        let (one, two, three) = (RunId::generate(), RunId::generate(), RunId::generate());
+        sink.append(vec![
+            started(one, "chat", 10),
+            started(two, "agent:summarizer", 11),
+            event(one, 1),
+            ended(one, 12),
+            started(three, "chat", 13),
+        ])
+        .await
+        .unwrap();
+        let query = RunQuery {
+            agent: Some("chat".to_owned()),
+            limit: 10,
+            ..RunQuery::default()
+        };
+        let page = sink.list_runs(&query).await.unwrap();
+        let listed: Vec<RunId> = page.runs.iter().map(|run| run.run).collect();
+        assert_eq!(listed, vec![three, one]);
+        assert_eq!(page.runs[1].outcome.as_deref(), Some("answered"));
+        assert_eq!(page.runs[0].outcome, None);
+        let first = RunQuery {
+            limit: 1,
+            ..RunQuery::default()
+        };
+        assert!(sink.list_runs(&first).await.unwrap().has_more);
+    }
+
+    #[test]
+    fn a_start_without_its_fields_adds_nothing_to_the_index() {
+        let mut bare = started(RunId::generate(), "chat", 1);
+        bare.body = json!({ "agent": "chat" });
+        assert_eq!(bare.index_entry(), None);
     }
 }

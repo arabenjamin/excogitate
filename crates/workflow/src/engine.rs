@@ -4,7 +4,8 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use dispatch::{
-    Budget, CallStatus, Conversation, Outcome, Receipt, Session, SessionConfig, ToolRegistry,
+    Budget, CallStatus, Conversation, Outcome, Receipt, RunSubject, Session, SessionConfig,
+    ToolRegistry, harness_id,
 };
 use events::EventSink;
 use model::{Gateway, Message, ToolCall};
@@ -227,6 +228,7 @@ impl Engine {
         offered: Vec<String>,
         budget: Budget,
         chars: usize,
+        subject: RunSubject,
     ) -> Result<Session, String> {
         Session::new(
             Arc::clone(&self.registry),
@@ -238,6 +240,7 @@ impl Engine {
                 data_class: DataClass::Private,
                 purpose: PURPOSE.to_owned(),
                 max_result_chars: chars,
+                subject,
             },
         )
         .map_err(|error| bounded(&error.to_string()))
@@ -406,7 +409,12 @@ impl Engine {
             max_request_bytes: 1,
             max_duration_ms: left.millis(),
         };
-        let mut session = self.session(vec![tool.to_owned()], budget, STEP_RESULT_CHARS)?;
+        let subject = RunSubject {
+            agent: format!("tool:{tool}"),
+            harness: harness_id(&json!({ "tool": tool, "result_chars": STEP_RESULT_CHARS })),
+        };
+        let mut session =
+            self.session(vec![tool.to_owned()], budget, STEP_RESULT_CHARS, subject)?;
         let call = ToolCall {
             id: id.to_owned(),
             name: tool.to_owned(),
@@ -454,10 +462,26 @@ impl Engine {
             .map_err(|error| error.to_string())?
             .ok_or_else(|| format!("there is no agent {name}"))?;
         let own = agent.budget.unwrap_or(self.limits.agent_budget);
+        let output_tokens = agent
+            .max_output_tokens
+            .unwrap_or(self.limits.agent_output_tokens);
+        // What a workflow has left changes from run to run, so the harness is
+        // the agent's own limits, not what this run got.
+        let subject = RunSubject {
+            agent: format!("agent:{name}"),
+            harness: harness_id(&json!({
+                "system_prompt": agent.system_prompt,
+                "tools": agent.tools,
+                "budget": own,
+                "max_output_tokens": output_tokens,
+                "result_chars": self.limits.agent_result_chars,
+            })),
+        };
         let session = self.session(
             agent.tools.clone(),
             left.clip(own),
             self.limits.agent_result_chars,
+            subject,
         )?;
         let result = session
             .converse(
@@ -467,9 +491,7 @@ impl Engine {
                         Message::system(agent.system_prompt),
                         Message::user(question),
                     ],
-                    max_output_tokens: agent
-                        .max_output_tokens
-                        .unwrap_or(self.limits.agent_output_tokens),
+                    max_output_tokens: output_tokens,
                     temperature: None,
                 },
             )

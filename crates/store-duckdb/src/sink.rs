@@ -7,7 +7,9 @@ use std::sync::{Arc, Mutex, PoisonError};
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use duckdb::{Connection, params};
-use events::{Event, EventError, EventKind, EventPage, EventSink};
+use events::{
+    Event, EventError, EventKind, EventPage, EventSink, IndexEntry, RunPage, RunQuery, RunSummary,
+};
 use protocol::{DataClass, RunId};
 use serde_json::Value;
 
@@ -17,6 +19,7 @@ fn sink_error(error: impl std::fmt::Display) -> EventError {
 
 const fn kind_name(kind: EventKind) -> &'static str {
     match kind {
+        EventKind::RunStarted => "run_started",
         EventKind::Message => "message",
         EventKind::ModelCall => "model_call",
         EventKind::ToolCall => "tool_call",
@@ -26,6 +29,7 @@ const fn kind_name(kind: EventKind) -> &'static str {
 
 fn kind_from(name: &str) -> Result<EventKind, EventError> {
     match name {
+        "run_started" => Ok(EventKind::RunStarted),
         "message" => Ok(EventKind::Message),
         "model_call" => Ok(EventKind::ModelCall),
         "tool_call" => Ok(EventKind::ToolCall),
@@ -60,7 +64,11 @@ impl DuckDbSink {
             .execute_batch(
                 "CREATE TABLE IF NOT EXISTS events (
                      sequence BIGINT NOT NULL, run VARCHAR NOT NULL, occurred_at TIMESTAMP NOT NULL,
-                     kind VARCHAR NOT NULL, data_class VARCHAR NOT NULL, body VARCHAR NOT NULL);",
+                     kind VARCHAR NOT NULL, data_class VARCHAR NOT NULL, body VARCHAR NOT NULL);
+                 CREATE TABLE IF NOT EXISTS runs (
+                     sequence BIGINT NOT NULL, run VARCHAR NOT NULL, agent VARCHAR NOT NULL,
+                     harness VARCHAR NOT NULL, started_at TIMESTAMP NOT NULL,
+                     ended_at TIMESTAMP, outcome VARCHAR);",
             )
             .map_err(sink_error)?;
         let next_sequence = connection
@@ -102,7 +110,8 @@ fn append_all(inner: &mut Inner, events: &[Event]) -> Result<(), EventError> {
                     event.body.to_string(),
                 ],
             )
-            .map(|_| ())
+            .map(|_| ())?;
+        index(&inner.connection, sequence, event)
     });
     match result {
         Ok(()) => {
@@ -119,6 +128,75 @@ fn append_all(inner: &mut Inner, events: &[Event]) -> Result<(), EventError> {
             Err(sink_error(error))
         }
     }
+}
+
+/// Keeps the run index, in the same transaction as the event.
+fn index(connection: &Connection, sequence: i64, event: &Event) -> duckdb::Result<()> {
+    match event.index_entry() {
+        Some(IndexEntry::Started { agent, harness }) => connection
+            .execute(
+                "INSERT INTO runs VALUES (?, ?, ?, ?, ?, NULL, NULL)",
+                params![sequence, event.run.to_string(), agent, harness, event.at],
+            )
+            .map(|_| ()),
+        Some(IndexEntry::Ended { outcome }) => connection
+            .execute(
+                "UPDATE runs SET ended_at = ?, outcome = ? WHERE run = ?",
+                params![event.at, outcome, event.run.to_string()],
+            )
+            .map(|_| ()),
+        None => Ok(()),
+    }
+}
+
+fn list_page(inner: &Inner, query: &RunQuery) -> Result<RunPage, EventError> {
+    let limit = i64::try_from(query.limit).map_err(sink_error)?;
+    let offset = i64::try_from(query.offset).map_err(sink_error)?;
+    let mut statement = inner
+        .connection
+        .prepare(
+            "SELECT run, agent, harness, started_at, ended_at, outcome FROM runs
+             WHERE (?::VARCHAR IS NULL OR agent = ?) AND (?::VARCHAR IS NULL OR harness = ?)
+             ORDER BY sequence DESC LIMIT ? OFFSET ?",
+        )
+        .map_err(sink_error)?;
+    let rows = statement
+        .query_map(
+            params![
+                query.agent,
+                query.agent,
+                query.harness,
+                query.harness,
+                limit + 1,
+                offset
+            ],
+            |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, DateTime<Utc>>(3)?,
+                    row.get::<_, Option<DateTime<Utc>>>(4)?,
+                    row.get::<_, Option<String>>(5)?,
+                ))
+            },
+        )
+        .map_err(sink_error)?;
+    let mut runs = Vec::new();
+    for row in rows {
+        let (run, agent, harness, started_at, ended_at, outcome) = row.map_err(sink_error)?;
+        runs.push(RunSummary {
+            run: run.parse().map_err(sink_error)?,
+            agent,
+            harness,
+            started_at,
+            ended_at,
+            outcome,
+        });
+    }
+    let has_more = runs.len() > query.limit;
+    runs.truncate(query.limit);
+    Ok(RunPage { runs, has_more })
 }
 
 fn read_page(inner: &Inner, run: RunId, offset: i64, limit: i64) -> Result<EventPage, EventError> {
@@ -195,6 +273,19 @@ impl EventSink for DuckDbSink {
         .await
         .map_err(sink_error)?
     }
+
+    async fn list_runs(&self, query: &RunQuery) -> Result<RunPage, EventError> {
+        let inner = Arc::clone(&self.0);
+        let query = query.clone();
+        tokio::task::spawn_blocking(move || {
+            list_page(
+                &inner.lock().unwrap_or_else(PoisonError::into_inner),
+                &query,
+            )
+        })
+        .await
+        .map_err(sink_error)?
+    }
 }
 
 #[cfg(test)]
@@ -251,6 +342,90 @@ mod tests {
         sink.append(vec![event(run, 2)]).await.unwrap();
         let page = sink.read_run(run, 0, 10).await.unwrap();
         assert_eq!(page.events, vec![event(run, 1), event(run, 2)]);
+        std::fs::remove_dir_all(&directory).unwrap();
+    }
+
+    fn marker(run: RunId, kind: EventKind, at: i64, body: Value) -> Event {
+        Event {
+            run,
+            at: DateTime::from_timestamp(at, 0).unwrap(),
+            kind,
+            data_class: DataClass::Private,
+            body,
+        }
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn the_run_index_lists_newest_first_and_survives_a_reopen() {
+        let directory = std::env::temp_dir().join(format!("sink-{}", RunId::generate()));
+        std::fs::create_dir_all(&directory).unwrap();
+        let path = directory.join("events.duckdb");
+        let (one, two) = (RunId::generate(), RunId::generate());
+        let start = |run, agent: &str, at| {
+            marker(
+                run,
+                EventKind::RunStarted,
+                at,
+                json!({ "agent": agent, "harness": "h1" }),
+            )
+        };
+        {
+            let sink = DuckDbSink::open(Some(&path)).unwrap();
+            sink.append(vec![
+                start(one, "chat", 1_800_000_000),
+                start(two, "agent:summarizer", 1_800_000_001),
+                marker(
+                    one,
+                    EventKind::RunEnded,
+                    1_800_000_002,
+                    json!({ "outcome": "answered" }),
+                ),
+            ])
+            .await
+            .unwrap();
+        }
+        let sink = DuckDbSink::open(Some(&path)).unwrap();
+        let all = sink
+            .list_runs(&RunQuery {
+                limit: 10,
+                ..RunQuery::default()
+            })
+            .await
+            .unwrap();
+        let listed: Vec<RunId> = all.runs.iter().map(|run| run.run).collect();
+        assert_eq!(listed, vec![two, one]);
+        assert_eq!(all.runs[1].outcome.as_deref(), Some("answered"));
+        assert_eq!(
+            all.runs[1].ended_at,
+            DateTime::from_timestamp(1_800_000_002, 0)
+        );
+        let chats = sink
+            .list_runs(&RunQuery {
+                agent: Some("chat".to_owned()),
+                limit: 10,
+                ..RunQuery::default()
+            })
+            .await
+            .unwrap();
+        assert_eq!(chats.runs.len(), 1);
+        let none = sink
+            .list_runs(&RunQuery {
+                harness: Some("other".to_owned()),
+                limit: 10,
+                ..RunQuery::default()
+            })
+            .await
+            .unwrap();
+        assert_eq!(none.runs, vec![]);
+        assert!(!none.has_more);
+        let first = sink
+            .list_runs(&RunQuery {
+                limit: 1,
+                ..RunQuery::default()
+            })
+            .await
+            .unwrap();
+        assert!(first.has_more);
         std::fs::remove_dir_all(&directory).unwrap();
     }
 }

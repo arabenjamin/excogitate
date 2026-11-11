@@ -151,6 +151,20 @@ jobs="$work/jobs"
 api "$base/api/v1/jobs" >"$jobs"
 check "the REST API answers" "$jobs" '.[0].items == [] and .[0].has_more == false'
 
+runs="$work/runs"
+api "$base/api/v1/runs?agent=chat&limit=200" >"$runs"
+check "the earlier chats are listed as runs" "$runs" '.[0].items | length >= 2 and all(.outcome != null)'
+stored="$work/stored"
+for run in $(jq -r '.items[].run' "$runs"); do
+  api "$base/api/v1/runs/$run" >"$stored"
+  jq -e '.calls | endswith("http_request ran → memory ran → answered")' "$stored" >/dev/null && break
+done
+check "the chat that stored the page left its trajectory" "$stored" \
+  '.[0] | .agent == "chat" and .complete and .unreadable == 0
+   and (.calls | endswith("http_request ran → memory ran → answered"))
+   and (.steps | map(.step.type) | .[0] == "started" and .[-1] == "ended")
+   and ([.steps[].step | select(.type == "message" and .role == "user")] | length == 1)'
+
 models="$work/models"
 api "$base/v1/models" >"$models"
 check "the front door lists its model" "$models" '.[0].data[0].id == "brain"'

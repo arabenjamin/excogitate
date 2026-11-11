@@ -767,3 +767,99 @@ async fn an_error_has_one_shape_everywhere_in_the_api() {
             .unwrap();
     }
 }
+
+// Runs and trajectories.
+
+#[tokio::test]
+async fn a_chat_leaves_a_trajectory_that_meets_its_schema() {
+    let running = quiet("trajectory", vec![ChaosStep::Text("Hello.".to_owned())]).await;
+    let reply = body_of(running.post("/v1/chat/completions", &ask(&json!({}))).await).await;
+    let run = reply["receipt"]["run"].as_str().unwrap().to_owned();
+
+    let listed = body_of(running.get("/api/v1/runs?agent=chat").await).await;
+    assert_eq!(listed["items"].as_array().unwrap().len(), 1, "{listed}");
+    assert_eq!(listed["items"][0]["run"], run.as_str());
+    assert_eq!(listed["items"][0]["outcome"], "answered");
+    Validator::from_schema(&schema::schema_of::<brain::RunList>())
+        .unwrap()
+        .check(&listed)
+        .unwrap();
+
+    let trajectory = body_of(running.get(&format!("/api/v1/runs/{run}")).await).await;
+    let schema = schema::schema_of::<dispatch::Trajectory>();
+    assert_eq!(check_strict(&schema), vec![]);
+    Validator::from_schema(&schema)
+        .unwrap()
+        .check(&trajectory)
+        .unwrap();
+    assert_eq!(trajectory["agent"], "chat");
+    assert_eq!(trajectory["harness"], listed["items"][0]["harness"]);
+    assert_eq!(trajectory["calls"], "answered");
+    let steps = trajectory["steps"].as_array().unwrap();
+    assert_eq!(steps[0]["step"]["type"], "started");
+    assert_eq!(steps[1]["step"]["role"], "system");
+    assert_eq!(steps[2]["step"]["role"], "user");
+    assert_eq!(steps[2]["step"]["content"], "hi");
+    assert_eq!(steps[3]["step"]["reply"], "Hello.");
+    assert_eq!(steps.last().unwrap()["step"]["type"], "ended");
+}
+
+#[tokio::test]
+async fn an_agents_harness_id_changes_with_its_instructions_and_only_then() {
+    let script = ["One.", "Two.", "Three."]
+        .map(|text| ChaosStep::Text(text.to_owned()))
+        .to_vec();
+    let running = with_workflow("harness", script).await;
+    let mut jobs = Vec::new();
+    for prompt in ["You help.", "You help.", "You help briefly."] {
+        running
+            .define(
+                "agents/helper.yaml",
+                &format!("system_prompt: {prompt}\ntools: []\n"),
+            )
+            .await;
+        let started = body_of(running.post("/api/v1/workflows/flow/runs", &inputs()).await).await;
+        let job = started["job_id"].as_str().unwrap().to_owned();
+        assert_eq!(running.work_off(&job).await["status"], "succeeded");
+        jobs.push(job);
+    }
+    let listed = body_of(running.get("/api/v1/runs?agent=agent:helper").await).await;
+    let harnesses: Vec<&str> = listed["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|run| run["harness"].as_str().unwrap())
+        .collect();
+    assert_eq!(harnesses.len(), 3, "{listed}");
+    // Newest first: the changed prompt, then the two runs of the first.
+    assert_ne!(harnesses[0], harnesses[1]);
+    assert_eq!(harnesses[1], harnesses[2]);
+    let same = format!("/api/v1/runs?harness={}", harnesses[1]);
+    assert_eq!(
+        body_of(running.get(&same).await).await["items"]
+            .as_array()
+            .unwrap()
+            .len(),
+        2
+    );
+}
+
+#[tokio::test]
+async fn bad_run_queries_are_refused() {
+    let running = quiet("run-query", vec![]).await;
+    for path in [
+        "/api/v1/runs?limit=0",
+        "/api/v1/runs?limit=201",
+        "/api/v1/runs?agentt=chat",
+        "/api/v1/runs?agent=",
+        "/api/v1/runs/not-a-uuid",
+    ] {
+        assert_eq!(
+            running.get(path).await.status(),
+            StatusCode::BAD_REQUEST,
+            "{path}"
+        );
+    }
+    let missing = "/api/v1/runs/00000000-0000-0000-0000-000000000000";
+    assert_eq!(running.get(missing).await.status(), StatusCode::NOT_FOUND);
+}

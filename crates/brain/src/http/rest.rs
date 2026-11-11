@@ -21,8 +21,8 @@ use workflow::WorkflowError;
 use super::{ApiError, App, json_body};
 use crate::jobs::WORKFLOW_KIND;
 
-const DEFAULT_LIMIT: u32 = 50;
-const MAX_LIMIT: u32 = 200;
+pub(super) const DEFAULT_LIMIT: u32 = 50;
+pub(super) const MAX_LIMIT: u32 = 200;
 /// Who a request came from, until there are users.
 const OWNER: &str = "owner";
 
@@ -180,10 +180,10 @@ pub struct DefinitionList {
     pub has_more: bool,
 }
 
-type Params = Query<BTreeMap<String, String>>;
+pub(super) type Params = Query<BTreeMap<String, String>>;
 
 /// Refuses a query parameter nothing reads, so a typo can't go unnoticed.
-fn only(params: &BTreeMap<String, String>, known: &[&str]) -> Result<(), ApiError> {
+pub(super) fn only(params: &BTreeMap<String, String>, known: &[&str]) -> Result<(), ApiError> {
     match params.keys().find(|key| !known.contains(&key.as_str())) {
         Some(key) => Err(ApiError::invalid(&format!(
             "unknown query parameter {key}; this takes {}",
@@ -193,7 +193,11 @@ fn only(params: &BTreeMap<String, String>, known: &[&str]) -> Result<(), ApiErro
     }
 }
 
-fn number(params: &BTreeMap<String, String>, name: &str, default: u32) -> Result<u32, ApiError> {
+pub(super) fn number(
+    params: &BTreeMap<String, String>,
+    name: &str,
+    default: u32,
+) -> Result<u32, ApiError> {
     params.get(name).map_or(Ok(default), |value| {
         value
             .parse()
