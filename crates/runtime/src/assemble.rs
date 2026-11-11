@@ -15,6 +15,7 @@ use tools::{HttpConfigError, HttpRequestTool, MemoryTool};
 use workflow::{Engine, EngineLimits};
 
 use crate::Config;
+use crate::capability::RuntimeCapabilities;
 use crate::ledger::StoreLedger;
 use crate::mcp::{ChatTool, DispatchedTool};
 
@@ -93,7 +94,7 @@ impl Runtime {
         config: Config,
         secret_of: &dyn Fn(&str) -> Option<String>,
     ) -> Result<Self, RuntimeError> {
-        let (gateway, registry) = Self::bundled(&store, catalog, &config, secret_of)?;
+        let (gateway, registry, _) = Self::bundled(&store, catalog, &config, secret_of)?;
         Self::finish(store, sink, gateway, registry, config)
     }
 
@@ -112,8 +113,14 @@ impl Runtime {
         secret_of: &dyn Fn(&str) -> Option<String>,
         plugins: Plugins,
     ) -> Result<Self, RuntimeError> {
-        let (gateway, registry) = Self::bundled(&store, catalog, &config, secret_of)?;
-        let mut host = PluginHost::new(Arc::clone(&store), plugins.grants, registry);
+        let (gateway, registry, http) = Self::bundled(&store, catalog, &config, secret_of)?;
+        let source = RuntimeCapabilities {
+            http,
+            gateway: Arc::clone(&gateway),
+            max_output_tokens: config.max_output_tokens,
+        };
+        let mut host = PluginHost::new(Arc::clone(&store), plugins.grants, registry)
+            .with_capabilities(Arc::new(source));
         for plugin in &plugins.compiled {
             host.install_compiled(plugin.as_ref()).await?;
         }
@@ -123,13 +130,14 @@ impl Runtime {
         Ok(runtime)
     }
 
-    /// The gateway, and a registry holding the two bundled tools.
+    /// The gateway, a registry holding the two bundled tools, and the HTTP
+    /// tool again, for plugins granted `http`.
     fn bundled(
         store: &Arc<dyn Store>,
         catalog: Catalog,
         config: &Config,
         secret_of: &dyn Fn(&str) -> Option<String>,
-    ) -> Result<(Arc<Gateway>, ToolRegistry), RuntimeError> {
+    ) -> Result<(Arc<Gateway>, ToolRegistry, Arc<HttpRequestTool>), RuntimeError> {
         let dimension = embedding_dimension(&catalog);
         let client =
             OpenAiClient::new().map_err(|error| RuntimeError::Client(error.to_string()))?;
@@ -148,8 +156,9 @@ impl Runtime {
         let memory = Memory::new(Arc::clone(store), embedder, ChunkConfig::default());
         let mut registry = ToolRegistry::new();
         registry.register(Arc::new(MemoryTool::new(memory)))?;
-        registry.register(Arc::new(HttpRequestTool::new(&config.http, secret_of)?))?;
-        Ok((gateway, registry))
+        let http = Arc::new(HttpRequestTool::new(&config.http, secret_of)?);
+        registry.register(Arc::clone(&http) as Arc<dyn Tool>)?;
+        Ok((gateway, registry, http))
     }
 
     /// The rest, once every tool is in the registry.

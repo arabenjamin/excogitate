@@ -5,6 +5,7 @@
 #![deny(clippy::string_slice, clippy::indexing_slicing)]
 
 mod assemble;
+mod capability;
 mod cli;
 mod config;
 mod connect;
