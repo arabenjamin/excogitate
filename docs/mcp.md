@@ -27,14 +27,7 @@ All work is private for now, so it only reaches `no_log` providers.
 
 ## Settings
 
-Each variable starts with the binary's name in capitals and an underscore.
-
-| Variable | Default | What it is |
-|---|---|---|
-| `MODELS` | `models.yaml` | [The models file](models.md). |
-| `CONFIG` | none | Optional settings, checked against [`schemas/v1/brain_config.schema.json`](../schemas/v1/brain_config.schema.json). |
-| `DATA_DIR` | `data` | Where the store and the event log live. |
-| `EXTENSION_DIR` | `.cache/duckdb-extensions` | DuckDB's extensions, from `scripts/fetch_duckdb_extensions.sh`. Nothing is downloaded at run time. |
+[The variables are in env.md](env.md).
 
 Settings cover each run's budget, the system prompt, reply and result sizes,
 and [`http_request`](tools.md#configuration). Money is off by default:

@@ -1,0 +1,12 @@
+# The fixtures are on a private network, so the test allows that network.
+# scripts/done_test.sh checks receipts against this budget.
+budget:
+  max_rounds: 6
+  max_tool_calls: 20
+  max_writes: 3
+  max_total_tokens: 100000
+  max_usd_micros: 0
+  max_request_bytes: 300000
+  max_duration_ms: 20000
+http:
+  allowed_ranges: ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"]

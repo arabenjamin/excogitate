@@ -1,0 +1,5 @@
+version: 1
+providers:
+  - {name: chaos, base_url: 'http://chaos:9000/v1', no_log: true, timeout_secs: 10}
+models:
+  - {name: hostile, provider: chaos, wire_model: x, capabilities: [chat, tools], context_tokens: 1000000, max_output_tokens: 100}

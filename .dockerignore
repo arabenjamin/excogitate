@@ -13,3 +13,7 @@ node_modules/
 dist/
 .claude/
 CLAUDE.local.md
+.cache/
+fuzz/
+models.yaml
+brain.yaml

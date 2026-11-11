@@ -1,0 +1,22 @@
+# Copy to brain.yaml. Anything left out keeps its default; the reference is
+# schemas/v1/brain_config.schema.json.
+
+# How much of each tool result a chat's model sees. Sized for a small model.
+max_result_chars: 12000
+
+# The limits on each run. Give all of them, or leave the whole block out.
+# max_usd_micros is 0, so a priced model isn't used until you raise it.
+budget:
+  max_rounds: 12
+  max_tool_calls: 30
+  max_writes: 8
+  max_total_tokens: 200000
+  max_usd_micros: 0
+  max_request_bytes: 600000
+  max_duration_ms: 300000
+
+# http:
+#   # GET and HEAD by default. Any other method can send data out.
+#   allowed_methods: [GET, HEAD]
+#   # A service on your own network, reachable even though it's private.
+#   allowed_ranges: ["192.0.2.10/32"]

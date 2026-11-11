@@ -13,6 +13,7 @@ and Docker for the secret scan.
 cargo build
 cargo nextest run --workspace     # or: cargo test --workspace
 cargo test --doc --workspace      # nextest skips doctests
+scripts/done_test.sh              # the quickstart, in Docker; CI runs it on main
 cargo clippy --workspace --all-targets --all-features
 cargo fmt --all
 ```

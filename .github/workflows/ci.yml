@@ -42,6 +42,7 @@ jobs:
               - 'plugins/**'
               - 'schemas/**'
               - 'models.example.yaml'
+              - 'brain.example.yaml'
               - 'eval/**'
               - 'scripts/fetch_duckdb_extensions.sh'
               - 'Cargo.toml'
