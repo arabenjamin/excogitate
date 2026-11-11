@@ -5,9 +5,19 @@ use store::NoteReader;
 use store_memory::MemoryStore;
 
 use super::*;
-use crate::EmbedError;
+use crate::{EmbedError, Embedding};
 
 const DIM: usize = 3;
+
+const SCOPE_PRIVATE: EmbedScope = EmbedScope {
+    data_class: DataClass::Private,
+    budget_usd_micros: None,
+};
+
+const SCOPE_PUBLIC: EmbedScope = EmbedScope {
+    data_class: DataClass::Public,
+    budget_usd_micros: None,
+};
 
 /// Embeds by the first word. Records what it was asked.
 #[derive(Debug, Default)]
@@ -33,15 +43,11 @@ impl Embedder for Fake {
         DIM
     }
 
-    async fn embed(
-        &self,
-        inputs: &[String],
-        data_class: DataClass,
-    ) -> Result<Vec<Vec<f32>>, EmbedError> {
+    async fn embed(&self, inputs: &[String], scope: EmbedScope) -> Result<Embedding, EmbedError> {
         self.calls
             .lock()
             .unwrap()
-            .push((inputs.to_vec(), data_class));
+            .push((inputs.to_vec(), scope.data_class));
         if let Some(error) = self.fail.lock().unwrap().clone() {
             return Err(error);
         }
@@ -53,7 +59,10 @@ impl Embedder for Fake {
                 try_shorter: true,
             });
         }
-        Ok(inputs.iter().map(|text| vector_for(text)).collect())
+        Ok(Embedding {
+            vectors: inputs.iter().map(|text| vector_for(text)).collect(),
+            cost_usd_micros: 7,
+        })
     }
 }
 
@@ -111,7 +120,7 @@ async fn a_note_is_stored_chunked_and_embedded_as_private() {
     let fake = Arc::new(Fake::default());
     let (memory, store) = memory_with(Some(Arc::clone(&fake)));
     let stored = memory
-        .store(note(&long_text()), private(), now())
+        .store(note(&long_text()), private(), None, now())
         .await
         .unwrap();
     assert!(stored.created);
@@ -127,11 +136,11 @@ async fn a_note_is_stored_chunked_and_embedded_as_private() {
 async fn the_same_content_returns_the_existing_note() {
     let (memory, store) = memory_with(Some(Arc::new(Fake::default())));
     let first = memory
-        .store(note("cat facts"), private(), now())
+        .store(note("cat facts"), private(), None, now())
         .await
         .unwrap();
     let second = memory
-        .store(note("  cat facts\n"), private(), now())
+        .store(note("  cat facts\n"), private(), None, now())
         .await
         .unwrap();
     assert_eq!(first.id, second.id);
@@ -146,9 +155,80 @@ async fn the_same_content_returns_the_existing_note() {
 }
 
 #[tokio::test]
+async fn embedding_costs_are_reported() {
+    let (memory, _) = memory_with(Some(Arc::new(Fake::default())));
+    let stored = memory
+        .store(note("cat"), private(), None, now())
+        .await
+        .unwrap();
+    assert_eq!(stored.cost_usd_micros, 7);
+    let again = memory
+        .store(note("cat"), private(), None, now())
+        .await
+        .unwrap();
+    assert_eq!(again.cost_usd_micros, 0, "nothing new was embedded");
+    let found = memory
+        .search("cat", ClassFilter::Any, SCOPE_PRIVATE, 5)
+        .await
+        .unwrap();
+    assert_eq!(found.cost_usd_micros, 7);
+}
+
+/// Refuses long inputs, costs 5 a call, and remembers the budget it was given.
+#[derive(Debug, Default)]
+struct Metered {
+    budgets: Mutex<Vec<Option<u64>>>,
+}
+
+#[async_trait]
+impl Embedder for Metered {
+    fn dimension(&self) -> usize {
+        DIM
+    }
+
+    async fn embed(&self, inputs: &[String], scope: EmbedScope) -> Result<Embedding, EmbedError> {
+        self.budgets.lock().unwrap().push(scope.budget_usd_micros);
+        if inputs.len() > 1 {
+            return Err(EmbedError {
+                message: "one at a time".to_owned(),
+                try_shorter: true,
+            });
+        }
+        Ok(Embedding {
+            vectors: vec![vec![1.0, 0.0, 0.0]],
+            cost_usd_micros: 5,
+        })
+    }
+}
+
+#[tokio::test]
+async fn retries_spend_only_what_is_left() {
+    let metered = Arc::new(Metered::default());
+    let memory = Memory::new(
+        Arc::new(MemoryStore::new(DIM)) as Arc<dyn Store>,
+        Some(metered.clone() as Arc<dyn Embedder>),
+        ChunkConfig {
+            max_tokens: 30,
+            overlap_tokens: 0,
+        },
+    );
+    let body = "word ".repeat(1200);
+    let stored = memory
+        .store(note(&body), private(), Some(100), now())
+        .await
+        .unwrap();
+    assert!(stored.chunks > 1, "the test needs several chunks");
+    assert_eq!(stored.cost_usd_micros, 5 * u64::from(stored.chunks));
+    let budgets = metered.budgets.lock().unwrap();
+    assert_eq!(budgets[0], Some(100));
+    assert_eq!(budgets[1], Some(100));
+    assert_eq!(budgets[2], Some(95));
+}
+
+#[tokio::test]
 async fn an_empty_note_is_refused() {
     let (memory, _) = memory_with(None);
-    let result = memory.store(note("  \n"), private(), now()).await;
+    let result = memory.store(note("  \n"), private(), None, now()).await;
     assert!(matches!(result, Err(MemoryError::Invalid(_))));
 }
 
@@ -161,7 +241,7 @@ async fn a_dead_embedder_costs_vectors_never_the_note() {
     });
     let (memory, _) = memory_with(Some(Arc::clone(&fake)));
     let stored = memory
-        .store(note(&long_text()), private(), now())
+        .store(note(&long_text()), private(), None, now())
         .await
         .unwrap();
     assert_eq!(stored.unembedded_chunks, stored.chunks);
@@ -177,7 +257,10 @@ async fn an_over_long_chunk_is_embedded_from_its_front_half() {
     });
     let (memory, store) = memory_with(Some(Arc::clone(&fake)));
     let body = "cat ".repeat(12);
-    let stored = memory.store(note(&body), private(), now()).await.unwrap();
+    let stored = memory
+        .store(note(&body), private(), None, now())
+        .await
+        .unwrap();
     assert_eq!(stored.unembedded_chunks, 0);
     let chunks = store.list_chunks(stored.id).await.unwrap();
     assert_eq!(chunks[0].text, body, "the chunk keeps its full text");
@@ -191,7 +274,7 @@ async fn an_input_that_never_fits_gives_up_after_the_halvings() {
     });
     let (memory, _) = memory_with(Some(Arc::clone(&fake)));
     let stored = memory
-        .store(note(&"cat ".repeat(12)), private(), now())
+        .store(note(&"cat ".repeat(12)), private(), None, now())
         .await
         .unwrap();
     assert_eq!(stored.unembedded_chunks, 1);
@@ -202,15 +285,15 @@ async fn an_input_that_never_fits_gives_up_after_the_halvings() {
 async fn search_is_hybrid_and_finds_by_either_path() {
     let (memory, _) = memory_with(Some(Arc::new(Fake::default())));
     memory
-        .store(note("cat whiskers and naps"), private(), now())
+        .store(note("cat whiskers and naps"), private(), None, now())
         .await
         .unwrap();
     let dog = memory
-        .store(note("dog parks"), private(), now())
+        .store(note("dog parks"), private(), None, now())
         .await
         .unwrap();
     let found = memory
-        .search("parks", ClassFilter::Any, DataClass::Private, 5)
+        .search("parks", ClassFilter::Any, SCOPE_PRIVATE, 5)
         .await
         .unwrap();
     assert_eq!(found.mode, SearchMode::Hybrid);
@@ -222,7 +305,7 @@ async fn a_private_query_is_embedded_as_private() {
     let fake = Arc::new(Fake::default());
     let (memory, _) = memory_with(Some(Arc::clone(&fake)));
     memory
-        .search("cat", ClassFilter::Any, DataClass::Private, 5)
+        .search("cat", ClassFilter::Any, SCOPE_PRIVATE, 5)
         .await
         .unwrap();
     assert_eq!(
@@ -236,29 +319,29 @@ async fn fusion_sees_past_the_number_of_results_asked_for() {
     let (memory, _) = memory_with(Some(Arc::new(Fake::default())));
     // Top of the keyword list, last of the vector list.
     memory
-        .store(note("dog wanted wanted wanted"), private(), now())
+        .store(note("dog wanted wanted wanted"), private(), None, now())
         .await
         .unwrap();
     // Top of the vector list, and no keyword match.
     memory
-        .store(note("catnip one"), private(), now())
+        .store(note("catnip one"), private(), None, now())
         .await
         .unwrap();
     // Second in both, so it wins, though it's in neither top one.
     let both = memory
-        .store(note("cat wanted"), private(), now())
+        .store(note("cat wanted"), private(), None, now())
         .await
         .unwrap();
     memory
-        .store(note("catnip two"), private(), now())
+        .store(note("catnip two"), private(), None, now())
         .await
         .unwrap();
     memory
-        .store(note("catnip three"), private(), now())
+        .store(note("catnip three"), private(), None, now())
         .await
         .unwrap();
     let found = memory
-        .search("cat wanted", ClassFilter::Any, DataClass::Private, 1)
+        .search("cat wanted", ClassFilter::Any, SCOPE_PRIVATE, 1)
         .await
         .unwrap();
     assert_eq!(found.hits[0].note_id, both.id);
@@ -268,10 +351,13 @@ async fn fusion_sees_past_the_number_of_results_asked_for() {
 async fn a_note_appears_once_however_many_chunks_match() {
     let (memory, _) = memory_with(Some(Arc::new(Fake::default())));
     let body: String = (0..100).map(|n| format!("shared item{n}. ")).collect();
-    let stored = memory.store(note(&body), private(), now()).await.unwrap();
+    let stored = memory
+        .store(note(&body), private(), None, now())
+        .await
+        .unwrap();
     assert!(stored.chunks > 1);
     let found = memory
-        .search("shared", ClassFilter::Any, DataClass::Private, 5)
+        .search("shared", ClassFilter::Any, SCOPE_PRIVATE, 5)
         .await
         .unwrap();
     assert_eq!(found.hits.len(), 1);
@@ -281,11 +367,11 @@ async fn a_note_appears_once_however_many_chunks_match() {
 async fn without_an_embedder_search_says_keyword_only() {
     let (memory, _) = memory_with(None);
     memory
-        .store(note("cat naps"), private(), now())
+        .store(note("cat naps"), private(), None, now())
         .await
         .unwrap();
     let found = memory
-        .search("naps", ClassFilter::Any, DataClass::Private, 5)
+        .search("naps", ClassFilter::Any, SCOPE_PRIVATE, 5)
         .await
         .unwrap();
     assert_eq!(found.hits.len(), 1);
@@ -297,7 +383,7 @@ async fn a_failing_embedder_shows_in_the_result() {
     let fake = Arc::new(Fake::default());
     let (memory, _) = memory_with(Some(Arc::clone(&fake)));
     memory
-        .store(note("cat naps"), private(), now())
+        .store(note("cat naps"), private(), None, now())
         .await
         .unwrap();
     *fake.fail.lock().unwrap() = Some(EmbedError {
@@ -305,7 +391,7 @@ async fn a_failing_embedder_shows_in_the_result() {
         try_shorter: false,
     });
     let found = memory
-        .search("naps", ClassFilter::Any, DataClass::Private, 5)
+        .search("naps", ClassFilter::Any, SCOPE_PRIVATE, 5)
         .await
         .unwrap();
     assert_eq!(found.hits.len(), 1);
@@ -317,12 +403,12 @@ async fn a_cut_result_says_so() {
     let (memory, _) = memory_with(None);
     for n in 0..4 {
         memory
-            .store(note(&format!("shared {n}")), private(), now())
+            .store(note(&format!("shared {n}")), private(), None, now())
             .await
             .unwrap();
     }
     let found = memory
-        .search("shared", ClassFilter::Any, DataClass::Private, 2)
+        .search("shared", ClassFilter::Any, SCOPE_PRIVATE, 2)
         .await
         .unwrap();
     assert_eq!(found.hits.len(), 2);
@@ -334,19 +420,20 @@ async fn a_public_search_cannot_reach_private_notes() {
     let fake = Arc::new(Fake::default());
     let (memory, _) = memory_with(Some(Arc::clone(&fake)));
     let secret = memory
-        .store(note("cat secret"), private(), now())
+        .store(note("cat secret"), private(), None, now())
         .await
         .unwrap();
     let open = memory
         .store(
             note("cat open"),
             origin(DataClass::Public, Trust::Trusted),
+            None,
             now(),
         )
         .await
         .unwrap();
     let found = memory
-        .search("cat", ClassFilter::PublicOnly, DataClass::Public, 5)
+        .search("cat", ClassFilter::PublicOnly, SCOPE_PUBLIC, 5)
         .await
         .unwrap();
     assert_eq!(found.hits.len(), 1);
@@ -376,6 +463,7 @@ async fn a_public_search_cannot_reach_private_notes() {
             edit,
             ClassFilter::PublicOnly,
             Trust::Trusted,
+            None,
             now(),
         )
         .await;
@@ -389,12 +477,13 @@ async fn an_untrusted_note_stays_labelled_in_search() {
         .store(
             note("fetched words"),
             origin(DataClass::Private, Trust::Untrusted),
+            None,
             now(),
         )
         .await
         .unwrap();
     let found = memory
-        .search("fetched", ClassFilter::Any, DataClass::Private, 5)
+        .search("fetched", ClassFilter::Any, SCOPE_PRIVATE, 5)
         .await
         .unwrap();
     assert_eq!(found.hits[0].provenance.trust, Trust::Untrusted);
@@ -405,7 +494,7 @@ async fn an_edit_is_found_and_the_old_text_is_not() {
     // Keywords only: a vector search always returns its nearest neighbors.
     let (memory, store) = memory_with(None);
     let stored = memory
-        .store(note("oldword here"), private(), now())
+        .store(note("oldword here"), private(), None, now())
         .await
         .unwrap();
     let edit = NoteEdit {
@@ -413,14 +502,21 @@ async fn an_edit_is_found_and_the_old_text_is_not() {
         ..NoteEdit::default()
     };
     memory
-        .update(stored.id, edit, ClassFilter::Any, Trust::Trusted, now())
+        .update(
+            stored.id,
+            edit,
+            ClassFilter::Any,
+            Trust::Trusted,
+            None,
+            now(),
+        )
         .await
         .unwrap();
     let search = |q: &'static str| {
         let memory = memory.clone();
         async move {
             memory
-                .search(q, ClassFilter::Any, DataClass::Private, 5)
+                .search(q, ClassFilter::Any, SCOPE_PRIVATE, 5)
                 .await
                 .unwrap()
                 .hits
@@ -438,7 +534,7 @@ async fn an_edit_is_found_and_the_old_text_is_not() {
 async fn an_untrusted_edit_taints_the_note_and_never_changes_its_class() {
     let (memory, store) = memory_with(None);
     let stored = memory
-        .store(note("trusted text"), private(), now())
+        .store(note("trusted text"), private(), None, now())
         .await
         .unwrap();
     let edit = NoteEdit {
@@ -446,7 +542,14 @@ async fn an_untrusted_edit_taints_the_note_and_never_changes_its_class() {
         ..NoteEdit::default()
     };
     memory
-        .update(stored.id, edit, ClassFilter::Any, Trust::Untrusted, now())
+        .update(
+            stored.id,
+            edit,
+            ClassFilter::Any,
+            Trust::Untrusted,
+            None,
+            now(),
+        )
         .await
         .unwrap();
     let updated = store.get_note(stored.id).await.unwrap().unwrap();
@@ -458,14 +561,24 @@ async fn an_untrusted_edit_taints_the_note_and_never_changes_its_class() {
 async fn a_title_edit_does_not_re_embed() {
     let fake = Arc::new(Fake::default());
     let (memory, store) = memory_with(Some(Arc::clone(&fake)));
-    let stored = memory.store(note("cat"), private(), now()).await.unwrap();
+    let stored = memory
+        .store(note("cat"), private(), None, now())
+        .await
+        .unwrap();
     let calls = fake.calls.lock().unwrap().len();
     let edit = NoteEdit {
         title: Some("new title".to_owned()),
         ..NoteEdit::default()
     };
     memory
-        .update(stored.id, edit, ClassFilter::Any, Trust::Trusted, now())
+        .update(
+            stored.id,
+            edit,
+            ClassFilter::Any,
+            Trust::Trusted,
+            None,
+            now(),
+        )
         .await
         .unwrap();
     assert_eq!(fake.calls.lock().unwrap().len(), calls);
@@ -480,7 +593,7 @@ async fn a_title_edit_does_not_re_embed() {
 async fn delete_forgets_and_a_second_delete_says_so() {
     let (memory, _) = memory_with(None);
     let stored = memory
-        .store(note("gone soon"), private(), now())
+        .store(note("gone soon"), private(), None, now())
         .await
         .unwrap();
     memory.delete(stored.id, ClassFilter::Any).await.unwrap();
@@ -496,7 +609,7 @@ async fn limits_and_empty_queries_are_refused() {
     let (memory, _) = memory_with(None);
     for (query, limit) in [("a", 0), ("a", MAX_SEARCH_LIMIT + 1), ("  ", 5)] {
         let result = memory
-            .search(query, ClassFilter::Any, DataClass::Private, limit)
+            .search(query, ClassFilter::Any, SCOPE_PRIVATE, limit)
             .await;
         assert!(matches!(result, Err(MemoryError::Invalid(_))));
     }

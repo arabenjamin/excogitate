@@ -55,6 +55,7 @@ impl Tool for WordCount {
         Ok(ToolOutput {
             value: json!({ "words": text.split_whitespace().count() }),
             trust: Trust::Trusted,
+            cost_usd_micros: 0,
         })
     }
 }
@@ -81,6 +82,7 @@ impl Tool for BookmarkAdd {
         Ok(ToolOutput {
             value: json!({ "id": id.to_string() }),
             trust: Trust::Trusted,
+            cost_usd_micros: 0,
         })
     }
 }

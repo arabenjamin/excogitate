@@ -18,7 +18,25 @@ pub struct EmbedError {
     pub try_shorter: bool,
 }
 
-/// Turns text into vectors. The privacy class decides who may do it.
+/// Who an embedding call is for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct EmbedScope {
+    /// The privacy class, which decides who may do the embedding.
+    pub data_class: DataClass,
+    /// The most it may cost, in millionths of a dollar, if it's limited.
+    pub budget_usd_micros: Option<u64>,
+}
+
+/// Vectors, and what they cost.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Embedding {
+    /// One vector per input, in order.
+    pub vectors: Vec<Vec<f32>>,
+    /// What it cost, in millionths of a dollar.
+    pub cost_usd_micros: u64,
+}
+
+/// Turns text into vectors.
 #[async_trait]
 pub trait Embedder: Send + Sync + std::fmt::Debug {
     /// The width of its vectors.
@@ -29,11 +47,7 @@ pub trait Embedder: Send + Sync + std::fmt::Debug {
     /// # Errors
     ///
     /// [`EmbedError`] if the call fails.
-    async fn embed(
-        &self,
-        inputs: &[String],
-        data_class: DataClass,
-    ) -> Result<Vec<Vec<f32>>, EmbedError>;
+    async fn embed(&self, inputs: &[String], scope: EmbedScope) -> Result<Embedding, EmbedError>;
 }
 
 /// An embedder that goes through the model gateway, so routing, privacy and
@@ -78,22 +92,21 @@ impl Embedder for GatewayEmbedder {
         self.dimension
     }
 
-    async fn embed(
-        &self,
-        inputs: &[String],
-        data_class: DataClass,
-    ) -> Result<Vec<Vec<f32>>, EmbedError> {
+    async fn embed(&self, inputs: &[String], scope: EmbedScope) -> Result<Embedding, EmbedError> {
         let policy = RoutePolicy {
             capabilities: vec![],
-            data_class,
+            data_class: scope.data_class,
             purpose: self.purpose.clone(),
-            budget_usd_micros: None,
+            budget_usd_micros: scope.budget_usd_micros,
             embedding_dimension: Some(self.dimension),
         };
         self.gateway
             .embed(&policy, inputs)
             .await
-            .map(|embedded| embedded.vectors)
+            .map(|embedded| Embedding {
+                vectors: embedded.vectors,
+                cost_usd_micros: embedded.cost_usd_micros,
+            })
             .map_err(|error| EmbedError {
                 try_shorter: may_be_length(&error),
                 message: bounded(&error.to_string()),

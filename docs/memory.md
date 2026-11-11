@@ -15,6 +15,9 @@ can then only be found by keyword, and `unembedded_chunks` says how many.
 
 The same content returns the note that already has it.
 
+Embedding is charged to the run that asked for it. The cost is on the result,
+and each retry can spend only what the attempts before it left.
+
 ## Searching
 
 A search runs full text and vector retrieval over a pool wider than the answer,

@@ -12,7 +12,7 @@ use store::{
     StoreError, UnitOfWork, WriteOp,
 };
 
-use crate::{ChunkConfig, EmbedError, Embedder, Piece, chunk_text, fuse};
+use crate::{ChunkConfig, EmbedError, EmbedScope, Embedder, Piece, chunk_text, fuse};
 
 /// The most notes one search may return.
 pub const MAX_SEARCH_LIMIT: u32 = 50;
@@ -55,6 +55,8 @@ pub struct StoredNote {
     pub chunks: u32,
     /// How many have no vector, and so can only be found by keyword.
     pub unembedded_chunks: u32,
+    /// What embedding it cost, in millionths of a dollar.
+    pub cost_usd_micros: u64,
 }
 
 /// Changes to a note. Empty fields stay as they are.
@@ -108,6 +110,8 @@ pub struct SearchResults {
     pub mode: SearchMode,
     /// True when more notes matched than are listed.
     pub has_more: bool,
+    /// What embedding the query cost, in millionths of a dollar.
+    pub cost_usd_micros: u64,
 }
 
 /// A memory operation failed.
@@ -149,6 +153,16 @@ fn front_half(text: &str) -> String {
     text.chars().take(text.chars().count() / 2).collect()
 }
 
+/// `scope`, less what's been spent.
+fn with_spent(scope: EmbedScope, spent: u64) -> EmbedScope {
+    EmbedScope {
+        budget_usd_micros: scope
+            .budget_usd_micros
+            .map(|left| left.saturating_sub(spent)),
+        ..scope
+    }
+}
+
 const fn visible_to(classes: ClassFilter, data_class: DataClass) -> bool {
     matches!(classes, ClassFilter::Any) || matches!(data_class, DataClass::Public)
 }
@@ -174,15 +188,17 @@ impl Memory {
         &self,
         embedder: &dyn Embedder,
         text: &str,
-        data_class: DataClass,
+        scope: EmbedScope,
+        spent: &mut u64,
     ) -> Option<Vec<f32>> {
         let mut input = text.to_owned();
         for _ in 0..=MAX_HALVINGS {
-            match embedder
-                .embed(std::slice::from_ref(&input), data_class)
-                .await
-            {
-                Ok(vectors) => return vectors.into_iter().next(),
+            let left = with_spent(scope, *spent);
+            match embedder.embed(std::slice::from_ref(&input), left).await {
+                Ok(embedding) => {
+                    *spent = spent.saturating_add(embedding.cost_usd_micros);
+                    return embedding.vectors.into_iter().next();
+                }
                 Err(EmbedError {
                     try_shorter: false, ..
                 }) => return None,
@@ -195,28 +211,36 @@ impl Memory {
         None
     }
 
-    /// One vector or `None` per piece. Failure costs a chunk its vector,
-    /// never the note.
-    async fn embed_pieces(&self, pieces: &[Piece], data_class: DataClass) -> Vec<Option<Vec<f32>>> {
+    /// One vector or `None` per piece, and the cost. Failure costs a chunk
+    /// its vector, never the note.
+    async fn embed_pieces(
+        &self,
+        pieces: &[Piece],
+        scope: EmbedScope,
+    ) -> (Vec<Option<Vec<f32>>>, u64) {
         let Some(embedder) = &self.embedder else {
-            return vec![None; pieces.len()];
+            return (vec![None; pieces.len()], 0);
         };
         let inputs: Vec<String> = pieces.iter().map(|piece| piece.text.clone()).collect();
-        match embedder.embed(&inputs, data_class).await {
-            Ok(vectors) if vectors.len() == pieces.len() => vectors.into_iter().map(Some).collect(),
+        match embedder.embed(&inputs, scope).await {
+            Ok(embedding) if embedding.vectors.len() == pieces.len() => (
+                embedding.vectors.into_iter().map(Some).collect(),
+                embedding.cost_usd_micros,
+            ),
             Ok(_)
             | Err(EmbedError {
                 try_shorter: false, ..
-            }) => vec![None; pieces.len()],
+            }) => (vec![None; pieces.len()], 0),
             Err(_) => {
+                let mut spent = 0;
                 let mut one_by_one = Vec::with_capacity(pieces.len());
                 for piece in pieces {
                     one_by_one.push(
-                        self.embed_one(embedder.as_ref(), &piece.text, data_class)
+                        self.embed_one(embedder.as_ref(), &piece.text, scope, &mut spent)
                             .await,
                     );
                 }
-                one_by_one
+                (one_by_one, spent)
             }
         }
     }
@@ -225,10 +249,10 @@ impl Memory {
         &self,
         note_id: NoteId,
         body: &str,
-        data_class: DataClass,
-    ) -> (Vec<Chunk>, u32) {
+        scope: EmbedScope,
+    ) -> (Vec<Chunk>, u32, u64) {
         let pieces = chunk_text(body, self.chunking);
-        let vectors = self.embed_pieces(&pieces, data_class).await;
+        let (vectors, cost) = self.embed_pieces(&pieces, scope).await;
         let unembedded = vectors.iter().filter(|vector| vector.is_none()).count();
         let chunks = pieces
             .into_iter()
@@ -243,7 +267,7 @@ impl Memory {
                 embedding,
             })
             .collect();
-        (chunks, u32::try_from(unembedded).unwrap_or(u32::MAX))
+        (chunks, u32::try_from(unembedded).unwrap_or(u32::MAX), cost)
     }
 
     /// Stores a note. Identical content returns the note that already has it.
@@ -256,6 +280,7 @@ impl Memory {
         &self,
         note: NewNote,
         origin: NoteOrigin,
+        budget_usd_micros: Option<u64>,
         now: DateTime<Utc>,
     ) -> Result<StoredNote, MemoryError> {
         check_body(&note.body)?;
@@ -268,11 +293,16 @@ impl Memory {
                 created: false,
                 chunks: u32::try_from(chunks.len()).unwrap_or(u32::MAX),
                 unembedded_chunks: u32::try_from(unembedded).unwrap_or(u32::MAX),
+                cost_usd_micros: 0,
             });
         }
         let id = NoteId::generate();
-        let (chunks, unembedded_chunks) =
-            self.build_chunks(id, &note.body, origin.data_class).await;
+        let scope = EmbedScope {
+            data_class: origin.data_class,
+            budget_usd_micros,
+        };
+        let (chunks, unembedded_chunks, cost_usd_micros) =
+            self.build_chunks(id, &note.body, scope).await;
         let count = u32::try_from(chunks.len()).unwrap_or(u32::MAX);
         let record = Note {
             id,
@@ -303,6 +333,7 @@ impl Memory {
             created: true,
             chunks: count,
             unembedded_chunks,
+            cost_usd_micros,
         })
     }
 
@@ -338,6 +369,7 @@ impl Memory {
         edit: NoteEdit,
         classes: ClassFilter,
         trust: Trust,
+        budget_usd_micros: Option<u64>,
         now: DateTime<Utc>,
     ) -> Result<StoredNote, MemoryError> {
         let mut note = self.visible(id, classes).await?;
@@ -357,12 +389,14 @@ impl Memory {
         }
         note.updated_at = now;
         let mut unit = UnitOfWork::new();
-        let (count, unembedded_chunks) = if let Some(body) = new_body {
+        let (count, unembedded_chunks, cost_usd_micros) = if let Some(body) = new_body {
             note.content_hash = content_hash(&body);
             note.body.clone_from(&body);
-            let (chunks, unembedded) = self
-                .build_chunks(id, &body, note.provenance.data_class)
-                .await;
+            let scope = EmbedScope {
+                data_class: note.provenance.data_class,
+                budget_usd_micros,
+            };
+            let (chunks, unembedded, cost) = self.build_chunks(id, &body, scope).await;
             let count = u32::try_from(chunks.len()).unwrap_or(u32::MAX);
             unit = unit
                 .with(WriteOp::UpdateNote {
@@ -373,7 +407,7 @@ impl Memory {
                     note_id: id,
                     chunks,
                 });
-            (count, unembedded)
+            (count, unembedded, cost)
         } else {
             let chunks = self.store.list_chunks(id).await?;
             let unembedded = chunks.iter().filter(|c| c.embedding.is_none()).count();
@@ -384,6 +418,7 @@ impl Memory {
             (
                 u32::try_from(chunks.len()).unwrap_or(u32::MAX),
                 u32::try_from(unembedded).unwrap_or(u32::MAX),
+                0,
             )
         };
         self.store.apply(unit).await?;
@@ -392,6 +427,7 @@ impl Memory {
             created: false,
             chunks: count,
             unembedded_chunks,
+            cost_usd_micros,
         })
     }
 
@@ -411,29 +447,32 @@ impl Memory {
         &self,
         query: &str,
         classes: ClassFilter,
-        data_class: DataClass,
+        scope: EmbedScope,
         pool: PageRequest,
-    ) -> Result<Page<ChunkHit>, String> {
+    ) -> Result<(Page<ChunkHit>, u64), String> {
         let Some(embedder) = &self.embedder else {
             return Err("no embedder is configured".to_owned());
         };
         let input = [query.to_owned()];
-        let vectors = embedder
-            .embed(&input, data_class)
+        let embedding = embedder
+            .embed(&input, scope)
             .await
             .map_err(|error| format!("the embedder failed: {error}"))?;
-        let vector = vectors
+        let cost = embedding.cost_usd_micros;
+        let vector = embedding
+            .vectors
             .into_iter()
             .next()
             .ok_or_else(|| "the embedder returned nothing".to_owned())?;
         self.store
             .search_vector(&vector, classes, pool)
             .await
+            .map(|page| (page, cost))
             .map_err(|error| format!("vector search failed: {error}"))
     }
 
-    /// Searches notes. `data_class` is the run's own class, and decides who
-    /// may embed the query. `classes` decides what it may find.
+    /// Searches notes. `scope` is the run's own, and decides who may embed
+    /// the query. `classes` decides what it may find.
     ///
     /// # Errors
     ///
@@ -443,7 +482,7 @@ impl Memory {
         &self,
         query: &str,
         classes: ClassFilter,
-        data_class: DataClass,
+        scope: EmbedScope,
         limit: u32,
     ) -> Result<SearchResults, MemoryError> {
         if limit == 0 || limit > MAX_SEARCH_LIMIT {
@@ -458,18 +497,20 @@ impl Memory {
         // that rank well in one list and appear in the other.
         let pool = PageRequest::new((limit * 3).max(10), 0)?;
         let text = self.store.search_text(query, classes, pool).await?;
-        let (vector, mode) = match self.vector_hits(query, classes, data_class, pool).await {
-            Ok(page) => (page, SearchMode::Hybrid),
-            Err(reason) => (
-                Page {
-                    items: Vec::new(),
-                    has_more: false,
-                },
-                SearchMode::KeywordOnly {
-                    reason: bounded(&reason),
-                },
-            ),
-        };
+        let (vector, mode, cost_usd_micros) =
+            match self.vector_hits(query, classes, scope, pool).await {
+                Ok((page, cost)) => (page, SearchMode::Hybrid, cost),
+                Err(reason) => (
+                    Page {
+                        items: Vec::new(),
+                        has_more: false,
+                    },
+                    SearchMode::KeywordOnly {
+                        reason: bounded(&reason),
+                    },
+                    0,
+                ),
+            };
         let fused = fuse(&[text.items.as_slice(), vector.items.as_slice()]);
 
         // Walk in fused order: rebuilding from any other order loses the rank.
@@ -503,6 +544,7 @@ impl Memory {
             hits,
             mode,
             has_more,
+            cost_usd_micros,
         })
     }
 }

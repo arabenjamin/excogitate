@@ -287,6 +287,7 @@ impl Tool for ServiceTool {
             value: result_value(&result)?,
             // Another process's output is never trusted as instructions.
             trust: Trust::Untrusted,
+            cost_usd_micros: 0,
         })
     }
 }

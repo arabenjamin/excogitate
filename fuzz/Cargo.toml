@@ -16,6 +16,7 @@ cargo-fuzz = true
 dispatch = { path = "../crates/dispatch" }
 libfuzzer-sys = "0.4"
 model = { path = "../crates/model" }
+tools = { path = "../crates/tools" }
 
 [[bin]]
 name = "parse_chat"
@@ -34,6 +35,13 @@ bench = false
 [[bin]]
 name = "tool_arguments"
 path = "fuzz_targets/tool_arguments.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "readable_text"
+path = "fuzz_targets/readable_text.rs"
 test = false
 doc = false
 bench = false

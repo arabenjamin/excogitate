@@ -419,7 +419,7 @@ impl Session {
                 return self.refuse(call, name, effect, refused).await;
             }
         };
-        let effect = registered.definition.effect;
+        let effect = registered.tool.effect_of(&arguments);
         if effect == crate::Effect::Write {
             if self.totals.writes >= self.config.budget.max_writes {
                 let kind = self.mark_hit(BudgetKind::Writes);
@@ -432,7 +432,8 @@ impl Session {
             }
             self.totals.writes += 1;
         }
-        self.run_tool(call, name, registered, arguments).await
+        self.run_tool(call, name, registered, effect, arguments)
+            .await
     }
 
     fn check_call<'r>(
@@ -487,6 +488,7 @@ impl Session {
             truncated: false,
             untrusted: false,
             duration_ms: 0,
+            cost_usd_micros: 0,
             detail: Some(detail.clone()),
         });
         self.emit(
@@ -511,11 +513,17 @@ impl Session {
         call: &ToolCall,
         name: String,
         registered: &Registered,
+        effect: crate::Effect,
         arguments: Value,
     ) -> ToolReply {
         let context = ToolContext {
             run: self.config.run,
             data_class: self.config.data_class,
+            budget_usd_micros: self
+                .config
+                .budget
+                .max_usd_micros
+                .saturating_sub(self.totals.cost_usd_micros),
         };
         let begun = Instant::now();
         let tool = Arc::clone(&registered.tool);
@@ -534,7 +542,18 @@ impl Session {
             Ok(Err(_)) => Finished::failed(CallStatus::Failed, "the tool crashed".to_owned()),
             Ok(Ok(Err(failure))) => Finished::failed(CallStatus::Failed, bounded(&failure.0)),
             Ok(Ok(Ok(output))) => match registered.output.check(&output.value) {
-                Ok(()) => Finished::ran(&output.value, output.trust, self.config.max_result_chars),
+                Ok(()) => {
+                    self.totals.cost_usd_micros = self
+                        .totals
+                        .cost_usd_micros
+                        .saturating_add(output.cost_usd_micros);
+                    Finished::ran(
+                        &output.value,
+                        output.trust,
+                        self.config.max_result_chars,
+                        output.cost_usd_micros,
+                    )
+                }
                 Err(refusal) => Finished::failed(
                     CallStatus::Failed,
                     format!(
@@ -548,10 +567,11 @@ impl Session {
             tool: name.clone(),
             status: finished.status,
             refusal: None,
-            effect: Some(registered.definition.effect),
+            effect: Some(effect),
             truncated: finished.truncated,
             untrusted: finished.untrusted,
             duration_ms,
+            cost_usd_micros: finished.cost_usd_micros,
             detail: finished.detail,
         });
         self.emit(
@@ -619,6 +639,7 @@ struct Finished {
     content: String,
     truncated: bool,
     untrusted: bool,
+    cost_usd_micros: u64,
     detail: Option<String>,
 }
 
@@ -629,11 +650,12 @@ impl Finished {
             content: json!({ "status": "failed", "detail": detail }).to_string(),
             truncated: false,
             untrusted: false,
+            cost_usd_micros: 0,
             detail: Some(detail),
         }
     }
 
-    fn ran(value: &Value, trust: Trust, max_chars: usize) -> Self {
+    fn ran(value: &Value, trust: Trust, max_chars: usize, cost_usd_micros: u64) -> Self {
         let untrusted = trust == Trust::Untrusted;
         let rendered = value.to_string();
         let total = rendered.chars().count();
@@ -656,6 +678,7 @@ impl Finished {
             content: content.to_string(),
             truncated,
             untrusted,
+            cost_usd_micros,
             detail: None,
         }
     }

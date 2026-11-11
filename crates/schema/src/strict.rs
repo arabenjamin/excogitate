@@ -64,7 +64,9 @@ fn walk(node: &Value, path: &str, found: &mut Vec<Violation>) {
     for key in LIST_KEYS {
         if let Some(Value::Array(children)) = schema.get(key) {
             for (index, child) in children.iter().enumerate() {
-                walk(child, &format!("{path}/{key}/{index}"), found);
+                if !only_a_condition(child) {
+                    walk(child, &format!("{path}/{key}/{index}"), found);
+                }
             }
         }
     }
@@ -88,7 +90,7 @@ fn check_node(schema: &Map<String, Value>, path: &str, found: &mut Vec<Violation
     let has_shape = closed_values
         || schema.contains_key("type")
         || schema.contains_key("$ref")
-        || LIST_KEYS.iter().any(|key| schema.contains_key(*key));
+        || LIST_KEYS.iter().any(|key| adds_shape(schema.get(*key)));
     if !has_shape {
         flag("accepts anything and doesn't declare an extension point");
     }
@@ -105,6 +107,26 @@ fn check_node(schema: &Map<String, Value>, path: &str, found: &mut Vec<Violation
         && !has_bounded_format(schema)
     {
         flag("string has no maxLength");
+    }
+}
+
+/// True for `{ if, then, else }` and nothing else. Beside a shape it only
+/// adds requirements, and on its own it isn't a shape.
+fn only_a_condition(node: &Value) -> bool {
+    node.as_object().is_some_and(|schema| {
+        schema.contains_key("if")
+            && schema
+                .keys()
+                .all(|key| matches!(key.as_str(), "if" | "then" | "else"))
+    })
+}
+
+/// True if a list of sub-schemas says anything about shape.
+fn adds_shape(list: Option<&Value>) -> bool {
+    match list {
+        Some(Value::Array(children)) => !children.iter().all(only_a_condition),
+        Some(_) => true,
+        None => false,
     }
 }
 
@@ -187,6 +209,35 @@ mod tests {
     fn a_schema_that_accepts_anything_fails() {
         assert_eq!(rules(&json!(true)).len(), 1);
         assert_eq!(rules(&json!({ "description": "anything" })).len(), 1);
+    }
+
+    #[test]
+    fn a_conditional_requirement_passes() {
+        let schema = json!({
+            "type": "object",
+            "additionalProperties": false,
+            "properties": { "a": { "type": "integer" } },
+            "allOf": [{ "if": { "properties": {} }, "then": { "required": ["a"] } }]
+        });
+        assert_eq!(check_strict(&schema), vec![]);
+    }
+
+    #[test]
+    fn a_condition_is_not_a_shape() {
+        let condition = json!({ "if": { "required": ["a"] }, "then": { "required": ["b"] } });
+        assert_eq!(check_strict(&condition).len(), 1);
+        let only_conditions = json!({ "allOf": [condition] });
+        assert_eq!(check_strict(&only_conditions).len(), 1);
+    }
+
+    #[test]
+    fn a_condition_does_not_excuse_an_open_object() {
+        let schema = json!({
+            "type": "object",
+            "if": { "required": ["a"] },
+            "then": { "required": ["b"] }
+        });
+        assert_eq!(check_strict(&schema).len(), 1);
     }
 
     #[test]
