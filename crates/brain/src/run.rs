@@ -181,6 +181,26 @@ pub async fn run_stdio(product: &str, version: &str) -> Result<(), RunError> {
     served
 }
 
+/// Relays MCP on stdin and stdout to a running server, reading the server's
+/// address and the owner key from the environment. It opens no store, so it
+/// can run beside the server.
+///
+/// # Errors
+///
+/// [`RunError`] if the key is missing or stdin or stdout fails.
+pub async fn run_connect(product: &str, url: Option<&str>) -> Result<(), RunError> {
+    let prefix = product.to_uppercase();
+    let owner_key = std::env::var(format!("{prefix}_OWNER_KEY")).unwrap_or_default();
+    check_owner_key(&owner_key).map_err(|problem| RunError::OwnerKey {
+        variable: format!("{prefix}_OWNER_KEY"),
+        problem,
+    })?;
+    let url = url.map_or_else(|| format!("http://{DEFAULT_BIND}"), str::to_owned);
+    crate::relay(&url, &owner_key, tokio::io::stdin(), tokio::io::stdout())
+        .await
+        .map_err(RunError::Serve)
+}
+
 /// Resolves when the process is told to stop.
 async fn stop_signal() {
     #[cfg(unix)]

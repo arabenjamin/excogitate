@@ -131,6 +131,22 @@ api "$base/mcp" -d "$(call 1 memory '{"operation":"search","query":"otters"}')" 
 check "MCP over HTTP reaches what the earlier sessions stored" "$over_http" \
   '.[0].result.structuredContent.result.hits[0].text | contains("hold hands")'
 
+relayed="$work/relayed"
+{
+  hello
+  call 1 memory '{"operation":"search","query":"otters"}'
+} | compose run --rm --no-deps -T brain connect http://server:8080 >"$relayed"
+check "a stdio client can use the store while the server holds it" "$relayed" \
+  'map(select(.id==1))[0].result.structuredContent.result.hits[0].text | contains("hold hands")'
+
+blocked="$work/blocked"
+if echo '{"jsonrpc":"2.0","id":1,"method":"ping"}' |
+  compose run --rm --no-deps -T brain >/dev/null 2>"$blocked"; then
+  fail "a second process opened the store"
+fi
+grep -q 'connect' "$blocked" || fail "the second process wasn't told what to do" "$blocked"
+ok "a second process is refused, and told to use connect"
+
 jobs="$work/jobs"
 api "$base/api/v1/jobs" >"$jobs"
 check "the REST API answers" "$jobs" '.[0].items == [] and .[0].has_more == false'

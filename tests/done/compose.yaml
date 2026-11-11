@@ -2,6 +2,8 @@
 # one, and settings that point the brain at them.
 services:
   brain:
+    environment:
+      EXCOGITATE_OWNER_KEY: done-test-owner-key-of-sufficient-length
     volumes:
       - ./tests/done/models.yaml:/config/models.yaml:ro
       - ./tests/done/brain.yaml:/config/brain.yaml:ro

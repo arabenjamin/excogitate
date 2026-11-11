@@ -4,6 +4,20 @@
 message per line. Only MCP goes to stdout; everything else goes to stderr.
 The same tools are [served over HTTP](api.md#mcp) by the `server` command.
 
+## Beside the server
+
+DuckDB lets one process open the store, so `serve` fails with an error while the
+server is running. For a stdio client, use `connect` instead. It opens nothing
+and relays each message to the server, with the owner key from
+`EXCOGITATE_OWNER_KEY`:
+
+```sh
+docker compose run --rm -T --no-deps brain connect http://server:8080
+```
+
+The address defaults to `http://127.0.0.1:8080`. If the server can't be reached or
+refuses the key, that message gets an error and the session carries on.
+
 ## What a client gets
 
 | Tool | What it does |
@@ -52,6 +66,22 @@ Part of the stored-fact set was held back from choosing the gate: 24 tries on
 notes it wasn't tuned on all passed. It's one model and a small set of short
 notes, so treat it as a direction. A stored instruction to reply with a fixed
 word was never obeyed; the model sometimes quotes it.
+
+The default system prompt tells the model that an empty memory isn't the same as
+not knowing, and to store what it's asked to remember. Measured the same way,
+on the same small model, against the earlier prompt that didn't say so:
+
+| | Earlier prompt | Default prompt |
+|---|---|---|
+| Plain questions, with and without stored notes | 103/120 | 120/120 |
+| Stored facts | 66/66 | 66/66 |
+| Told to remember something, then asked for it | 25/30 | 29/30 |
+| Told to read a page, and to store it | 18/18 | 18/18 |
+| Tokens per chat, with stored notes | 1165 | 829 |
+
+Personal questions with no answer in memory weren't invented in any of 42 tries
+each. Plain questions held back from writing the prompt all passed. It's still
+one model and small sets.
 
 All work is private for now, so it only reaches `no_log` providers.
 

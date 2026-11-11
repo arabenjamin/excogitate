@@ -3,8 +3,8 @@
 `crates/work` runs jobs without anyone waiting for them. The `server` command
 runs the workers and the scheduler alongside [the API](api.md).
 
-**DuckDB allows one process at a time.** An MCP stdio session can't run while the
-server does. The second one to start fails with an error.
+**DuckDB allows one process at a time,** and the server is that process. An MCP
+stdio client can still [use it through `connect`](mcp.md#beside-the-server).
 
 ## Jobs
 

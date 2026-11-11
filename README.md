@@ -75,7 +75,8 @@ the `brain-data` volume, so it's still there after a restart.
 
 Any OpenAI client works with the base URL `http://127.0.0.1:8080/v1`, and an MCP
 client with `http://127.0.0.1:8080/mcp`. Both use the key as a bearer token.
-See [the API](docs/api.md).
+See [the API](docs/api.md). An MCP client that only speaks stdio can
+[relay through `connect`](docs/mcp.md#beside-the-server).
 
 ## Configuration
 
