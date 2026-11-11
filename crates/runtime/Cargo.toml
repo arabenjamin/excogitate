@@ -23,6 +23,7 @@ harness = { path = "../harness" }
 memory = { path = "../memory" }
 model = { path = "../model" }
 plugin-api = { path = "../plugin-api" }
+plugin-host = { path = "../plugin-host" }
 protocol = { path = "../protocol" }
 reqwest = { version = "0.13", default-features = false, features = ["http2", "rustls"] }
 schema = { path = "../schema" }
@@ -45,6 +46,7 @@ workflow = { path = "../workflow" }
 [dev-dependencies]
 chaos-model = { path = "../chaos-model" }
 proptest.workspace = true
+plugin-example = { path = "../../plugins/example" }
 store-memory = { path = "../store-memory" }
 
 [lints]

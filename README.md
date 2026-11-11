@@ -101,9 +101,10 @@ port](docs/models.md), [memory and retrieval](docs/memory.md), [dispatch](docs/d
 ## Writing a plugin
 
 A plugin has a manifest with a schema, a declared schema for every tool's
-input and output, and narrow capabilities granted by name. It can be compiled
-in behind a cargo feature or run as its own process. Start by copying
-[`plugins/example`](plugins/example), and see [the guide](docs/plugins.md).
+input and output, and narrow capabilities granted by name. Plugins live in
+your own repo: a small binary of your own compiles them in, with no change
+to Excogitate. Start by copying [`plugins/example`](plugins/example), and
+see [the guide](docs/plugins.md).
 
 ## Getting help, contributing, security
 

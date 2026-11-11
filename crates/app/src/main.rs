@@ -1,45 +1,21 @@
-//! The command-line entry point.
+//! The stock binary: the runtime with the plugins this build's features
+//! name. A deployment with plugins of its own writes a binary just like this
+//! one, in its own repo, and lists them in [`compiled_plugins`].
 
 use std::process::ExitCode;
 use std::sync::Arc;
 
 use plugin_api::Plugin;
-
-/// The version this binary was built as, from Cargo.
-const VERSION: &str = env!("CARGO_PKG_VERSION");
+use runtime::Program;
 
 #[tokio::main]
 async fn main() -> ExitCode {
-    let arguments: Vec<String> = std::env::args().skip(1).collect();
-    match arguments.iter().map(String::as_str).collect::<Vec<_>>()[..] {
-        [] | ["--version" | "version"] => {
-            println!("{}", banner());
-            ExitCode::SUCCESS
-        }
-        ["serve"] => exit_code(runtime::run_stdio(env!("CARGO_BIN_NAME"), VERSION).await),
-        ["server"] => exit_code(runtime::run_server(env!("CARGO_BIN_NAME"), VERSION).await),
-        ["connect"] => exit_code(runtime::run_connect(env!("CARGO_BIN_NAME"), None).await),
-        ["connect", url] => {
-            exit_code(runtime::run_connect(env!("CARGO_BIN_NAME"), Some(url)).await)
-        }
-        _ => {
-            eprintln!(
-                "usage: {} [serve | server | connect [url] | version]",
-                env!("CARGO_BIN_NAME")
-            );
-            ExitCode::from(2)
-        }
-    }
-}
-
-fn exit_code(result: Result<(), runtime::RunError>) -> ExitCode {
-    match result {
-        Ok(()) => ExitCode::SUCCESS,
-        Err(error) => {
-            eprintln!("error: {error}");
-            ExitCode::FAILURE
-        }
-    }
+    runtime::main(Program {
+        name: env!("CARGO_BIN_NAME"),
+        version: env!("CARGO_PKG_VERSION"),
+        plugins: compiled_plugins(),
+    })
+    .await
 }
 
 /// The plugins this build was compiled with, one cargo feature each.
@@ -55,23 +31,9 @@ fn compiled_plugins() -> Vec<Arc<dyn Plugin>> {
     plugins
 }
 
-/// The line printed on start.
-fn banner() -> String {
-    format!(
-        "{} {VERSION} ({} plugins compiled in)",
-        env!("CARGO_BIN_NAME"),
-        compiled_plugins().len()
-    )
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn banner_names_the_version() {
-        assert!(banner().contains(VERSION));
-    }
 
     #[test]
     fn plugins_are_compiled_in_only_by_feature() {
