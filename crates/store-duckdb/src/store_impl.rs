@@ -79,6 +79,27 @@ pub struct DuckDbStore {
     dimension: usize,
 }
 
+/// The writer finishes its last checkpoint before the store is gone. A
+/// writer left running can outlive its process, which then crashes in
+/// `DuckDB`'s teardown, or can still be writing when the file is opened again,
+/// which corrupts it.
+impl Drop for DuckDbStore {
+    fn drop(&mut self) {
+        let handle = self
+            .writer
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .take();
+        // The writer stops when every sender is gone, and this is the only one.
+        let (stand_in, _) = mpsc::channel(1);
+        drop(std::mem::replace(&mut self.commands, stand_in));
+        if let Some(handle) = handle {
+            // A panicked writer has nothing more to clean up.
+            let _ = handle.join();
+        }
+    }
+}
+
 impl DuckDbStore {
     /// Opens or creates the store.
     ///
@@ -128,19 +149,10 @@ impl DuckDbStore {
         })
     }
 
-    /// Stops the writer, after a checkpoint, and waits for it. Call this
-    /// before reopening the same file in the same process.
+    /// Stops the writer, after a checkpoint, and waits for it. Dropping the
+    /// store does the same; this says so where it happens.
     pub fn close(self) {
-        let handle = self
-            .writer
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .take();
-        drop(self.commands);
-        if let Some(handle) = handle {
-            // A panicked writer has nothing more to clean up.
-            let _ = handle.join();
-        }
+        drop(self);
     }
 
     async fn send<T>(

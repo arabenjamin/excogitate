@@ -131,6 +131,26 @@ async fn notes_and_search_survive_a_reopen() {
     store.close();
 }
 
+/// Dropping the store, not just closing it, finishes the writer's last
+/// checkpoint before it returns. Otherwise a process can exit while the
+/// writer still holds the file, and the store can't be reopened at once.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_dropped_store_has_let_go_of_its_file() {
+    let directory = TempDir::new();
+    for round in 0..10 {
+        let store = DuckDbStore::open(&config(Some(directory.file()), 3)).unwrap();
+        let (_, unit) = note_unit(&format!("round {round}"));
+        store.apply(unit).await.unwrap();
+        drop(store);
+    }
+    let store = DuckDbStore::open(&config(Some(directory.file()), 3)).unwrap();
+    let hits = store
+        .search_text("round", ClassFilter::Any, page())
+        .await
+        .unwrap();
+    assert_eq!(hits.items.len(), 10);
+}
+
 /// Set in the child process of the crash test.
 const CRASH_FILE: &str = "STORE_TEST_CRASH_FILE";
 
