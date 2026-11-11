@@ -23,6 +23,35 @@ check.
   refuse them. They're still enforced, and a refusal says what was missing.
 - Each chat stands alone. What carries over between them is what's in memory.
 
+## Recall
+
+Before a chat's first round, the harness searches memory for the question.
+Notes close enough in meaning join the transcript as a search already made, so
+a small model has them without having to think of it. The receipt marks that
+call `by_harness`, and it counts against the budget. If nothing is close
+enough, the model sees nothing, because irrelevant notes make a small model
+say it doesn't know things it does.
+
+`recall_limit` sets how many notes (0 turns it off), and
+`recall_min_similarity` how close they must be. The default of 0.6 suits
+bge-m3 on short notes, so measure it for your embedder. With no embedder,
+nothing passes that gate and the model can still search for itself.
+
+Measured on a small local model, three tries per question, with 21 made-up
+notes. Questions didn't ask it to search:
+
+| | Stored facts | Plain questions | Tokens per chat |
+|---|---|---|---|
+| Nothing added | 20/66 | 27/30 | 950 |
+| A prompt telling it to search first | 50/66 | 26/30 | 2020 |
+| Recall with no gate | 66/66 | 20/30 | 1398 |
+| Recall with the gate (the default) | 66/66, twice | 28/30, twice | about 1000 |
+
+Part of the stored-fact set was held back from choosing the gate: 24 tries on
+notes it wasn't tuned on all passed. It's one model and a small set of short
+notes, so treat it as a direction. A stored instruction to reply with a fixed
+word was never obeyed; the model sometimes quotes it.
+
 All work is private for now, so it only reaches `no_log` providers.
 
 ## Settings

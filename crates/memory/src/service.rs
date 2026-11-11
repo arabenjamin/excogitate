@@ -1,6 +1,6 @@
 //! The memory service: what the `memory` tool and the brain's own loops use.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use chrono::{DateTime, Utc};
@@ -99,6 +99,9 @@ pub struct NoteHit {
     pub provenance: Provenance,
     /// Its fused score, comparable only within this search.
     pub score: f32,
+    /// How close it is in meaning to the query, from -1 to 1, if vector
+    /// search found it. Comparable between searches with the same embedder.
+    pub similarity: Option<f32>,
 }
 
 /// What a search found.
@@ -511,6 +514,11 @@ impl Memory {
                     0,
                 ),
             };
+        let similarity: HashMap<ChunkId, f32> = vector
+            .items
+            .iter()
+            .map(|hit| (hit.chunk.id, hit.score))
+            .collect();
         let fused = fuse(&[text.items.as_slice(), vector.items.as_slice()]);
 
         // Walk in fused order: rebuilding from any other order loses the rank.
@@ -536,6 +544,7 @@ impl Memory {
                     tags: note.tags,
                     source_url: note.source_url,
                     provenance: chunk.hit.provenance,
+                    similarity: similarity.get(&chunk.hit.chunk.id).copied(),
                     score: chunk.score,
                 });
             }

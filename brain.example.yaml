@@ -4,6 +4,13 @@
 # How much of each tool result a chat's model sees. Sized for a small model.
 max_result_chars: 12000
 
+# How many notes to search for before a chat's first round. 0 turns it off.
+recall_limit: 3
+# How close in meaning a note must be to be used, from 0 to 1. This suits
+# bge-m3 on short notes; measure it for your embedder. With no embedder, this
+# search finds nothing to use, and the model can still search for itself.
+recall_min_similarity: 0.6
+
 # The limits on each run. Give all of them, or leave the whole block out.
 # max_usd_micros is 0, so a priced model isn't used until you raise it.
 budget:

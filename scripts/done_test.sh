@@ -40,7 +40,6 @@ call() {
     '{jsonrpc:"2.0",id:$id,method:"tools/call",params:{name:$tool,arguments:$args}}'
 }
 
-[[ -e .env ]] || cp .env.example .env
 [[ ${DONE_TEST_NO_BUILD:-} == 1 ]] || compose build
 compose up --detach --wait fixture chaos
 
@@ -68,7 +67,7 @@ check "it fetches the page, labelled untrusted" "$first" \
 check "it reads the page and stores what it learned" "$first" \
   'map(select(.id==3))[0].result.structuredContent
    | .answer == "Stored it." and .receipt.outcome == "answered"
-     and ([.receipt.tool_calls[] | select(.status == "ran") | .tool] == ["http_request","memory"])'
+     and ([.receipt.tool_calls[] | select(.status == "ran" and (.by_harness | not)) | .tool] == ["http_request","memory"])'
 
 second="$work/second"
 {
@@ -79,8 +78,9 @@ second="$work/second"
 
 check "a new session recalls it through memory" "$second" \
   'map(select(.id==1))[0].result.structuredContent
-   | .answer == "They hold hands." and .receipt.tool_calls[0].tool == "memory"
-     and .receipt.tool_calls[0].status == "ran" and .receipt.totals.writes == 0'
+   | .answer == "They hold hands." and .receipt.totals.writes == 0
+     and (.receipt.tool_calls[0] | .tool == "memory" and .status == "ran" and .by_harness)
+     and (.receipt.tool_calls[1] | .tool == "memory" and .status == "ran" and (.by_harness | not))'
 check "what was stored really is there" "$second" \
   'map(select(.id==2))[0].result.structuredContent.result.hits[0].text | contains("hold hands")'
 

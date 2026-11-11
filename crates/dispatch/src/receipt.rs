@@ -79,6 +79,8 @@ pub struct ToolEntry {
     pub truncated: bool,
     /// Whether the result came from outside and is labelled untrusted.
     pub untrusted: bool,
+    /// True if the harness made this call, and the model didn't ask for it.
+    pub by_harness: bool,
     /// How long it ran.
     pub duration_ms: u64,
     /// What it spent, in millionths of a dollar.

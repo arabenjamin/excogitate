@@ -1130,3 +1130,35 @@ async fn tools_need_a_model_that_can_use_them() {
     let answered = converse_with(CHAT_ONLY, client, &[], &[], budget()).await;
     assert_eq!(answered.answer.as_deref(), Some("hi"));
 }
+
+#[tokio::test]
+async fn a_harness_call_is_checked_and_marked() {
+    let reader = Fixture::new("reader", Effect::Read, Behavior::Good);
+    let mut session = session_with(std::slice::from_ref(&reader), &["reader"], budget());
+    let reply = session
+        .dispatch_for_harness(&call("reader", GOOD_ARGS))
+        .await
+        .unwrap();
+    assert_eq!(reply.status, CallStatus::Ran);
+    session.dispatch(&call("reader", GOOD_ARGS)).await;
+    let receipt = session.finish(Outcome::Direct).await;
+    assert!(receipt.tool_calls[0].by_harness);
+    assert!(!receipt.tool_calls[1].by_harness, "the model's own");
+    assert_eq!(receipt.totals.tool_calls, 2, "it counts against the budget");
+}
+
+#[tokio::test]
+async fn a_harness_call_leaves_the_model_at_least_one_of_its_own() {
+    let reader = Fixture::new("reader", Effect::Read, Behavior::Good);
+    let one_call = Budget {
+        max_tool_calls: 1,
+        ..budget()
+    };
+    let mut session = session_with(std::slice::from_ref(&reader), &["reader"], one_call);
+    let reply = session
+        .dispatch_for_harness(&call("reader", GOOD_ARGS))
+        .await;
+    assert_eq!(reply, None);
+    assert_eq!(reader.run_count(), 0);
+    assert_eq!(session.budget_hit(), None);
+}

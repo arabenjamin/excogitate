@@ -11,8 +11,8 @@ itself from evidence.
 
 **Pre-alpha.** It serves [MCP over stdio](docs/mcp.md): it can chat, read a
 URL and remember what it read. CI runs the quickstart below with a scripted
-model. On a small real model the tools work, but it doesn't reliably think to
-search its memory yet.
+model. [Recall on a small local model](docs/mcp.md#recall) has been measured
+only on a small set of short notes.
 Expect everything to change, and don't depend on any interface.
 
 ## What it is, and why

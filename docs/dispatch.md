@@ -31,6 +31,9 @@ ends. It routes only to models that can use tools when the run has any.
   the output limit is still an answer, and the receipt says `answer_cut_off`.
 - **An empty reply isn't one.** The run ends as `model_failed` and says so.
 - **A tool that fails** goes back to the model, which decides what to do.
+- **The harness can make a call first** (`dispatch_for_harness`), with the
+  same checks. The receipt marks it `by_harness`, and it won't take the last
+  tool call a run has.
 - **Hitting a budget** ends the run at once, with no answer and
   `stopped_because` saying which limit it was.
 

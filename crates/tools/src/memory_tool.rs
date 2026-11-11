@@ -104,6 +104,10 @@ struct MemoryArgs {
     /// How many notes a search returns. The default is 5.
     #[schemars(range(min = 1, max = memory::MAX_SEARCH_LIMIT))]
     limit: Option<u32>,
+    /// Keep only notes at least this close in meaning, from 0 to 1. A note
+    /// found by keyword alone has no similarity, so it's left out.
+    #[schemars(range(min = 0.0, max = 1.0))]
+    min_similarity: Option<f32>,
 }
 
 /// Whether a note may be treated as instructions.
@@ -145,6 +149,8 @@ struct Hit {
     trust: TrustLabel,
     /// Its score, comparable only within this search.
     score: f32,
+    /// How close it is in meaning to the query, if vector search found it.
+    similarity: Option<f32>,
 }
 
 /// What the tool did.
@@ -217,7 +223,12 @@ fn hit(found: NoteHit) -> Hit {
         source_url: found.source_url.map(|url| clamped(url, MAX_URL)),
         trust: found.provenance.trust.into(),
         score: found.score,
+        similarity: found.similarity,
     }
+}
+
+fn close_enough(found: &NoteHit, min_similarity: Option<f32>) -> bool {
+    min_similarity.is_none_or(|min| found.similarity.is_some_and(|close| close >= min))
 }
 
 fn stored(note: &StoredNote) -> MemoryResult {
@@ -312,9 +323,13 @@ impl MemoryTool {
             )
             .await
             .map_err(|error| failure(&error))?;
-        let all_trusted = !results.hits.is_empty()
-            && results
-                .hits
+        let kept: Vec<NoteHit> = results
+            .hits
+            .into_iter()
+            .filter(|found| close_enough(found, args.min_similarity))
+            .collect();
+        let all_trusted = !kept.is_empty()
+            && kept
                 .iter()
                 .all(|found| found.provenance.trust == Trust::Trusted);
         let keyword_only_because = match results.mode {
@@ -323,7 +338,7 @@ impl MemoryTool {
         };
         Ok((
             MemoryResult::Found {
-                hits: results.hits.into_iter().map(hit).collect(),
+                hits: kept.into_iter().map(hit).collect(),
                 keyword_only_because,
                 has_more: results.has_more,
             },
