@@ -1,0 +1,6 @@
+# The Harness² part of scripts/done_test.sh: no recall, so the script's
+# replies line up with each run, and adoption on.
+recall_limit: 0
+harness:
+  probe_reads: [memory]
+  adopt: true

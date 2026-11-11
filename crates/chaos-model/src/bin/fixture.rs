@@ -34,6 +34,79 @@ fn done_script(page_url: &str) -> Vec<ChaosStep> {
     ]
 }
 
+/// What the agent's improved instructions say, in the Harness² script.
+const IMPROVED: &str = "You answer questions about otters. Look in memory before you answer.";
+
+fn judged(value: &Value) -> ChaosStep {
+    ChaosStep::Text(value.to_string())
+}
+
+fn editor(cite_step: u32) -> ChaosStep {
+    judged(&json!({
+        "invariant": {
+            "system_prompt": IMPROVED,
+            "change": "Look in memory first.",
+            "cites": [{ "run": "R", "step": cite_step, "quote": "I don't know" }]
+        },
+        "domain": {
+            "system_prompt": "You answer questions about otters.",
+            "change": "Nothing.",
+            "cites": []
+        }
+    }))
+}
+
+fn composer(step: u32, quote: &str) -> ChaosStep {
+    judged(&json!({
+        "verdicts": [{
+            "candidate": "A", "effect": "mitigated",
+            "cite": { "run": "A", "step": step, "quote": quote }
+        }],
+        "decision": "adopt", "choose": "A", "merged": null,
+        "reason": "Run A answered."
+    }))
+}
+
+fn known_answer(effect: &str, quote: &str, decision: &str) -> ChaosStep {
+    judged(&json!({
+        "verdicts": [{
+            "candidate": "A", "effect": effect,
+            "cite": { "run": "A", "step": 3, "quote": quote }
+        }],
+        "decision": decision,
+        "choose": (decision == "adopt").then_some("A"),
+        "merged": null,
+        "reason": "As the runs show."
+    }))
+}
+
+/// Two Harness² attempts on one agent. In the first, the candidate's run
+/// fails and the composer claims it helped anyway, which must not be adopted.
+/// In the second, the reference run tries to write, which a probe stubs, and
+/// the candidate is supported, passes the judge's known-answer test and is
+/// adopted.
+fn harness_script() -> Vec<ChaosStep> {
+    vec![
+        // Attempt 1: R0 started, R1 instructions, R2 task, R3 the reply.
+        ChaosStep::Text("I don't know.".to_owned()),
+        editor(3),
+        ChaosStep::Status(500),
+        composer(3, "model call failed"),
+        // Attempt 2: R3 asks to write, R4 is the stubbed write, R5 the reply.
+        tool_call(
+            "memory",
+            &json!({ "operation": "store", "text": "Written only in a probe." }),
+        ),
+        ChaosStep::Text("I don't know.".to_owned()),
+        editor(5),
+        ChaosStep::Text("They hold hands while they sleep.".to_owned()),
+        composer(3, "They hold hands"),
+        known_answer("mitigated", "Six times seven is 42.", "adopt"),
+        known_answer("regressed", "the model's reply was empty", "keep"),
+        known_answer("unchanged", "Six times seven is 42.", "keep"),
+    ]
+}
+
 fn chaos_script(page_url: &str, seed: u64) -> Vec<ChaosStep> {
     let tools = [
         ChaosTool {
@@ -67,6 +140,7 @@ async fn run(mode: &str) -> Result<(), String> {
     let page_url = std::env::var("PAGE_URL").map_err(|_| "PAGE_URL isn't set".to_owned())?;
     let script = match mode {
         "done" => done_script(&page_url),
+        "harness" => harness_script(),
         "chaos" => {
             let seed = std::env::var("CHAOS_SEED")
                 .ok()

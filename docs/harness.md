@@ -150,6 +150,15 @@ real runs, and queues one attempt for it. Put it on a
 - **At most one attempt per agent per day** is queued, even if a schedule fires
   twice.
 
+## How it's tested
+
+The HTTP tests and the [done-test](../scripts/done_test.sh) run the loop on a
+scripted model, on every change: a candidate whose run ends worse is never
+adopted even when the judge says it helped, a probe's write never happens, a
+supported edit is adopted only after the judge passes its known answers, and a
+revert puts the file back byte for byte. A run on real models is a manual check
+before each release.
+
 ## What comes next
 
 - **Workflows,** improved the same way as agents.

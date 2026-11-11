@@ -1,0 +1,6 @@
+version: 1
+providers:
+  - {name: fixture, base_url: 'http://harness_fixture:9000/v1', no_log: true, timeout_secs: 10}
+models:
+  # One scripted model plays the agent and the judges.
+  - {name: scripted, provider: fixture, wire_model: x, capabilities: [chat, tools, investigative], context_tokens: 1000000, max_output_tokens: 4000}
