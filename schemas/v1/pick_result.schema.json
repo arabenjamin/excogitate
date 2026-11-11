@@ -1,0 +1,107 @@
+{
+  "$defs": {
+    "Pick": {
+      "additionalProperties": false,
+      "description": "The agent picked, and why.",
+      "properties": {
+        "failure": {
+          "description": "How the runs went wrong.",
+          "maxLength": 512,
+          "type": "string"
+        },
+        "of": {
+          "description": "How many recent runs were looked at.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "repeats": {
+          "description": "How many recent runs went wrong that way.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "request": {
+          "$ref": "#/$defs/Request",
+          "description": "What to attempt."
+        }
+      },
+      "required": [
+        "request",
+        "failure",
+        "repeats",
+        "of"
+      ],
+      "type": "object"
+    },
+    "Request": {
+      "additionalProperties": false,
+      "description": "What to improve.",
+      "properties": {
+        "agent": {
+          "description": "The agent.",
+          "maxLength": 64,
+          "minLength": 1,
+          "type": "string"
+        },
+        "task": {
+          "description": "A task to run it on, such as one a real run got wrong.",
+          "maxLength": 8000,
+          "minLength": 1,
+          "type": "string"
+        },
+        "why": {
+          "description": "What went wrong, if someone said.",
+          "maxLength": 2000,
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "agent",
+        "task"
+      ],
+      "type": "object"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "What a pick job found.",
+  "properties": {
+    "job_id": {
+      "description": "The attempt queued for it.",
+      "maxLength": 36,
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "pick": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/Pick"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "The agent picked, if one was."
+    },
+    "skipped": {
+      "description": "Agents left alone, and why.",
+      "items": {
+        "maxLength": 2048,
+        "type": "string"
+      },
+      "maxItems": 200,
+      "type": "array"
+    }
+  },
+  "required": [
+    "skipped"
+  ],
+  "title": "Picked",
+  "type": "object"
+}

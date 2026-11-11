@@ -1,0 +1,7 @@
+# Copy to improve-agents.yaml to turn it on. Once a week, Harness² looks at
+# each agent's recent runs and, if one went wrong the same way more than once,
+# tries to improve it. See docs/harness.md.
+cron: "0 3 * * 1"
+kind: harness_pick
+payload: {}
+max_attempts: 1

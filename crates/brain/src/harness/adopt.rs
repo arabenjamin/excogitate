@@ -35,6 +35,15 @@ pub(crate) enum ChangeError {
     Internal(String),
 }
 
+impl ChangeError {
+    /// What went wrong, in a sentence.
+    pub(crate) fn message(self) -> String {
+        match self {
+            Self::NotFound(why) | Self::Conflict(why) | Self::Internal(why) => why,
+        }
+    }
+}
+
 impl<E: std::fmt::Display> From<E> for ChangeError {
     fn from(error: E) -> Self {
         Self::Internal(schema::bounded(&error.to_string()))
@@ -180,11 +189,7 @@ impl Brain {
     pub(crate) async fn adopt(&self, attempt_id: RecordId, attempt: &Attempt) -> Adoption {
         match self.try_adopt(attempt_id, attempt).await {
             Ok(adoption) => adoption,
-            Err(
-                ChangeError::NotFound(why)
-                | ChangeError::Conflict(why)
-                | ChangeError::Internal(why),
-            ) => not_adopted(why),
+            Err(error) => not_adopted(error.message()),
         }
     }
 

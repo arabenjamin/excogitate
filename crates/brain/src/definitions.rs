@@ -305,7 +305,11 @@ mod tests {
             "workflows/read-and-remember.yaml",
             include_str!("../../../definitions/workflows/read-and-remember.yaml.example"),
         );
-        assert_eq!(fixture.load().await.unwrap(), 2);
+        fixture.write(
+            "schedules/improve-agents.yaml",
+            include_str!("../../../definitions/schedules/improve-agents.yaml.example"),
+        );
+        assert_eq!(fixture.load().await.unwrap(), 3);
     }
 
     #[tokio::test]

@@ -123,7 +123,27 @@ them.
 - **Override:** edit the agent's file. The edit stands, and the agent is held
   the next time the system looks at changing it.
 
+## What to improve
+
+A `harness_pick` job, which takes `{}`, chooses an agent to improve from its
+real runs, and queues one attempt for it. Put it on a
+[schedule](work.md#schedules), as in
+[`definitions/schedules/improve-agents.yaml.example`](../definitions/schedules/improve-agents.yaml.example).
+
+- **It looks at each agent's last 20 runs from the past 7 days,** never at
+  probes.
+- **A run went wrong** if a tool call the model made failed, timed out or was
+  refused, or if the run ended without an answer.
+- **One failure is noise.** An agent is picked only when two or more runs went
+  wrong the same way, and the agent with the most such runs wins.
+- **The task is the newest of those runs' own question,** and `why` says how the
+  runs went wrong.
+- **An agent is left alone** if it's held, was tried in the last 24 hours, or was
+  changed in the last 24 hours. Whatever it skips, and why, is in the job's
+  result ([schema](../schemas/v1/pick_result.schema.json)).
+- **At most one attempt per agent per day** is queued, even if a schedule fires
+  twice.
+
 ## What comes next
 
-- **What to improve,** found from real runs that went wrong, on a schedule.
 - **Workflows,** improved the same way as agents.

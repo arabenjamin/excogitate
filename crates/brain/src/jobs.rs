@@ -133,6 +133,7 @@ impl Brain {
             Arc::new(ChatJob(self.clone())),
             Arc::new(WorkflowJob(self.clone())),
             Arc::new(crate::harness::HarnessJob(self.clone())),
+            Arc::new(crate::harness::PickJob(self.clone())),
         ]
     }
 }

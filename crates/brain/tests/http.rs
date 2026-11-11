@@ -1287,3 +1287,130 @@ async fn an_agent_changes_at_most_once_a_day() {
         "{second}"
     );
 }
+
+// Picking what to improve.
+
+impl Running {
+    /// Queues a job straight into the store, as a schedule would, and runs it.
+    async fn run_job(&self, kind: &str, payload: Value) -> Value {
+        let id = store::JobId::generate();
+        let job = store::Job {
+            id,
+            kind: kind.to_owned(),
+            payload,
+            priority: 0,
+            status: store::JobStatus::Queued,
+            requested_by: protocol::Actor::new("test"),
+            run_at: Utc::now(),
+            attempts: 0,
+            max_attempts: 1,
+            lease: None,
+            last_error: None,
+            result: None,
+        };
+        self.store
+            .apply(store::UnitOfWork::new().with(store::WriteOp::EnqueueJob(job)))
+            .await
+            .unwrap();
+        self.work_off(&id.to_string()).await
+    }
+}
+
+#[tokio::test]
+async fn an_agent_that_fails_the_same_way_twice_is_picked_once_a_day() {
+    let running = with_workflow("pick", vec![ChaosStep::Status(500), ChaosStep::Status(500)]).await;
+    for _ in 0..2 {
+        let started = body_of(running.post("/api/v1/workflows/flow/runs", &inputs()).await).await;
+        assert_eq!(
+            running.work_off(started["job_id"].as_str().unwrap()).await["status"],
+            "dead"
+        );
+    }
+    let picked = running.run_job("harness_pick", json!({})).await;
+    assert_eq!(picked["status"], "succeeded", "{picked}");
+    let result = &picked["result"];
+    assert_eq!(result["pick"]["request"]["agent"], "helper", "{result}");
+    assert_eq!(result["pick"]["failure"], "ended model_failed");
+    assert_eq!(result["pick"]["repeats"], 2);
+    assert!(
+        result["pick"]["request"]["task"]
+            .as_str()
+            .unwrap()
+            .starts_with("About otters")
+    );
+    Validator::from_schema(&schema::schema_of::<brain::Picked>())
+        .unwrap()
+        .check(result)
+        .unwrap();
+    let job = result["job_id"].as_str().unwrap().to_owned();
+    let queued = body_of(running.get(&format!("/api/v1/jobs/{job}")).await).await;
+    assert_eq!(queued["kind"], "harness");
+    assert_eq!(queued["requested_by"], "harness");
+
+    // Picking again the same day queues nothing new: the worker runs the
+    // attempt first, and an agent tried today is left alone.
+    let again = running.run_job("harness_pick", json!({})).await;
+    assert_eq!(again["result"]["job_id"], Value::Null, "{again}");
+    assert!(
+        again["result"]["skipped"][0]
+            .as_str()
+            .unwrap()
+            .contains("was tried in the last 24 hours"),
+        "{again}"
+    );
+    let jobs = body_of(running.get("/api/v1/jobs?limit=200").await).await;
+    let attempts = jobs["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|job| job["kind"] == "harness")
+        .count();
+    assert_eq!(attempts, 1);
+}
+
+#[tokio::test]
+async fn a_held_agent_is_not_picked() {
+    let running = with_workflow(
+        "pick-held",
+        vec![ChaosStep::Status(500), ChaosStep::Status(500)],
+    )
+    .await;
+    for _ in 0..2 {
+        let started = body_of(running.post("/api/v1/workflows/flow/runs", &inputs()).await).await;
+        running.work_off(started["job_id"].as_str().unwrap()).await;
+    }
+    let held = running
+        .client
+        .put(format!("{}/api/v1/harness/holds/helper", running.url))
+        .bearer_auth(KEY)
+        .header("content-type", "application/json")
+        .body(json!({ "reason": "Leave it." }).to_string())
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(held.status(), StatusCode::OK);
+    let picked = running.run_job("harness_pick", json!({})).await;
+    assert_eq!(picked["result"]["pick"], Value::Null, "{picked}");
+    assert!(
+        picked["result"]["skipped"][0]
+            .as_str()
+            .unwrap()
+            .contains("helper is held")
+    );
+}
+
+#[tokio::test]
+async fn runs_that_went_well_give_nothing_to_pick() {
+    let script = vec![
+        ChaosStep::Text("Otters!".to_owned()),
+        ChaosStep::Text("Otters!".to_owned()),
+    ];
+    let running = with_workflow("pick-none", script).await;
+    for _ in 0..2 {
+        let started = body_of(running.post("/api/v1/workflows/flow/runs", &inputs()).await).await;
+        running.work_off(started["job_id"].as_str().unwrap()).await;
+    }
+    let picked = running.run_job("harness_pick", json!({})).await;
+    assert_eq!(picked["result"]["pick"], Value::Null, "{picked}");
+    assert_eq!(picked["result"]["job_id"], Value::Null);
+}

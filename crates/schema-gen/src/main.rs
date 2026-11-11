@@ -30,6 +30,7 @@ fn generated() -> BTreeMap<&'static str, Value> {
         ("attempt_list", schema_of::<brain::AttemptList>()),
         ("attempt_view", schema_of::<brain::AttemptView>()),
         ("improve_request", schema_of::<harness::Request>()),
+        ("pick_result", schema_of::<brain::Picked>()),
         ("definition_list", schema_of::<brain::DefinitionList>()),
         ("job_list", schema_of::<brain::JobList>()),
         ("job_view", schema_of::<brain::JobView>()),

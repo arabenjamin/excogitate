@@ -17,6 +17,7 @@ mod run;
 pub use assemble::{Brain, BrainError};
 pub use config::{BrainConfig, ConfigError, HarnessConfig, ServerConfig};
 pub use connect::relay;
+pub use harness::{PickArgs, Picked};
 pub use http::{
     ApiError, AttemptList, AttemptView, ChangeList, ChangeView, DefinitionList, DefinitionView,
     HoldList, HoldRequest, HttpError, JobList, JobStatusView, JobView, OpenAiRequest, RunList,
