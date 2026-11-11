@@ -41,6 +41,9 @@ pub struct BrainConfig {
     /// How many jobs run at once. One suits a single model server.
     #[schemars(range(min = 1, max = 64))]
     pub workers: u32,
+    /// The longest one workflow run may take, in seconds.
+    #[schemars(range(min = 1, max = 86_400))]
+    pub workflow_time_limit_seconds: u32,
     /// How `http_request` behaves.
     pub http: HttpConfig,
 }
@@ -63,6 +66,7 @@ impl Default for BrainConfig {
             recall_limit: 3,
             recall_min_similarity: 0.6,
             workers: 1,
+            workflow_time_limit_seconds: 1800,
             http: HttpConfig::default(),
         }
     }

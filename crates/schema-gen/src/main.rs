@@ -21,7 +21,10 @@ fn generated() -> BTreeMap<&'static str, Value> {
         ("plugins_config", schema_of::<plugin_host::PluginsConfig>()),
         ("receipt", schema_of::<dispatch::Receipt>()),
         ("record_decls", schema_of::<store::RecordDecls>()),
+        ("agent", schema_of::<workflow::Agent>()),
         ("schedule", schema_of::<work::Schedule>()),
+        ("workflow", schema_of::<workflow::Workflow>()),
+        ("workflow_run", schema_of::<workflow::WorkflowRun>()),
     ])
 }
 

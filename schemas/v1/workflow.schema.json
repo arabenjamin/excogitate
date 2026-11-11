@@ -1,0 +1,132 @@
+{
+  "$defs": {
+    "Step": {
+      "description": "One step of a workflow.",
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "description": "Calls a tool.",
+          "properties": {
+            "arguments": {
+              "description": "Its arguments. Strings may hold references.",
+              "x-extension": "checked against the tool's input schema"
+            },
+            "id": {
+              "description": "Its name, which later steps refer to.",
+              "maxLength": 64,
+              "minLength": 1,
+              "pattern": "^[a-z][a-z0-9_]*$",
+              "type": "string"
+            },
+            "tool": {
+              "description": "The tool.",
+              "maxLength": 64,
+              "minLength": 1,
+              "type": "string"
+            },
+            "type": {
+              "const": "tool",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "id",
+            "tool",
+            "arguments"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "Asks a sub-agent.",
+          "properties": {
+            "agent": {
+              "description": "The agent.",
+              "maxLength": 64,
+              "minLength": 1,
+              "type": "string"
+            },
+            "context": {
+              "description": "What it should work from, usually an earlier step's output.",
+              "maxLength": 4096,
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "id": {
+              "description": "Its name, which later steps refer to.",
+              "maxLength": 64,
+              "minLength": 1,
+              "pattern": "^[a-z][a-z0-9_]*$",
+              "type": "string"
+            },
+            "message": {
+              "description": "What to ask. It may refer to `inputs`, but not to steps: what\nearlier steps found goes in `context`, labelled as data.",
+              "maxLength": 16000,
+              "minLength": 1,
+              "type": "string"
+            },
+            "type": {
+              "const": "agent",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "id",
+            "agent",
+            "message"
+          ],
+          "type": "object"
+        }
+      ]
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "A fixed list of steps.",
+  "properties": {
+    "description": {
+      "default": "",
+      "description": "What it's for.",
+      "maxLength": 1024,
+      "type": "string"
+    },
+    "inputs": {
+      "description": "The JSON Schema of its inputs, which must be strict.",
+      "x-extension": "the workflow's own schema, checked for strictness"
+    },
+    "max_usd_micros": {
+      "default": 0,
+      "description": "The most the whole run may spend, in millionths of a dollar.",
+      "format": "uint64",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "output": {
+      "description": "What it returns: a reference, or text with references in it.",
+      "maxLength": 4096,
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "steps": {
+      "description": "The steps, in order.",
+      "items": {
+        "$ref": "#/$defs/Step"
+      },
+      "maxItems": 32,
+      "minItems": 1,
+      "type": "array"
+    }
+  },
+  "required": [
+    "inputs",
+    "steps"
+  ],
+  "title": "Workflow",
+  "type": "object"
+}

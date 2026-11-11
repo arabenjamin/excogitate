@@ -1,0 +1,224 @@
+//! What a definition has to get right before it can run.
+#![allow(clippy::unwrap_used, reason = "a test: a panic is how it fails")]
+#![allow(clippy::needless_pass_by_value, reason = "a test: it reads better")]
+
+use std::collections::{BTreeMap, BTreeSet};
+
+use plugin_api::{Effect, ToolDefinition};
+use schema::Validator;
+use serde_json::{Value, json};
+use workflow::{Agent, Workflow, check_agent, check_workflow};
+
+fn tools() -> BTreeMap<String, ToolDefinition> {
+    let tool = ToolDefinition {
+        name: "fetch".to_owned(),
+        description: "fetches".to_owned(),
+        input_schema: json!({
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["url"],
+            "properties": {
+                "url": { "type": "string", "maxLength": 100 },
+                "limit": { "type": "integer" }
+            }
+        }),
+        output_schema: json!({ "type": "object", "additionalProperties": false }),
+        effect: Effect::Read,
+    };
+    BTreeMap::from([("fetch".to_owned(), tool)])
+}
+
+fn agents() -> BTreeSet<String> {
+    BTreeSet::from(["helper".to_owned()])
+}
+
+fn inputs() -> Value {
+    json!({
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["url"],
+        "properties": { "url": { "type": "string", "maxLength": 100 } }
+    })
+}
+
+fn workflow(steps: Value) -> Workflow {
+    serde_json::from_value(json!({ "inputs": inputs(), "steps": steps })).unwrap()
+}
+
+fn fetch(id: &str) -> Value {
+    json!({ "type": "tool", "id": id, "tool": "fetch", "arguments": { "url": "{{inputs.url}}" } })
+}
+
+fn problem(steps: Value) -> String {
+    check_workflow(&workflow(steps), &tools(), &agents()).unwrap_err()
+}
+
+fn assert_refused(steps: Value, expected: &str) {
+    let found = problem(steps);
+    assert!(found.contains(expected), "{found}");
+}
+
+#[test]
+fn a_sound_workflow_passes() {
+    let steps = json!([
+        fetch("first"),
+        {
+            "type": "agent", "id": "second", "agent": "helper",
+            "message": "About {{inputs.url}}", "context": "{{steps.first.result.body}}"
+        },
+        { "type": "tool", "id": "third", "tool": "fetch",
+          "arguments": { "url": "{{steps.second.answer}}" } }
+    ]);
+    check_workflow(&workflow(steps), &tools(), &agents()).unwrap();
+}
+
+#[test]
+fn unknown_keys_are_refused() {
+    let validator = Validator::for_type::<Workflow>().unwrap();
+    let extra_on_workflow = json!({ "inputs": inputs(), "steps": [fetch("a")], "retries": 3 });
+    assert!(validator.check(&extra_on_workflow).is_err());
+    let mut step = fetch("a");
+    step["on_error"] = json!("continue");
+    let extra_on_step = json!({ "inputs": inputs(), "steps": [step] });
+    assert!(validator.check(&extra_on_step).is_err());
+    assert!(serde_json::from_value::<Workflow>(extra_on_step).is_err());
+}
+
+#[test]
+fn a_step_must_say_what_it_is() {
+    let validator = Validator::for_type::<Workflow>().unwrap();
+    let untyped =
+        json!({ "inputs": inputs(), "steps": [{ "id": "a", "tool": "fetch", "arguments": {} }] });
+    assert!(validator.check(&untyped).is_err());
+}
+
+#[test]
+fn tools_and_agents_must_exist() {
+    assert_refused(
+        json!([{ "type": "tool", "id": "a", "tool": "nope", "arguments": {} }]),
+        "no tool nope",
+    );
+    assert_refused(
+        json!([{ "type": "agent", "id": "a", "agent": "nope", "message": "hi" }]),
+        "no agent nope",
+    );
+}
+
+#[test]
+fn a_problem_names_the_step() {
+    assert_refused(
+        json!([fetch("first"), { "type": "tool", "id": "second", "tool": "nope", "arguments": {} }]),
+        "step second",
+    );
+}
+
+#[test]
+fn step_names_are_unique() {
+    assert_refused(json!([fetch("a"), fetch("a")]), "two steps are named a");
+}
+
+#[test]
+fn a_reference_points_backwards() {
+    let forward = json!([
+        { "type": "tool", "id": "a", "tool": "fetch", "arguments": { "url": "{{steps.b.result}}" } },
+        fetch("b")
+    ]);
+    assert_refused(forward, "hasn't run yet");
+    let itself = json!([
+        { "type": "tool", "id": "a", "tool": "fetch", "arguments": { "url": "{{steps.a.result}}" } }
+    ]);
+    assert_refused(itself, "hasn't run yet");
+}
+
+#[test]
+fn a_reference_must_be_to_something_declared() {
+    assert_refused(
+        json!([{ "type": "tool", "id": "a", "tool": "fetch", "arguments": { "url": "{{inputs.nope}}" } }]),
+        "no input nope",
+    );
+    assert_refused(
+        json!([{ "type": "tool", "id": "a", "tool": "fetch", "arguments": { "url": "{{goal}}" } }]),
+        "must start with",
+    );
+}
+
+#[test]
+fn a_reference_uses_the_field_that_step_has() {
+    assert_refused(
+        json!([fetch("a"), { "type": "tool", "id": "b", "tool": "fetch",
+                             "arguments": { "url": "{{steps.a.answer}}" } }]),
+        "under .result",
+    );
+    assert_refused(
+        json!([
+            { "type": "agent", "id": "a", "agent": "helper", "message": "hi" },
+            { "type": "tool", "id": "b", "tool": "fetch", "arguments": { "url": "{{steps.a.result}}" } }
+        ]),
+        "under .answer",
+    );
+}
+
+#[test]
+fn what_a_step_found_goes_in_context_not_the_question() {
+    assert_refused(
+        json!([fetch("a"), { "type": "agent", "id": "b", "agent": "helper",
+                             "message": "Summarize {{steps.a.result.body}}" }]),
+        "put that in context",
+    );
+}
+
+#[test]
+fn context_references_are_checked() {
+    assert_refused(
+        json!([{ "type": "agent", "id": "a", "agent": "helper", "message": "hi",
+                 "context": "{{steps.later.result}}" }]),
+        "hasn't run yet",
+    );
+}
+
+#[test]
+fn arguments_are_checked_against_the_tool() {
+    let wrong_type = json!([{ "type": "tool", "id": "a", "tool": "fetch",
+                              "arguments": { "url": "http://a/", "limit": "many" } }]);
+    assert_refused(wrong_type, "/limit");
+    let missing = json!([{ "type": "tool", "id": "a", "tool": "fetch", "arguments": {} }]);
+    assert_refused(missing, "url");
+    let unknown = json!([{ "type": "tool", "id": "a", "tool": "fetch",
+                           "arguments": { "url": "http://a/", "extra": 1 } }]);
+    assert_refused(unknown, "extra");
+}
+
+#[test]
+fn a_value_filled_in_later_is_judged_when_it_runs() {
+    let steps = json!([fetch("a"), { "type": "tool", "id": "b", "tool": "fetch",
+        "arguments": { "url": "http://a/", "limit": "{{steps.a.result.count}}" } }]);
+    check_workflow(&workflow(steps), &tools(), &agents()).unwrap();
+}
+
+#[test]
+fn a_loose_inputs_schema_is_refused() {
+    let loose = json!({ "inputs": { "type": "object" }, "steps": [fetch("a")] });
+    let loose: Workflow = serde_json::from_value(loose).unwrap();
+    let found = check_workflow(&loose, &tools(), &agents()).unwrap_err();
+    assert!(found.contains("isn't strict"), "{found}");
+}
+
+#[test]
+fn the_output_can_only_use_what_ran() {
+    let mut bad = workflow(json!([fetch("a")]));
+    bad.output = Some("{{steps.b.result}}".to_owned());
+    let found = check_workflow(&bad, &tools(), &agents()).unwrap_err();
+    assert!(found.starts_with("its output"), "{found}");
+    bad.output = Some("{{steps.a.result.body}}".to_owned());
+    check_workflow(&bad, &tools(), &agents()).unwrap();
+}
+
+#[test]
+fn an_agents_tools_must_exist() {
+    let agent = |tools: Value| -> Agent {
+        serde_json::from_value(json!({ "system_prompt": "x", "tools": tools, "budget": null, "max_output_tokens": null })).unwrap()
+    };
+    check_agent(&agent(json!(["fetch"])), &tools()).unwrap();
+    let found = check_agent(&agent(json!(["fetch", "nope"])), &tools()).unwrap_err();
+    assert!(found.contains("nope"), "{found}");
+}

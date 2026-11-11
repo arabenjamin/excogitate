@@ -35,6 +35,8 @@ pub struct ChaosTool {
 pub enum ChaosStep {
     /// A normal text reply.
     Text(String),
+    /// A text reply stopped by the output limit.
+    CutOff(String),
     /// One or more tool calls, as `(name, raw arguments)`.
     ToolCalls(Vec<(String, String)>),
     /// Does what the latest tool result's injection says, if it has one.
@@ -218,10 +220,14 @@ impl ChaosServer {
 }
 
 fn chat_reply(message: &Value, usage: &Value) -> Response {
+    finished_reply(message, usage, "stop")
+}
+
+fn finished_reply(message: &Value, usage: &Value, finish: &str) -> Response {
     let body = json!({
         "id": "chaos",
         "unexpected_field": { "ignored": true },
-        "choices": [{ "index": 0, "message": message, "finish_reason": "stop" }],
+        "choices": [{ "index": 0, "message": message, "finish_reason": finish }],
         "usage": usage,
     });
     body.to_string().into_response()
@@ -280,6 +286,11 @@ async fn answer(State(shared): State<Arc<Shared>>, body: String) -> Response {
         ChaosStep::Text(text) => {
             chat_reply(&json!({ "role": "assistant", "content": text }), &usage)
         }
+        ChaosStep::CutOff(text) => finished_reply(
+            &json!({ "role": "assistant", "content": text }),
+            &usage,
+            "length",
+        ),
         ChaosStep::ToolCalls(calls) => chat_reply(&tool_call_message(&calls), &usage),
         ChaosStep::ObeyInjection => {
             let request: Value = serde_json::from_str(&body).unwrap_or(Value::Null);

@@ -12,11 +12,11 @@ use store::Store;
 use store_duckdb::{DuckDbConfig, DuckDbSink, DuckDbStore};
 use tokio::sync::watch;
 use work::{
-    DefinitionFiles, JobTransport, ScheduleError, Scheduler, StoreTransport, Worker, WorkerError,
-    WorkerOptions, sync_schedules,
+    DefinitionError, JobTransport, Scheduler, StoreTransport, Worker, WorkerError, WorkerOptions,
 };
 
 use crate::assemble::embedding_dimension;
+use crate::definitions::load_definitions;
 use crate::{Brain, BrainConfig, BrainError, ConfigError};
 
 /// The vector width of a store created with no embedding model configured.
@@ -55,9 +55,9 @@ pub enum RunError {
     /// The connection failed.
     #[error("the connection failed: {0}")]
     Serve(std::io::Error),
-    /// A schedule can't be used.
+    /// An agent, workflow or schedule can't be used.
     #[error(transparent)]
-    Schedule(#[from] ScheduleError),
+    Definition(#[from] DefinitionError),
     /// The workers can't be set up.
     #[error(transparent)]
     Worker(#[from] WorkerError),
@@ -193,7 +193,7 @@ async fn stop_signal() {
 ///
 /// # Errors
 ///
-/// [`RunError`] if it can't start, or a schedule file is wrong.
+/// [`RunError`] if it can't start, or a definition file is wrong.
 pub async fn run_worker(product: &str) -> Result<(), RunError> {
     let Opened {
         store,
@@ -202,16 +202,8 @@ pub async fn run_worker(product: &str) -> Result<(), RunError> {
         definitions,
     } = open(product)?;
     let handlers = brain.job_handlers();
-    let payloads = handlers
-        .iter()
-        .map(|handler| (handler.kind().to_owned(), handler.payload_schema()))
-        .collect();
-    let files = DefinitionFiles {
-        root: definitions,
-        payloads,
-    };
-    let count = sync_schedules(store.as_ref(), &files, Utc::now()).await?;
-    eprintln!("{count} schedules loaded, {workers} workers");
+    let count = load_definitions(store.as_ref(), &definitions, &brain, Utc::now()).await?;
+    eprintln!("{count} definitions loaded, {workers} workers");
 
     let transport: Arc<dyn JobTransport> =
         Arc::new(StoreTransport(Arc::clone(&store) as Arc<dyn Store>));

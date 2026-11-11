@@ -5,6 +5,7 @@
 
 mod assemble;
 mod config;
+mod definitions;
 mod jobs;
 mod ledger;
 mod mcp;
@@ -12,5 +13,6 @@ mod run;
 
 pub use assemble::{Brain, BrainError};
 pub use config::{BrainConfig, ConfigError};
+pub use jobs::WorkflowArgs;
 pub use mcp::{ChatArgs, ChatReply, ToolEnvelope};
 pub use run::{RunError, run_stdio, run_worker};

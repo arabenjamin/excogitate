@@ -1,0 +1,537 @@
+{
+  "$defs": {
+    "BudgetKind": {
+      "description": "Which limit a run hit. A closed list.",
+      "oneOf": [
+        {
+          "const": "rounds",
+          "description": "Model calls.",
+          "type": "string"
+        },
+        {
+          "const": "tool_calls",
+          "description": "Tool calls.",
+          "type": "string"
+        },
+        {
+          "const": "writes",
+          "description": "Writes.",
+          "type": "string"
+        },
+        {
+          "const": "tokens",
+          "description": "Tokens.",
+          "type": "string"
+        },
+        {
+          "const": "spend",
+          "description": "Money.",
+          "type": "string"
+        },
+        {
+          "const": "request_size",
+          "description": "Request size.",
+          "type": "string"
+        },
+        {
+          "const": "time",
+          "description": "Time.",
+          "type": "string"
+        }
+      ]
+    },
+    "CallStatus": {
+      "description": "What became of one tool call.",
+      "oneOf": [
+        {
+          "const": "ran",
+          "description": "It ran and returned a valid result.",
+          "type": "string"
+        },
+        {
+          "const": "refused",
+          "description": "It was refused and never started.",
+          "type": "string"
+        },
+        {
+          "const": "failed",
+          "description": "It started and failed, so it may have had effects.",
+          "type": "string"
+        },
+        {
+          "const": "timed_out",
+          "description": "It started and ran out of time, so it may have had effects.",
+          "type": "string"
+        }
+      ]
+    },
+    "Effect": {
+      "description": "What a tool can do to the world. A write counts against the write budget\nand is stubbed when Harness² probes a candidate.",
+      "oneOf": [
+        {
+          "const": "read",
+          "description": "Only reads.",
+          "type": "string"
+        },
+        {
+          "const": "write",
+          "description": "Changes something.",
+          "type": "string"
+        }
+      ]
+    },
+    "ModelEntry": {
+      "additionalProperties": false,
+      "description": "One model call, as it really went.",
+      "properties": {
+        "cost_usd_micros": {
+          "description": "What it cost, in millionths of a dollar.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "detail": {
+          "description": "What went wrong, when nothing answered.",
+          "maxLength": 512,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "failed_attempts": {
+          "description": "How many models failed before this one, or failed altogether.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "input_tokens": {
+          "description": "Tokens read.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "model": {
+          "description": "The model that answered; absent if none did.",
+          "maxLength": 64,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "output_tokens": {
+          "description": "Tokens written.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "tokens_estimated": {
+          "description": "True if the server didn't report usage, so these are estimates.",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "input_tokens",
+        "output_tokens",
+        "tokens_estimated",
+        "cost_usd_micros",
+        "failed_attempts"
+      ],
+      "type": "object"
+    },
+    "Outcome": {
+      "description": "How a run ended. A closed list; every run ends in exactly one.",
+      "oneOf": [
+        {
+          "const": "answered",
+          "description": "The model gave an answer.",
+          "type": "string"
+        },
+        {
+          "const": "refused",
+          "description": "The request was refused.",
+          "type": "string"
+        },
+        {
+          "const": "budget_hit",
+          "description": "A budget ran out.",
+          "type": "string"
+        },
+        {
+          "const": "tool_failed",
+          "description": "A tool failed and the run couldn't go on.",
+          "type": "string"
+        },
+        {
+          "const": "model_failed",
+          "description": "No model could answer.",
+          "type": "string"
+        },
+        {
+          "const": "direct",
+          "description": "One tool call made directly, with no model involved.",
+          "type": "string"
+        }
+      ]
+    },
+    "Receipt": {
+      "additionalProperties": false,
+      "description": "What a run did. It goes out with the answer.",
+      "properties": {
+        "answer_cut_off": {
+          "description": "True if the answer was cut off at the output limit.",
+          "type": "boolean"
+        },
+        "budget_hit": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/BudgetKind"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Which limit it hit, if it hit one."
+        },
+        "calls_not_recorded": {
+          "description": "Calls made after a budget ran out. Refused, and only counted here.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "events_lost": {
+          "description": "How many events the sink lost. The trajectory is incomplete if not 0.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "model_calls": {
+          "description": "Every model call.",
+          "items": {
+            "$ref": "#/$defs/ModelEntry"
+          },
+          "maxItems": 512,
+          "type": "array"
+        },
+        "outcome": {
+          "$ref": "#/$defs/Outcome",
+          "description": "How it ended."
+        },
+        "run": {
+          "description": "The run.",
+          "maxLength": 64,
+          "type": "string"
+        },
+        "tool_calls": {
+          "description": "Every tool call, up to the budget.",
+          "items": {
+            "$ref": "#/$defs/ToolEntry"
+          },
+          "maxItems": 512,
+          "type": "array"
+        },
+        "totals": {
+          "$ref": "#/$defs/Totals",
+          "description": "What it used."
+        }
+      },
+      "required": [
+        "run",
+        "outcome",
+        "answer_cut_off",
+        "model_calls",
+        "tool_calls",
+        "calls_not_recorded",
+        "events_lost",
+        "totals"
+      ],
+      "type": "object"
+    },
+    "RefusalKind": {
+      "description": "Why a call was refused. A closed list.",
+      "oneOf": [
+        {
+          "const": "not_offered",
+          "description": "The tool wasn't offered to this run, or doesn't exist.",
+          "type": "string"
+        },
+        {
+          "const": "arguments_too_large",
+          "description": "The arguments were larger than any tool accepts.",
+          "type": "string"
+        },
+        {
+          "const": "arguments_not_json",
+          "description": "The arguments weren't JSON.",
+          "type": "string"
+        },
+        {
+          "const": "arguments_invalid",
+          "description": "The arguments failed the tool's schema.",
+          "type": "string"
+        },
+        {
+          "const": "budget",
+          "description": "A budget ran out.",
+          "type": "string"
+        }
+      ]
+    },
+    "RunOutcome": {
+      "description": "How a run ended.",
+      "oneOf": [
+        {
+          "const": "completed",
+          "description": "Every step finished.",
+          "type": "string"
+        },
+        {
+          "const": "failed",
+          "description": "A step failed.",
+          "type": "string"
+        }
+      ]
+    },
+    "StepReport": {
+      "additionalProperties": false,
+      "description": "What happened in one step.",
+      "properties": {
+        "detail": {
+          "description": "Why it failed.",
+          "maxLength": 1024,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "id": {
+          "description": "The step.",
+          "maxLength": 64,
+          "type": "string"
+        },
+        "receipt": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Receipt"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "What the step actually did."
+        },
+        "status": {
+          "$ref": "#/$defs/StepStatus",
+          "description": "Where it ended up."
+        }
+      },
+      "required": [
+        "id",
+        "status"
+      ],
+      "type": "object"
+    },
+    "StepStatus": {
+      "description": "Where a step ended up.",
+      "oneOf": [
+        {
+          "const": "ran",
+          "description": "It finished.",
+          "type": "string"
+        },
+        {
+          "const": "failed",
+          "description": "It failed, so the run stopped there.",
+          "type": "string"
+        },
+        {
+          "const": "skipped",
+          "description": "An earlier step failed, so it never ran.",
+          "type": "string"
+        }
+      ]
+    },
+    "ToolEntry": {
+      "additionalProperties": false,
+      "description": "One tool call, as it really went.",
+      "properties": {
+        "by_harness": {
+          "description": "True if the harness made this call, and the model didn't ask for it.",
+          "type": "boolean"
+        },
+        "cost_usd_micros": {
+          "description": "What it spent, in millionths of a dollar.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "detail": {
+          "description": "What went wrong, when something did.",
+          "maxLength": 512,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "duration_ms": {
+          "description": "How long it ran.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "effect": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Effect"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "What the tool can do, when the tool exists."
+        },
+        "refusal": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RefusalKind"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Why it was refused."
+        },
+        "status": {
+          "$ref": "#/$defs/CallStatus",
+          "description": "What became of it."
+        },
+        "tool": {
+          "description": "The tool named. A model can invent this, so it's cut to length.",
+          "maxLength": 64,
+          "type": "string"
+        },
+        "truncated": {
+          "description": "Whether the result was cut to fit the channel.",
+          "type": "boolean"
+        },
+        "untrusted": {
+          "description": "Whether the result came from outside and is labelled untrusted.",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "tool",
+        "status",
+        "truncated",
+        "untrusted",
+        "by_harness",
+        "duration_ms",
+        "cost_usd_micros"
+      ],
+      "type": "object"
+    },
+    "Totals": {
+      "additionalProperties": false,
+      "description": "What the run used.",
+      "properties": {
+        "cost_usd_micros": {
+          "description": "Money, in millionths of a dollar.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "duration_ms": {
+          "description": "Wall-clock time.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "rounds": {
+          "description": "Model calls.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "tokens": {
+          "description": "Tokens read and written.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "tool_calls": {
+          "description": "Tool calls, including the ones refused.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "writes": {
+          "description": "Writes started.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "rounds",
+        "tool_calls",
+        "writes",
+        "tokens",
+        "cost_usd_micros",
+        "duration_ms"
+      ],
+      "type": "object"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "What a run did.",
+  "properties": {
+    "cost_usd_micros": {
+      "description": "What the whole run spent, in millionths of a dollar.",
+      "format": "uint64",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "failure": {
+      "description": "Why it failed: the step, and what went wrong.",
+      "maxLength": 1024,
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "outcome": {
+      "$ref": "#/$defs/RunOutcome",
+      "description": "How it ended."
+    },
+    "output": {
+      "description": "What it returned.",
+      "x-extension": "whatever the workflow's output refers to"
+    },
+    "output_truncated": {
+      "description": "True if the output was too long and has been cut.",
+      "type": "boolean"
+    },
+    "steps": {
+      "description": "Every step, in order.",
+      "items": {
+        "$ref": "#/$defs/StepReport"
+      },
+      "maxItems": 32,
+      "type": "array"
+    },
+    "workflow": {
+      "description": "The workflow.",
+      "maxLength": 64,
+      "type": "string"
+    }
+  },
+  "required": [
+    "workflow",
+    "outcome",
+    "output_truncated",
+    "steps",
+    "cost_usd_micros"
+  ],
+  "title": "WorkflowRun",
+  "type": "object"
+}

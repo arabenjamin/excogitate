@@ -8,10 +8,14 @@
 
 #![deny(clippy::string_slice, clippy::indexing_slicing)]
 
+mod definitions;
 mod schedule;
 mod transport;
 mod worker;
 
-pub use schedule::{DefinitionFiles, Schedule, ScheduleError, Scheduler, sync_schedules};
+pub use definitions::{
+    DefinitionError, DefinitionFile, list_definitions, read_definition_files, save_definitions,
+};
+pub use schedule::{Schedule, Scheduler};
 pub use transport::{Enqueued, JobTransport, StoreTransport};
 pub use worker::{JobHandler, Worker, WorkerError, WorkerOptions};
