@@ -15,6 +15,7 @@ chrono.workspace = true
 dispatch = { path = "../dispatch" }
 events = { path = "../events" }
 futures-util = { version = "0.3", default-features = false, features = ["std"] }
+harness = { path = "../harness" }
 memory = { path = "../memory" }
 model = { path = "../model" }
 plugin-api = { path = "../plugin-api" }

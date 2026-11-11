@@ -32,6 +32,9 @@ pub enum BrainError {
     /// The client for model servers can't be built.
     #[error("couldn't build the model client: {0}")]
     Client(String),
+    /// A setting names something that doesn't exist.
+    #[error("{0}")]
+    Config(String),
 }
 
 /// A brain ready to serve.
@@ -86,6 +89,21 @@ impl Brain {
         let mut registry = ToolRegistry::new();
         registry.register(Arc::new(MemoryTool::new(memory)))?;
         registry.register(Arc::new(HttpRequestTool::new(&config.http, secret_of)?))?;
+        let names: Vec<String> = registry
+            .definitions()
+            .into_iter()
+            .map(|definition| definition.name)
+            .collect();
+        if let Some(missing) = config
+            .harness
+            .probe_reads
+            .iter()
+            .find(|name| !names.contains(name))
+        {
+            return Err(BrainError::Config(format!(
+                "harness.probe_reads names {missing}, which isn't a tool"
+            )));
+        }
         let registry = Arc::new(registry);
         let workflows = Engine {
             registry: Arc::clone(&registry),

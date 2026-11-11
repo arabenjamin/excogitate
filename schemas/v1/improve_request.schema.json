@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "What to improve.",
+  "properties": {
+    "agent": {
+      "description": "The agent.",
+      "maxLength": 64,
+      "minLength": 1,
+      "type": "string"
+    },
+    "task": {
+      "description": "A task to run it on, such as one a real run got wrong.",
+      "maxLength": 8000,
+      "minLength": 1,
+      "type": "string"
+    },
+    "why": {
+      "description": "What went wrong, if someone said.",
+      "maxLength": 2000,
+      "type": [
+        "string",
+        "null"
+      ]
+    }
+  },
+  "required": [
+    "agent",
+    "task"
+  ],
+  "title": "Request",
+  "type": "object"
+}

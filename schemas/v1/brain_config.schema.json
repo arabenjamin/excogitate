@@ -102,6 +102,49 @@
       ],
       "type": "object"
     },
+    "HarnessConfig": {
+      "additionalProperties": false,
+      "description": "How Harness² improves agents.",
+      "properties": {
+        "judge_output_tokens": {
+          "default": 4000,
+          "description": "The longest reply a judge may give.",
+          "format": "uint32",
+          "maximum": 100000,
+          "minimum": 256,
+          "type": "integer"
+        },
+        "judge_usd_micros": {
+          "default": 0,
+          "description": "What the judges may spend on one attempt, in millionths of a dollar.\nThey need a capable model, marked `investigative` in `models.yaml`.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "probe_reads": {
+          "default": [
+            "memory"
+          ],
+          "description": "The tools a probe really runs, and only for their reads. A probe's\nwrites never run, whatever this says.",
+          "items": {
+            "maxLength": 64,
+            "minLength": 1,
+            "type": "string"
+          },
+          "maxItems": 64,
+          "type": "array"
+        },
+        "time_limit_seconds": {
+          "default": 1800,
+          "description": "The longest one attempt may take, in seconds.",
+          "format": "uint32",
+          "maximum": 86400,
+          "minimum": 1,
+          "type": "integer"
+        }
+      },
+      "type": "object"
+    },
     "HttpConfig": {
       "additionalProperties": false,
       "description": "Configuration for `http_request`.",
@@ -289,6 +332,18 @@
         "max_writes": 8
       },
       "description": "The limits on each run. Spending defaults to zero, so a priced model\nis only used if this allows it."
+    },
+    "harness": {
+      "$ref": "#/$defs/HarnessConfig",
+      "default": {
+        "judge_output_tokens": 4000,
+        "judge_usd_micros": 0,
+        "probe_reads": [
+          "memory"
+        ],
+        "time_limit_seconds": 1800
+      },
+      "description": "How Harness² improves agents."
     },
     "http": {
       "$ref": "#/$defs/HttpConfig",

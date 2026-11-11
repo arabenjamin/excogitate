@@ -13,6 +13,7 @@ brain = { path = "../brain" }
 plugin-api = { path = "../plugin-api" }
 plugin-host = { path = "../plugin-host" }
 dispatch = { path = "../dispatch" }
+harness = { path = "../harness" }
 model = { path = "../model" }
 schema = { path = "../schema" }
 serde_json.workspace = true

@@ -1,0 +1,451 @@
+{
+  "$defs": {
+    "Attempt": {
+      "additionalProperties": false,
+      "description": "One attempt to improve an agent.",
+      "properties": {
+        "base_harness": {
+          "description": "The agent's harness when it started.",
+          "maxLength": 64,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "candidates": {
+          "description": "What the editor proposed.",
+          "items": {
+            "$ref": "#/$defs/Candidate"
+          },
+          "maxItems": 3,
+          "type": "array"
+        },
+        "chosen": {
+          "description": "The candidate the evidence supports, for `supported`.",
+          "maxLength": 4,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "cost_usd_micros": {
+          "description": "What the attempt cost: its probes and its judges.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "decision": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Decision"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "What the composer decided."
+        },
+        "finished_at": {
+          "description": "When it ended.",
+          "format": "date-time",
+          "type": "string"
+        },
+        "problems": {
+          "description": "What the code refused or what went wrong, in order.",
+          "items": {
+            "maxLength": 2048,
+            "type": "string"
+          },
+          "maxItems": 32,
+          "type": "array"
+        },
+        "reason": {
+          "description": "Why, as the composer put it.",
+          "maxLength": 1000,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "reference": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Probed"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The agent as it is, on the task."
+        },
+        "request": {
+          "$ref": "#/$defs/Request",
+          "description": "What was asked."
+        },
+        "started_at": {
+          "description": "When it started.",
+          "format": "date-time",
+          "type": "string"
+        },
+        "status": {
+          "description": "How it ended.",
+          "oneOf": [
+            {
+              "const": "kept",
+              "description": "The evidence supports no change.",
+              "type": "string"
+            },
+            {
+              "const": "supported",
+              "description": "The evidence supports a change.",
+              "type": "string"
+            },
+            {
+              "const": "failed",
+              "description": "The loop couldn't finish.",
+              "type": "string"
+            }
+          ]
+        },
+        "verdicts": {
+          "description": "What the composer found, checked.",
+          "items": {
+            "$ref": "#/$defs/Checked"
+          },
+          "maxItems": 8,
+          "type": "array"
+        }
+      },
+      "required": [
+        "request",
+        "started_at",
+        "finished_at",
+        "candidates",
+        "verdicts",
+        "status",
+        "problems",
+        "cost_usd_micros"
+      ],
+      "type": "object"
+    },
+    "AttemptView": {
+      "additionalProperties": false,
+      "description": "A kept attempt, as the API shows it.",
+      "properties": {
+        "attempt": {
+          "$ref": "#/$defs/Attempt",
+          "description": "What it found."
+        },
+        "id": {
+          "description": "Its id.",
+          "maxLength": 36,
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "attempt"
+      ],
+      "type": "object"
+    },
+    "Candidate": {
+      "additionalProperties": false,
+      "description": "One candidate and what became of it.",
+      "properties": {
+        "change": {
+          "description": "What changed, as the editor put it.",
+          "maxLength": 1000,
+          "type": "string"
+        },
+        "cites": {
+          "description": "The editor's evidence.",
+          "items": {
+            "$ref": "#/$defs/Cite"
+          },
+          "maxItems": 8,
+          "type": "array"
+        },
+        "kind": {
+          "$ref": "#/$defs/Kind",
+          "description": "What it is."
+        },
+        "label": {
+          "description": "Its run label.",
+          "maxLength": 4,
+          "type": "string"
+        },
+        "probe": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Probed"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Its probe, if it was tried."
+        },
+        "refused": {
+          "description": "Why it wasn't tried, if it wasn't.",
+          "maxLength": 2048,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "system_prompt": {
+          "description": "Its instructions.",
+          "maxLength": 16000,
+          "type": "string"
+        }
+      },
+      "required": [
+        "label",
+        "kind",
+        "system_prompt",
+        "change",
+        "cites"
+      ],
+      "type": "object"
+    },
+    "Checked": {
+      "additionalProperties": false,
+      "description": "A verdict and whether its evidence held.",
+      "properties": {
+        "overridden": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Effect"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Set when the code overrode the verdict, such as a run that ended worse\nthan the reference whatever the composer said."
+        },
+        "refused": {
+          "description": "Why the evidence didn't hold, if it didn't. Such a verdict counts for\nnothing.",
+          "maxLength": 2048,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "verdict": {
+          "$ref": "#/$defs/Verdict",
+          "description": "What the composer said."
+        }
+      },
+      "required": [
+        "verdict"
+      ],
+      "type": "object"
+    },
+    "Cite": {
+      "additionalProperties": false,
+      "description": "A step in a run, and the words in it that show something.",
+      "properties": {
+        "quote": {
+          "description": "Words copied exactly from that step.",
+          "maxLength": 300,
+          "minLength": 1,
+          "type": "string"
+        },
+        "run": {
+          "description": "The run's label, such as `R`.",
+          "maxLength": 4,
+          "minLength": 1,
+          "type": "string"
+        },
+        "step": {
+          "description": "The step's number in that run.",
+          "format": "uint32",
+          "maximum": 4096,
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "run",
+        "step",
+        "quote"
+      ],
+      "type": "object"
+    },
+    "Decision": {
+      "description": "What the composer decided.",
+      "oneOf": [
+        {
+          "const": "keep",
+          "description": "Change nothing.",
+          "type": "string"
+        },
+        {
+          "const": "adopt",
+          "description": "Take one candidate.",
+          "type": "string"
+        },
+        {
+          "const": "merge",
+          "description": "Take a merge of two.",
+          "type": "string"
+        }
+      ]
+    },
+    "Effect": {
+      "description": "How a candidate's run compares with the reference.",
+      "oneOf": [
+        {
+          "const": "mitigated",
+          "description": "It fixed something that went wrong.",
+          "type": "string"
+        },
+        {
+          "const": "unchanged",
+          "description": "No difference that matters.",
+          "type": "string"
+        },
+        {
+          "const": "regressed",
+          "description": "It did something worse.",
+          "type": "string"
+        }
+      ]
+    },
+    "Kind": {
+      "description": "What a candidate is.",
+      "oneOf": [
+        {
+          "const": "invariant",
+          "description": "How the agent works.",
+          "type": "string"
+        },
+        {
+          "const": "domain",
+          "description": "What it knows.",
+          "type": "string"
+        },
+        {
+          "const": "merged",
+          "description": "Two candidates combined.",
+          "type": "string"
+        }
+      ]
+    },
+    "Probed": {
+      "additionalProperties": false,
+      "description": "A probe, in brief. Its trajectory has the rest.",
+      "properties": {
+        "calls": {
+          "description": "Its calls line.",
+          "maxLength": 4200,
+          "type": "string"
+        },
+        "harness": {
+          "description": "The harness it ran under.",
+          "maxLength": 64,
+          "type": "string"
+        },
+        "outcome": {
+          "description": "How it ended.",
+          "maxLength": 32,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "run": {
+          "description": "The run.",
+          "maxLength": 36,
+          "type": "string"
+        }
+      },
+      "required": [
+        "run",
+        "harness",
+        "calls"
+      ],
+      "type": "object"
+    },
+    "Request": {
+      "additionalProperties": false,
+      "description": "What to improve.",
+      "properties": {
+        "agent": {
+          "description": "The agent.",
+          "maxLength": 64,
+          "minLength": 1,
+          "type": "string"
+        },
+        "task": {
+          "description": "A task to run it on, such as one a real run got wrong.",
+          "maxLength": 8000,
+          "minLength": 1,
+          "type": "string"
+        },
+        "why": {
+          "description": "What went wrong, if someone said.",
+          "maxLength": 2000,
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "agent",
+        "task"
+      ],
+      "type": "object"
+    },
+    "Verdict": {
+      "additionalProperties": false,
+      "description": "One candidate's verdict.",
+      "properties": {
+        "candidate": {
+          "description": "The candidate's run label.",
+          "maxLength": 4,
+          "minLength": 1,
+          "type": "string"
+        },
+        "cite": {
+          "$ref": "#/$defs/Cite",
+          "description": "The step that shows it."
+        },
+        "effect": {
+          "$ref": "#/$defs/Effect",
+          "description": "How it compares."
+        }
+      },
+      "required": [
+        "candidate",
+        "effect",
+        "cite"
+      ],
+      "type": "object"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "One page of attempts, oldest first.",
+  "properties": {
+    "has_more": {
+      "description": "True if there are more past this page.",
+      "type": "boolean"
+    },
+    "items": {
+      "description": "The attempts.",
+      "items": {
+        "$ref": "#/$defs/AttemptView"
+      },
+      "maxItems": 200,
+      "type": "array"
+    }
+  },
+  "required": [
+    "items",
+    "has_more"
+  ],
+  "title": "AttemptList",
+  "type": "object"
+}

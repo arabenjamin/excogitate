@@ -52,6 +52,38 @@ pub struct BrainConfig {
     pub http: HttpConfig,
     /// How the HTTP server behaves.
     pub server: ServerConfig,
+    /// How Harness² improves agents.
+    pub harness: HarnessConfig,
+}
+
+/// How Harness² improves agents.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields, default)]
+pub struct HarnessConfig {
+    /// The tools a probe really runs, and only for their reads. A probe's
+    /// writes never run, whatever this says.
+    #[schemars(length(max = 64), inner(length(min = 1, max = 64)))]
+    pub probe_reads: Vec<String>,
+    /// What the judges may spend on one attempt, in millionths of a dollar.
+    /// They need a capable model, marked `investigative` in `models.yaml`.
+    pub judge_usd_micros: u64,
+    /// The longest reply a judge may give.
+    #[schemars(range(min = 256, max = 100_000))]
+    pub judge_output_tokens: u32,
+    /// The longest one attempt may take, in seconds.
+    #[schemars(range(min = 1, max = 86_400))]
+    pub time_limit_seconds: u32,
+}
+
+impl Default for HarnessConfig {
+    fn default() -> Self {
+        Self {
+            probe_reads: vec!["memory".to_owned()],
+            judge_usd_micros: 0,
+            judge_output_tokens: 4000,
+            time_limit_seconds: 1800,
+        }
+    }
 }
 
 /// How the HTTP server behaves.
@@ -98,6 +130,7 @@ impl Default for BrainConfig {
             workflow_time_limit_seconds: 1800,
             http: HttpConfig::default(),
             server: ServerConfig::default(),
+            harness: HarnessConfig::default(),
         }
     }
 }

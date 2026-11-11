@@ -99,6 +99,12 @@ the same one had the same instructions, tools and limits.
 `GET /api/v1/runs/{id}` is the run's
 [trajectory](../schemas/v1/trajectory.schema.json). The id is a receipt's `run`.
 
+### Harness²
+
+`POST /api/v1/harness/attempts` queues an attempt to improve an agent, and
+`GET /api/v1/harness/attempts` and `GET /api/v1/harness/attempts/{id}` read what
+attempts found. See [Harness²](harness.md#running-one).
+
 ### Definitions
 
 `GET /api/v1/definitions/{kind}?limit=&offset=` and
