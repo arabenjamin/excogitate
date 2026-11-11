@@ -1,0 +1,162 @@
+{
+  "$defs": {
+    "Change": {
+      "additionalProperties": false,
+      "description": "One change the system made to an agent's file.",
+      "properties": {
+        "agent": {
+          "description": "The agent.",
+          "maxLength": 64,
+          "type": "string"
+        },
+        "at": {
+          "description": "When it was made.",
+          "format": "date-time",
+          "type": "string"
+        },
+        "attempt_id": {
+          "description": "The attempt whose evidence supports it.",
+          "maxLength": 36,
+          "type": "string"
+        },
+        "ended_at": {
+          "description": "When it stopped being live, if it has.",
+          "format": "date-time",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "evidence": {
+          "description": "The checked steps that show the change helped.",
+          "items": {
+            "$ref": "#/$defs/Cite"
+          },
+          "maxItems": 8,
+          "type": "array"
+        },
+        "from_harness": {
+          "description": "The harness it replaced.",
+          "maxLength": 64,
+          "type": "string"
+        },
+        "judge_model": {
+          "description": "The judge model whose decision it was.",
+          "maxLength": 256,
+          "type": "string"
+        },
+        "new_file": {
+          "description": "The file as the system wrote it.",
+          "maxLength": 64000,
+          "type": "string"
+        },
+        "notice": {
+          "description": "Whether the owner was told, and how.",
+          "maxLength": 2048,
+          "type": "string"
+        },
+        "old_file": {
+          "description": "The file as it was, so it can be put back exactly.",
+          "maxLength": 64000,
+          "type": "string"
+        },
+        "status": {
+          "description": "Where it stands.",
+          "oneOf": [
+            {
+              "const": "live",
+              "description": "The agent runs with it.",
+              "type": "string"
+            },
+            {
+              "const": "reverted",
+              "description": "The owner put the old file back.",
+              "type": "string"
+            },
+            {
+              "const": "replaced",
+              "description": "A later change, or the owner's own edit, took its place.",
+              "type": "string"
+            }
+          ]
+        },
+        "summary": {
+          "description": "What changed, as the editor put it.",
+          "maxLength": 1000,
+          "type": "string"
+        },
+        "to_harness": {
+          "description": "The harness it put in place.",
+          "maxLength": 64,
+          "type": "string"
+        }
+      },
+      "required": [
+        "agent",
+        "attempt_id",
+        "at",
+        "from_harness",
+        "to_harness",
+        "old_file",
+        "new_file",
+        "summary",
+        "evidence",
+        "judge_model",
+        "status",
+        "notice"
+      ],
+      "type": "object"
+    },
+    "Cite": {
+      "additionalProperties": false,
+      "description": "A step in a run, and the words in it that show something.",
+      "properties": {
+        "quote": {
+          "description": "Words copied exactly from that step.",
+          "maxLength": 300,
+          "minLength": 1,
+          "type": "string"
+        },
+        "run": {
+          "description": "The run's label, such as `R`.",
+          "maxLength": 4,
+          "minLength": 1,
+          "type": "string"
+        },
+        "step": {
+          "description": "The step's number in that run.",
+          "format": "uint32",
+          "maximum": 4096,
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "run",
+        "step",
+        "quote"
+      ],
+      "type": "object"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "A change the system made to an agent, as the API shows it.",
+  "properties": {
+    "change": {
+      "$ref": "#/$defs/Change",
+      "description": "The change."
+    },
+    "id": {
+      "description": "Its id, which reverting it takes.",
+      "maxLength": 36,
+      "type": "string"
+    }
+  },
+  "required": [
+    "id",
+    "change"
+  ],
+  "title": "ChangeView",
+  "type": "object"
+}

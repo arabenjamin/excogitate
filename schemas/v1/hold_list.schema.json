@@ -1,0 +1,55 @@
+{
+  "$defs": {
+    "Hold": {
+      "additionalProperties": false,
+      "description": "An agent the system leaves alone until the owner releases it.",
+      "properties": {
+        "agent": {
+          "description": "The agent.",
+          "maxLength": 64,
+          "minLength": 1,
+          "type": "string"
+        },
+        "reason": {
+          "description": "Why.",
+          "maxLength": 2048,
+          "type": "string"
+        },
+        "since": {
+          "description": "Since when.",
+          "format": "date-time",
+          "type": "string"
+        }
+      },
+      "required": [
+        "agent",
+        "since",
+        "reason"
+      ],
+      "type": "object"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "The agents the system leaves alone.",
+  "properties": {
+    "has_more": {
+      "description": "True if there are more past this page.",
+      "type": "boolean"
+    },
+    "items": {
+      "description": "The holds.",
+      "items": {
+        "$ref": "#/$defs/Hold"
+      },
+      "maxItems": 200,
+      "type": "array"
+    }
+  },
+  "required": [
+    "items",
+    "has_more"
+  ],
+  "title": "HoldList",
+  "type": "object"
+}

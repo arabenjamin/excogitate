@@ -164,6 +164,26 @@ pub struct Attempt {
     pub problems: Vec<String>,
     /// What the attempt cost: its probes and its judges.
     pub cost_usd_micros: u64,
+    /// The model the composer ran on. Only a model that passed its known-answer
+    /// test may have its decisions adopted.
+    #[schemars(length(max = 256))]
+    pub composer_model: Option<String>,
+    /// What became of a supported edit, once the system looked at adopting it.
+    pub adoption: Option<Adoption>,
+}
+
+/// Whether a supported edit was adopted.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct Adoption {
+    /// True if the agent's file was changed.
+    pub adopted: bool,
+    /// The change, if there is one.
+    #[schemars(length(max = 36))]
+    pub change_id: Option<String>,
+    /// Why, in a sentence.
+    #[schemars(length(max = 2048))]
+    pub reason: String,
 }
 
 impl Attempt {
@@ -260,6 +280,8 @@ impl Loop<'_> {
             chosen: None,
             problems: Vec::new(),
             cost_usd_micros: 0,
+            composer_model: None,
+            adoption: None,
         };
         let agent = match self.engine.agent(&request.agent).await {
             Ok(Some(agent)) => agent,
@@ -417,6 +439,7 @@ impl Loop<'_> {
             }
         };
         attempt.spend(reply.cost_usd_micros);
+        attempt.composer_model = Some(reply.model.clone());
         let reference = runs.first().map(|run| rank(run.outcome.as_deref()));
         for verdict in &reply.value.verdicts {
             let refused = if tried.iter().any(|(label, _)| *label == verdict.candidate) {

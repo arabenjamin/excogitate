@@ -20,6 +20,7 @@ serde.workspace = true
 serde_json.workspace = true
 store = { path = "../store" }
 thiserror.workspace = true
+uuid = { workspace = true, features = ["v5"] }
 workflow = { path = "../workflow" }
 
 [dev-dependencies]

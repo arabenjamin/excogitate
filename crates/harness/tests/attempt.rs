@@ -435,3 +435,157 @@ async fn a_merge_of_a_candidate_that_mitigated_nothing_is_refused() {
     // The merge never ran.
     assert_eq!(attempt.candidates.len(), 2);
 }
+
+// Calibration and the adoption rules.
+
+fn verdict(effect: &str, step: u32, quote: &str) -> Value {
+    json!([{ "candidate": "A", "effect": effect,
+             "cite": { "run": "A", "step": step, "quote": quote } }])
+}
+
+fn calibration_script(broke_effect: &str) -> Vec<ChaosStep> {
+    vec![
+        composer(
+            &verdict("mitigated", 3, "Six times seven is 42."),
+            "adopt",
+            Some("A"),
+        ),
+        composer(
+            &verdict(broke_effect, 3, "the model's reply was empty"),
+            "keep",
+            None,
+        ),
+        composer(
+            &verdict("unchanged", 3, "Six times seven is 42."),
+            "keep",
+            None,
+        ),
+    ]
+}
+
+async fn calibrate(setup: &Setup) -> harness::Calibration {
+    Judges {
+        gateway: &setup.engine.gateway,
+        max_output_tokens: 4000,
+    }
+    .calibrate(0)
+    .await
+}
+
+#[tokio::test]
+async fn a_judge_that_gets_the_known_answers_right_passes() {
+    let setup = setup(calibration_script("regressed")).await;
+    let calibration = calibrate(&setup).await;
+    assert!(calibration.passed, "{calibration:#?}");
+    assert_eq!(calibration.model, "c");
+    assert_eq!(calibration.cases.len(), 3);
+}
+
+#[tokio::test]
+async fn a_judge_that_calls_a_broken_run_better_fails() {
+    let setup = setup(calibration_script("mitigated")).await;
+    let calibration = calibrate(&setup).await;
+    assert!(!calibration.passed);
+    let broke = &calibration.cases[1];
+    assert_eq!(broke.case, "broke");
+    assert!(
+        broke.detail.as_deref().unwrap().contains("Regressed"),
+        "{broke:?}"
+    );
+}
+
+async fn supported() -> Attempt {
+    let setup = setup(vec![
+        say("I don't know."),
+        editor(LOOK_FIRST, &cite_reference(), "You help."),
+        look(),
+        say("The answer is 42."),
+        composer(&json!([mitigated("A")]), "adopt", Some("A")),
+    ])
+    .await;
+    let attempt = attempt(&setup).await;
+    assert_eq!(attempt.status, Status::Supported);
+    attempt
+}
+
+#[tokio::test]
+async fn only_a_supported_edit_that_meets_every_rule_is_adopted() {
+    let attempt = supported().await;
+    let now = Utc::now();
+    let base = attempt.base_harness.clone().unwrap();
+    let candidate = attempt.supported().unwrap().probe.clone().unwrap().harness;
+    let none = std::collections::BTreeSet::new();
+    let facts = harness::Facts {
+        attempt: &attempt,
+        current_harness: &base,
+        hold: None,
+        reverted: &none,
+        last_change: None,
+        calibrated_at: Some(now),
+        now,
+    };
+    assert_eq!(harness::check_adoption(&facts), Ok(()));
+
+    let hold = harness::Hold {
+        agent: "helper".to_owned(),
+        since: now,
+        reason: "the owner reverted a change".to_owned(),
+    };
+    let reverted: std::collections::BTreeSet<String> = [candidate].into_iter().collect();
+    let refused = [
+        (
+            harness::Facts {
+                hold: Some(&hold),
+                ..facts.clone()
+            },
+            "held",
+        ),
+        (
+            harness::Facts {
+                current_harness: "edited",
+                ..facts.clone()
+            },
+            "changed while",
+        ),
+        (
+            harness::Facts {
+                reverted: &reverted,
+                ..facts.clone()
+            },
+            "reverted this harness",
+        ),
+        (
+            harness::Facts {
+                last_change: Some(now - chrono::Duration::hours(2)),
+                ..facts.clone()
+            },
+            "less than 24 hours",
+        ),
+        (
+            harness::Facts {
+                calibrated_at: None,
+                ..facts.clone()
+            },
+            "known-answer",
+        ),
+        (
+            harness::Facts {
+                calibrated_at: Some(now - chrono::Duration::days(8)),
+                ..facts.clone()
+            },
+            "known-answer",
+        ),
+    ];
+    for (facts, why) in refused {
+        let error = harness::check_adoption(&facts).unwrap_err();
+        assert!(error.contains(why), "{error}");
+    }
+    let mut kept = attempt.clone();
+    kept.status = Status::Kept;
+    let error = harness::check_adoption(&harness::Facts {
+        attempt: &kept,
+        ..facts
+    })
+    .unwrap_err();
+    assert!(error.contains("supports no change"), "{error}");
+}

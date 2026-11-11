@@ -9,16 +9,28 @@
 #![deny(clippy::string_slice, clippy::indexing_slicing)]
 
 mod attempt;
+mod calibrate;
+mod change;
 mod cite;
 mod guard;
 mod records;
 mod render;
 mod roles;
 
-pub use attempt::{Attempt, Candidate, Checked, Kind, Loop, Probed, Request, Settings, Status};
+pub use attempt::{
+    Adoption, Attempt, Candidate, Checked, Kind, Loop, Probed, Request, Settings, Status,
+};
+pub use calibrate::{Calibration, CaseResult};
+pub use change::{
+    CALIBRATION_DAYS, Change, ChangeStatus, Facts, Hold, MAX_FILE_CHARS, MIN_HOURS_BETWEEN_CHANGES,
+    check_adoption,
+};
 pub use cite::Cite;
 pub use guard::{MAX_GROWTH_CHARS, check_instructions};
-pub use records::{ATTEMPT_TYPE, declarations, record_of};
+pub use records::{
+    ATTEMPT_TYPE, CALIBRATION_TYPE, CHANGE_TYPE, HOLD_TYPE, declarations, hold_id, record,
+    record_of,
+};
 pub use render::Rendered;
 pub use roles::{
     Brief, ComposerReply, Decision, Draft, EditorReply, Effect, Judged, Judges, PURPOSE, Verdict,

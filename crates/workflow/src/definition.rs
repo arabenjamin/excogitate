@@ -16,7 +16,7 @@ use crate::template::references;
 #[serde(deny_unknown_fields)]
 pub struct Agent {
     /// What it's for.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "String::is_empty")]
     #[schemars(length(max = 1024))]
     pub description: String,
     /// Its instructions.
@@ -28,8 +28,10 @@ pub struct Agent {
     pub tools: Vec<String>,
     /// Its limits. The brain's default if left out. A workflow's remaining
     /// money and time still apply.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub budget: Option<Budget>,
     /// The longest each of its replies may be.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(range(min = 1, max = 1_000_000))]
     pub max_output_tokens: Option<u32>,
 }

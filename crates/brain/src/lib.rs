@@ -18,8 +18,9 @@ pub use assemble::{Brain, BrainError};
 pub use config::{BrainConfig, ConfigError, HarnessConfig, ServerConfig};
 pub use connect::relay;
 pub use http::{
-    ApiError, AttemptList, AttemptView, DefinitionList, DefinitionView, HttpError, JobList,
-    JobStatusView, JobView, OpenAiRequest, RunList, RunRequest, RunStarted, RunView,
+    ApiError, AttemptList, AttemptView, ChangeList, ChangeView, DefinitionList, DefinitionView,
+    HoldList, HoldRequest, HttpError, JobList, JobStatusView, JobView, OpenAiRequest, RunList,
+    RunRequest, RunStarted, RunView,
 };
 pub use jobs::WorkflowArgs;
 pub use mcp::{ChatArgs, ChatReply, ToolEnvelope};

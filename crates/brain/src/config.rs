@@ -73,6 +73,13 @@ pub struct HarnessConfig {
     /// The longest one attempt may take, in seconds.
     #[schemars(range(min = 1, max = 86_400))]
     pub time_limit_seconds: u32,
+    /// Whether the system changes an agent's file itself when the evidence
+    /// supports it. Every change is logged and can be reverted.
+    pub adopt: bool,
+    /// Where to post each change as it's made, so the owner hears of it. The
+    /// change log over REST has them all either way.
+    #[schemars(length(max = 2048), regex(pattern = r"^https?://"))]
+    pub notify_url: Option<String>,
 }
 
 impl Default for HarnessConfig {
@@ -82,6 +89,8 @@ impl Default for HarnessConfig {
             judge_usd_micros: 0,
             judge_output_tokens: 4000,
             time_limit_seconds: 1800,
+            adopt: true,
+            notify_url: None,
         }
     }
 }

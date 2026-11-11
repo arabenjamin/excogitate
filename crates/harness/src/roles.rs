@@ -132,6 +132,8 @@ pub struct Judged<T> {
     pub value: T,
     /// What the calls cost, in millionths of a dollar.
     pub cost_usd_micros: u64,
+    /// The model that gave the reply.
+    pub model: String,
 }
 
 /// How the judges are called.
@@ -206,6 +208,7 @@ impl Judges<'_> {
         Ok(Judged {
             value: reply.value,
             cost_usd_micros: reply.total_cost_usd_micros,
+            model: reply.completion.model,
         })
     }
 

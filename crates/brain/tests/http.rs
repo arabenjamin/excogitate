@@ -44,6 +44,8 @@ async fn start(name: &str, script: Vec<ChaosStep>, config: BrainConfig) -> Runni
         model.base_url
     );
     let store = Arc::new(MemoryStore::new(3));
+    let root = std::env::temp_dir().join(format!("http-{name}-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
     let brain = Brain::assemble(
         Arc::clone(&store) as Arc<dyn Store>,
         Arc::new(MemorySink::new()),
@@ -51,13 +53,12 @@ async fn start(name: &str, script: Vec<ChaosStep>, config: BrainConfig) -> Runni
         config,
         &|_| None,
     )
-    .unwrap();
+    .unwrap()
+    .with_definitions(root.clone());
     let router = brain.http_router("test", "1", KEY).unwrap();
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let url = format!("http://{}", listener.local_addr().unwrap());
     tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
-    let root = std::env::temp_dir().join(format!("http-{name}-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&root);
     Running {
         url,
         client: Client::new(),
@@ -902,6 +903,16 @@ async fn an_attempt_started_over_rest_is_kept_and_can_be_read() {
     let kept = body_of(running.get(&format!("/api/v1/harness/attempts/{id}")).await).await;
     assert_eq!(kept["attempt"]["status"], "supported", "{kept}");
     assert_eq!(kept["attempt"]["chosen"], "A");
+    // The script has no answers for the judge's known-answer test, so it fails
+    // the test and nothing is adopted.
+    assert_eq!(kept["attempt"]["adoption"]["adopted"], false);
+    assert!(
+        kept["attempt"]["adoption"]["reason"]
+            .as_str()
+            .unwrap()
+            .contains("known-answer"),
+        "{kept}"
+    );
     Validator::from_schema(&schema::schema_of::<brain::AttemptView>())
         .unwrap()
         .check(&kept)
@@ -975,4 +986,304 @@ fn a_probe_read_that_isnt_a_tool_stops_the_brain_starting() {
     )
     .unwrap_err();
     assert!(error.to_string().contains("ghost"), "{error}");
+}
+
+// Adoption.
+
+const HELPER_FILE: &str = "# Kept by hand.\nsystem_prompt: You help.\ntools: []\n";
+const WORK_IT_OUT: &str = "You help. Work it out before you answer.";
+
+/// One attempt that ends supported, as the scripted model plays it.
+fn supported_attempt() -> Vec<ChaosStep> {
+    supported_with(WORK_IT_OUT)
+}
+
+fn supported_with(prompt: &str) -> Vec<ChaosStep> {
+    vec![
+        ChaosStep::Text("I don't know.".to_owned()),
+        judged(&json!({
+            "invariant": { "system_prompt": prompt, "change": "Work it out.",
+                           "cites": [{ "run": "R", "step": 3, "quote": "I don't know" }] },
+            "domain": { "system_prompt": "You help.", "change": "Nothing.", "cites": [] }
+        })),
+        ChaosStep::Text("It is 42.".to_owned()),
+        judged(&json!({
+            "verdicts": [{ "candidate": "A", "effect": "mitigated",
+                           "cite": { "run": "A", "step": 3, "quote": "It is 42." } }],
+            "decision": "adopt", "choose": "A", "merged": null, "reason": "A answered."
+        })),
+    ]
+}
+
+/// The judge's three known answers, given correctly.
+fn known_answers() -> Vec<ChaosStep> {
+    let verdict = |effect: &str, quote: &str| {
+        json!([{ "candidate": "A", "effect": effect,
+                 "cite": { "run": "A", "step": 3, "quote": quote } }])
+    };
+    let reply = |verdicts: Value, decision: &str, choose: Option<&str>| {
+        judged(
+            &json!({ "verdicts": verdicts, "decision": decision, "choose": choose,
+                        "merged": null, "reason": "As the runs show." }),
+        )
+    };
+    vec![
+        reply(
+            verdict("mitigated", "Six times seven is 42."),
+            "adopt",
+            Some("A"),
+        ),
+        reply(
+            verdict("regressed", "the model's reply was empty"),
+            "keep",
+            None,
+        ),
+        reply(verdict("unchanged", "Six times seven is 42."), "keep", None),
+    ]
+}
+
+impl Running {
+    async fn improve(&self) -> Value {
+        let request = json!({ "agent": "helper", "task": "What is six times seven?" });
+        let started = body_of(self.post("/api/v1/harness/attempts", &request).await).await;
+        let done = self.work_off(started["job_id"].as_str().unwrap()).await;
+        assert_eq!(done["status"], "succeeded", "{done}");
+        done["result"]["attempt"].clone()
+    }
+
+    fn helper_file(&self) -> String {
+        std::fs::read_to_string(self.root.join("agents/helper.yaml")).unwrap()
+    }
+
+    async fn helper_prompt(&self) -> Value {
+        let found = body_of(self.get("/api/v1/definitions/agent/helper").await).await;
+        found["body"]["system_prompt"].clone()
+    }
+}
+
+async fn adopting(name: &str, script: Vec<ChaosStep>) -> Running {
+    let running = quiet(name, script).await;
+    running.define("agents/helper.yaml", HELPER_FILE).await;
+    running
+}
+
+#[tokio::test]
+async fn a_supported_edit_is_adopted_logged_and_can_be_reverted() {
+    let script = [
+        supported_attempt(),
+        known_answers(),
+        supported_attempt(),
+        supported_attempt(),
+    ]
+    .concat();
+    let running = adopting("adopt", script).await;
+
+    let attempt = running.improve().await;
+    assert_eq!(attempt["adoption"]["adopted"], true, "{attempt}");
+    let change_id = attempt["adoption"]["change_id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    // The file says what happened and how to undo it, and the agent runs with it.
+    let written = running.helper_file();
+    assert!(written.starts_with("# Changed by Harness²"), "{written}");
+    assert!(written.contains(&format!("changes/{change_id}/revert")));
+    assert_eq!(running.helper_prompt().await, WORK_IT_OUT);
+
+    let listed = body_of(
+        running
+            .get("/api/v1/harness/changes?agent=helper&status=live")
+            .await,
+    )
+    .await;
+    assert_eq!(listed["items"][0]["id"], change_id.as_str(), "{listed}");
+    let change = &listed["items"][0]["change"];
+    assert_eq!(change["old_file"], HELPER_FILE);
+    assert_eq!(change["judge_model"], "c");
+    assert!(change["notice"].as_str().unwrap().contains("no webhook"));
+    assert_eq!(change["evidence"][0]["quote"], "It is 42.");
+    Validator::from_schema(&schema::schema_of::<brain::ChangeList>())
+        .unwrap()
+        .check(&listed)
+        .unwrap();
+
+    // The owner reverts it: the file is back exactly, and the agent is held.
+    let reverted = running
+        .post(
+            &format!("/api/v1/harness/changes/{change_id}/revert"),
+            &json!({}),
+        )
+        .await;
+    assert_eq!(reverted.status(), StatusCode::OK);
+    assert_eq!(body_of(reverted).await["change"]["status"], "reverted");
+    assert_eq!(running.helper_file(), HELPER_FILE);
+    assert_eq!(running.helper_prompt().await, "You help.");
+    let again = running
+        .post(
+            &format!("/api/v1/harness/changes/{change_id}/revert"),
+            &json!({}),
+        )
+        .await;
+    assert_eq!(again.status(), StatusCode::CONFLICT);
+    let why = body_of(again).await;
+    assert!(
+        why["message"]
+            .as_str()
+            .unwrap()
+            .contains("only a live change"),
+        "{why}"
+    );
+    let holds = body_of(running.get("/api/v1/harness/holds").await).await;
+    assert_eq!(holds["items"][0]["agent"], "helper", "{holds}");
+
+    // While it's held, the same evidence changes nothing.
+    let second = running.improve().await;
+    assert_eq!(second["status"], "supported");
+    assert_eq!(second["adoption"]["adopted"], false);
+    assert!(
+        second["adoption"]["reason"]
+            .as_str()
+            .unwrap()
+            .contains("held")
+    );
+    assert_eq!(running.helper_file(), HELPER_FILE);
+
+    let released = running
+        .client
+        .delete(format!("{}/api/v1/harness/holds/helper", running.url))
+        .bearer_auth(KEY)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(released.status(), StatusCode::NO_CONTENT);
+    let holds = body_of(running.get("/api/v1/harness/holds").await).await;
+    assert_eq!(holds["items"], json!([]));
+
+    // Released, the agent can be improved again, but never back to what the
+    // owner reverted.
+    let third = running.improve().await;
+    assert_eq!(third["adoption"]["adopted"], false, "{third}");
+    assert!(
+        third["adoption"]["reason"]
+            .as_str()
+            .unwrap()
+            .contains("reverted this harness"),
+        "{third}"
+    );
+}
+
+#[tokio::test]
+async fn an_owners_edit_after_a_change_stands_and_holds_the_agent() {
+    let script = [supported_attempt(), known_answers(), supported_attempt()].concat();
+    let running = adopting("hand-edit", script).await;
+    assert_eq!(running.improve().await["adoption"]["adopted"], true);
+
+    let change = body_of(running.get("/api/v1/harness/changes").await).await["items"][0]["id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let mine = "system_prompt: You help, my way.\ntools: []\n";
+    running.define("agents/helper.yaml", mine).await;
+    // A revert would undo the owner's edit, so it's refused.
+    let revert = running
+        .post(
+            &format!("/api/v1/harness/changes/{change}/revert"),
+            &json!({}),
+        )
+        .await;
+    assert_eq!(revert.status(), StatusCode::CONFLICT);
+    let why = body_of(revert).await;
+    assert!(
+        why["message"].as_str().unwrap().contains("edit it by hand"),
+        "{why}"
+    );
+    let second = running.improve().await;
+    assert_eq!(second["adoption"]["adopted"], false, "{second}");
+    assert!(
+        second["adoption"]["reason"]
+            .as_str()
+            .unwrap()
+            .contains("the owner edited"),
+        "{second}"
+    );
+    assert_eq!(running.helper_file(), mine);
+    let replaced = body_of(running.get("/api/v1/harness/changes?status=replaced").await).await;
+    assert_eq!(replaced["items"].as_array().unwrap().len(), 1, "{replaced}");
+}
+
+#[tokio::test]
+async fn adoption_can_be_turned_off() {
+    let config = BrainConfig {
+        recall_limit: 0,
+        harness: brain::HarnessConfig {
+            adopt: false,
+            ..brain::HarnessConfig::default()
+        },
+        ..BrainConfig::default()
+    };
+    let running = start("adopt-off", supported_attempt(), config).await;
+    running.define("agents/helper.yaml", HELPER_FILE).await;
+    let attempt = running.improve().await;
+    assert_eq!(attempt["adoption"]["adopted"], false);
+    assert!(
+        attempt["adoption"]["reason"]
+            .as_str()
+            .unwrap()
+            .contains("turned off")
+    );
+    assert_eq!(running.helper_file(), HELPER_FILE);
+}
+
+#[tokio::test]
+async fn bad_change_and_hold_requests_are_refused() {
+    let running = adopting("change-bad", vec![]).await;
+    for path in [
+        "/api/v1/harness/changes?status=gone",
+        "/api/v1/harness/changes?agent=Not%20A%20Name",
+        "/api/v1/harness/changes/not-a-uuid",
+    ] {
+        assert_eq!(
+            running.get(path).await.status(),
+            StatusCode::BAD_REQUEST,
+            "{path}"
+        );
+    }
+    let missing = "/api/v1/harness/changes/00000000-0000-0000-0000-000000000000/revert";
+    assert_eq!(
+        running.post(missing, &json!({})).await.status(),
+        StatusCode::NOT_FOUND
+    );
+    let held = running
+        .client
+        .put(format!("{}/api/v1/harness/holds/helper", running.url))
+        .bearer_auth(KEY)
+        .header("content-type", "application/json")
+        .body(json!({ "reason": "I'm rewriting it." }).to_string())
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(held.status(), StatusCode::OK);
+    let holds = body_of(running.get("/api/v1/harness/holds").await).await;
+    assert_eq!(holds["items"][0]["reason"], "I'm rewriting it.");
+}
+
+#[tokio::test]
+async fn an_agent_changes_at_most_once_a_day() {
+    let script = [
+        supported_attempt(),
+        known_answers(),
+        supported_with("You help. Check your arithmetic."),
+    ]
+    .concat();
+    let running = adopting("daily", script).await;
+    assert_eq!(running.improve().await["adoption"]["adopted"], true);
+    let second = running.improve().await;
+    assert_eq!(second["adoption"]["adopted"], false, "{second}");
+    assert!(
+        second["adoption"]["reason"]
+            .as_str()
+            .unwrap()
+            .contains("less than 24 hours"),
+        "{second}"
+    );
 }

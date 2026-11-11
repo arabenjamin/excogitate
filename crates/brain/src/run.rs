@@ -247,6 +247,7 @@ pub async fn run_server(product: &str, version: &str) -> Result<(), RunError> {
         workers,
         definitions,
     } = open(product)?;
+    let brain = brain.with_definitions(definitions.clone());
     let count = brain.load_definitions(&definitions, Utc::now()).await?;
     let router = brain.http_router(product, version, &owner_key)?;
     let listener = tokio::net::TcpListener::bind(&bind)

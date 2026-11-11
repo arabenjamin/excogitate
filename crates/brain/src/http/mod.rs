@@ -33,7 +33,7 @@ use work::{JobTransport, StoreTransport};
 
 use crate::Brain;
 
-pub use harness::{AttemptList, AttemptView};
+pub use harness::{AttemptList, AttemptView, ChangeList, ChangeView, HoldList, HoldRequest};
 pub use openai::OpenAiRequest;
 pub use rest::{
     DefinitionList, DefinitionView, JobList, JobStatusView, JobView, RunRequest, RunStarted,
@@ -184,6 +184,7 @@ pub(super) struct App {
     run_request: Arc<Validator>,
     openai_request: Arc<Validator>,
     improve_request: Arc<Validator>,
+    hold_request: Arc<Validator>,
 }
 
 impl App {
@@ -320,6 +321,7 @@ impl Brain {
             run_request: validator::<RunRequest>()?,
             openai_request: validator::<OpenAiRequest>()?,
             improve_request: validator::<::harness::Request>()?,
+            hold_request: validator::<harness::HoldRequest>()?,
         };
         let guarded = Router::new()
             .merge(mcp::routes())
