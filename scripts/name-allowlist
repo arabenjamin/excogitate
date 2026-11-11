@@ -16,5 +16,9 @@ Cargo.lock
 .github/ISSUE_TEMPLATE/config.yml
 docs/*
 models.example.yaml
+Dockerfile
+compose.yaml
+.env.example
+tests/done/*
 scripts/name-allowlist
 scripts/check_name.sh

@@ -1,0 +1,45 @@
+# What scripts/done_test.sh adds to compose.yaml: a scripted model, a hostile
+# one, and settings that point the brain at them.
+services:
+  brain:
+    volumes:
+      - ./tests/done/models.yaml:/config/models.yaml:ro
+      - ./tests/done/brain.yaml:/config/brain.yaml:ro
+
+  brain_chaos:
+    image: excogitate:local
+    stdin_open: true
+    read_only: true
+    tmpfs:
+      - /tmp
+    volumes:
+      - ./tests/done/models.chaos.yaml:/config/models.yaml:ro
+      - ./tests/done/brain.yaml:/config/brain.yaml:ro
+      - chaos-data:/data
+
+  fixture:
+    build:
+      context: .
+      target: fixture
+    image: excogitate-fixture:local
+    init: true
+    command: [done]
+    environment:
+      PAGE_URL: http://fixture:9001/page
+    healthcheck: &ready
+      test: [CMD, fixture, ping]
+      interval: 1s
+      timeout: 2s
+      retries: 20
+
+  chaos:
+    image: excogitate-fixture:local
+    init: true
+    command: [chaos]
+    environment:
+      PAGE_URL: http://chaos:9001/page
+      CHAOS_SEED: ${CHAOS_SEED:-7}
+    healthcheck: *ready
+
+volumes:
+  chaos-data:

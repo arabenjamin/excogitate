@@ -6,21 +6,25 @@ version: 1
 providers:
   # A server you run yourself. It keeps no logs, so private work may go to it.
   - name: local
-    base_url: http://localhost:8080/v1
+    # host.docker.internal is this machine, as seen from the container.
+    base_url: http://host.docker.internal:8080/v1
     no_log: true
     timeout_secs: 300
 
-  # A paid cloud endpoint. Anything priced needs a daily cap, and only the
-  # purposes listed in paid_for may use it. The key is read from the variable
-  # named here and only ever sent to this provider's base_url.
-  - name: cloud
-    base_url: https://api.example.com/v1
-    api_key_env: EXCOGITATE_CLOUD_API_KEY
-    # false means private work never goes here.
-    no_log: false
-    timeout_secs: 120
-    spend_cap_usd_micros_per_day: 1000000 # $1.00
-    paid_for: [owner_request]
+  # A paid cloud endpoint: uncomment this and the large-chat model below, and
+  # set max_usd_micros in brain.yaml. Anything priced needs a daily cap, and
+  # only the purposes listed in paid_for may use it (chat, tool and memory).
+  # The key is read from the variable named here, and only ever sent to this
+  # provider's base_url.
+  #
+  # - name: cloud
+  #   base_url: https://api.example.com/v1
+  #   api_key_env: EXCOGITATE_CLOUD_API_KEY
+  #   # false means private work never goes here.
+  #   no_log: false
+  #   timeout_secs: 120
+  #   spend_cap_usd_micros_per_day: 1000000 # $1.00
+  #   paid_for: [chat]
 
 models:
   - name: small-chat
@@ -41,12 +45,12 @@ models:
     embedding_dimension: 1024
 
   # investigative means it has been measured able to run a multi-step loop.
-  - name: large-chat
-    provider: cloud
-    wire_model: your-large-model
-    capabilities: [chat, tools, json_schema, investigative]
-    context_tokens: 128000
-    max_output_tokens: 8192
-    price:
-      input_usd_micros_per_mtok: 500000 # $0.50 per million tokens
-      output_usd_micros_per_mtok: 1500000 # $1.50 per million tokens
+  # - name: large-chat
+  #   provider: cloud
+  #   wire_model: your-large-model
+  #   capabilities: [chat, tools, json_schema, investigative]
+  #   context_tokens: 128000
+  #   max_output_tokens: 8192
+  #   price:
+  #     input_usd_micros_per_mtok: 500000 # $0.50 per million tokens
+  #     output_usd_micros_per_mtok: 1500000 # $1.50 per million tokens

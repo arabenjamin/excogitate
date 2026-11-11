@@ -1,0 +1,27 @@
+# MCP runs over stdin and stdout, so each session is one `run`:
+#   docker compose run --rm -T brain
+services:
+  brain:
+    build:
+      context: .
+      target: brain
+    image: excogitate:local
+    env_file: .env
+    stdin_open: true
+    extra_hosts:
+      # So a model server on this machine can be reached as host.docker.internal.
+      - host.docker.internal:host-gateway
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    volumes:
+      - ./models.yaml:/config/models.yaml:ro
+      - ./brain.yaml:/config/brain.yaml:ro
+      - brain-data:/data
+
+volumes:
+  brain-data:

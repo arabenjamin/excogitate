@@ -10,10 +10,10 @@ itself from evidence.
 ## Status
 
 **Pre-alpha.** It serves [MCP over stdio](docs/mcp.md): it can chat, read a
-URL and remember what it read. There's no packaged way to run it yet, and it
-hasn't been measured against a real model. The first usable release, Phase 2a,
-adds a quickstart that CI runs.
-Until then, expect everything to change, and don't depend on any interface.
+URL and remember what it read. CI runs the quickstart below with a scripted
+model. On a small real model the tools work, but it doesn't reliably think to
+search its memory yet.
+Expect everything to change, and don't depend on any interface.
 
 ## What it is, and why
 
@@ -39,24 +39,44 @@ schemas, budgets, and memory. Excogitate is that harness.
 
 ## Requirements
 
-Planned for the first release, to be measured before it ships:
-
-- **Docker** with Compose, on Linux (amd64 or arm64) or macOS.
-- **A model endpoint** that speaks the OpenAI wire format, for chat and,
-  for vector search, embeddings. Without embeddings, search falls back to
-  keywords and says so.
-- **About 1.5 GB of RAM** and a few hundred MB of disk for a store of tens
-  of thousands of notes.
+- **Docker** with Compose. CI runs it on Linux amd64. The rest (arm64, macOS)
+  should work, and hasn't been checked. The image is about 220 MB.
+- **A model endpoint** that speaks the OpenAI wire format and supports tool
+  calls. For vector search, also embeddings; without them, search falls back
+  to keywords and says so.
+- **About 1.5 GB of RAM** for a store of tens of thousands of notes.
 
 ## Quickstart
 
-Not yet. The quickstart arrives with Phase 2a, and CI will run it, so this
-section can't drift from what works.
+```sh
+git clone https://github.com/arabenjamin/excogitate.git
+cd excogitate
+cp .env.example .env
+cp models.example.yaml models.yaml   # then point it at your model server
+cp brain.example.yaml brain.yaml
+docker compose build
+```
+
+MCP runs over stdin and stdout, so each session is one `docker compose run`.
+Ask it something:
+
+```sh
+{
+  echo '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"chat","arguments":{"message":"Read https://example.com and remember what it says."}}}'
+} | docker compose run --rm -T brain
+```
+
+The reply has the answer and a receipt of what actually ran. Memory lives in
+the `brain-data` volume, so it's still there next session.
+
+To use it from an MCP client, make the server's command
+`docker compose -f /path/to/compose.yaml run --rm -T brain`.
 
 ## Configuration
 
-Every variable starts with `EXCOGITATE_`. The reference will be in
-`docs/env.md`, along with `.env.example`.
+Settings live in `models.yaml` (see [models](docs/models.md)) and `brain.yaml`,
+both checked against their schemas at startup. Keys and paths are environment
+variables; [`docs/env.md`](docs/env.md) has the list.
 
 ## Architecture
 

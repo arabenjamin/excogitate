@@ -385,11 +385,28 @@ mod tests {
 
     #[test]
     fn the_example_file_loads() {
-        let catalog = load(EXAMPLE).unwrap();
-        assert_eq!(catalog.models().len(), 3);
+        // It has to start with no keys set, as the quickstart does.
+        let catalog = Catalog::from_yaml(EXAMPLE, |_| None).unwrap();
+        assert_eq!(catalog.models().len(), 2);
         let local = &catalog.models()[1];
         assert_eq!(local.embedding_dimension, Some(1024));
         assert!(local.provider.api_key.is_none());
+    }
+
+    #[test]
+    fn the_examples_paid_section_is_valid_once_uncommented() {
+        let uncommented: String = EXAMPLE
+            .lines()
+            .map(|line| match line.strip_prefix("  # ") {
+                Some(rest) if rest.starts_with("- ") || rest.starts_with("  ") => {
+                    format!("  {rest}\n")
+                }
+                _ => format!("{line}\n"),
+            })
+            .collect();
+        let catalog = load(&uncommented).unwrap();
+        assert_eq!(catalog.models().len(), 3);
+        assert!(catalog.models()[2].is_paid());
     }
 
     #[test]

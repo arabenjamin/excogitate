@@ -180,6 +180,15 @@ impl ChaosServer {
     ///
     /// The bind error, if no port can be had.
     pub async fn start(script: Vec<ChaosStep>) -> std::io::Result<Self> {
+        Self::start_on("127.0.0.1:0", script).await
+    }
+
+    /// Starts serving `script` on the address given.
+    ///
+    /// # Errors
+    ///
+    /// The bind error, if the address can't be had.
+    pub async fn start_on(address: &str, script: Vec<ChaosStep>) -> std::io::Result<Self> {
         let shared = Arc::new(Shared {
             script: Mutex::new(script.into()),
             served: Mutex::default(),
@@ -187,7 +196,7 @@ impl ChaosServer {
         let router = Router::new()
             .route("/v1/chat/completions", post(answer))
             .with_state(Arc::clone(&shared));
-        let listener = TcpListener::bind("127.0.0.1:0").await?;
+        let listener = TcpListener::bind(address).await?;
         let base_url = format!("http://{}/v1", listener.local_addr()?);
         tokio::spawn(async move {
             // The server lives as long as the test; a failure shows as

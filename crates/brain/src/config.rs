@@ -101,6 +101,12 @@ mod tests {
     }
 
     #[test]
+    fn the_example_file_is_valid_and_says_what_the_defaults_are() {
+        let example = BrainConfig::from_yaml(include_str!("../../../brain.example.yaml")).unwrap();
+        assert_eq!(example, BrainConfig::default());
+    }
+
+    #[test]
     fn unknown_settings_are_refused() {
         let error = BrainConfig::from_yaml("max_result_char: 5").unwrap_err();
         assert!(matches!(error, ConfigError::Invalid(_)), "{error}");
