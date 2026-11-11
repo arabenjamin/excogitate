@@ -85,7 +85,7 @@ The plan has four layers: a store port (DuckDB by default), a model port
 agents, workflows and Harness² on top. `docs/` describes each one as it is
 built: so far, [the store port](docs/store.md), [the model
 port](docs/models.md), [memory and retrieval](docs/memory.md), [dispatch](docs/dispatch.md),
-[the bundled tools](docs/tools.md), [MCP](docs/mcp.md),
+[the bundled tools](docs/tools.md), [MCP](docs/mcp.md), [work](docs/work.md),
 [plugins](docs/plugins.md) and [schemas](docs/schemas.md).
 
 ## Writing a plugin

@@ -5,6 +5,7 @@ use std::sync::{Arc, RwLock};
 
 use chrono::{DateTime, NaiveDate, Utc};
 use duckdb::{Connection, params};
+use serde_json::Value;
 use store::{
     Chunk, ChunkId, Definition, DefinitionKey, Job, JobId, JobStatus, Note, NoteId, Record,
     RecordCatalog, RecordId, StoreError, Task, UnitOfWork, WorkingEntry, WriteOp,
@@ -37,6 +38,7 @@ pub(crate) enum Command {
     Complete {
         id: JobId,
         worker: String,
+        result: Value,
         reply: Reply<()>,
     },
     Fail {
@@ -191,8 +193,13 @@ impl Writer<'_> {
             } => {
                 let _ = reply.send(self.claim(&worker, now, lease_until));
             }
-            Command::Complete { id, worker, reply } => {
-                let _ = reply.send(self.complete(id, &worker));
+            Command::Complete {
+                id,
+                worker,
+                result,
+                reply,
+            } => {
+                let _ = reply.send(self.complete(id, &worker, &result));
             }
             Command::Fail {
                 id,
@@ -386,7 +393,7 @@ impl Writer<'_> {
     fn insert_job(&self, job: &Job) -> Result<(), StoreError> {
         self.connection
             .execute(
-                "INSERT INTO jobs VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "INSERT INTO jobs VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 params![
                     id_of(job.id),
                     job.kind,
@@ -400,6 +407,7 @@ impl Writer<'_> {
                     job.lease.as_ref().map(|lease| lease.worker.clone()),
                     job.lease.as_ref().map(|lease| lease.until),
                     job.last_error,
+                    job.result.as_ref().map(to_json).transpose()?,
                 ],
             )
             .map(|_| ())
@@ -741,13 +749,13 @@ impl Writer<'_> {
         }
     }
 
-    fn complete(&self, id: JobId, worker: &str) -> Result<(), StoreError> {
+    fn complete(&self, id: JobId, worker: &str, result: &Value) -> Result<(), StoreError> {
         self.held_job(id, worker)?;
         self.connection
             .execute(
-                "UPDATE jobs SET status = 'succeeded', lease_worker = NULL, lease_until = NULL
-                 WHERE id = ?",
-                params![id_of(id)],
+                "UPDATE jobs SET status = 'succeeded', lease_worker = NULL, lease_until = NULL,
+                     result = ? WHERE id = ?",
+                params![to_json(result)?, id_of(id)],
             )
             .map(|_| ())
             .map_err(backend)

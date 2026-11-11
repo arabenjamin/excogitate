@@ -78,6 +78,7 @@ pub fn job(priority: i32, run_at: i64) -> Job {
         max_attempts: 2,
         lease: None,
         last_error: None,
+        result: None,
     }
 }
 

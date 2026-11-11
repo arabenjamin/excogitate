@@ -11,6 +11,7 @@ publish = false
 [dependencies]
 async-trait.workspace = true
 chrono.workspace = true
+serde_json.workspace = true
 protocol = { path = "../protocol" }
 store = { path = "../store" }
 

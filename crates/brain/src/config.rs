@@ -38,6 +38,9 @@ pub struct BrainConfig {
     /// whatever the search finds, even with no embedder.
     #[schemars(range(min = 0.0, max = 1.0))]
     pub recall_min_similarity: f32,
+    /// How many jobs run at once. One suits a single model server.
+    #[schemars(range(min = 1, max = 64))]
+    pub workers: u32,
     /// How `http_request` behaves.
     pub http: HttpConfig,
 }
@@ -59,6 +62,7 @@ impl Default for BrainConfig {
             max_result_chars: 12_000,
             recall_limit: 3,
             recall_min_similarity: 0.6,
+            workers: 1,
             http: HttpConfig::default(),
         }
     }

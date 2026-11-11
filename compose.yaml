@@ -1,5 +1,8 @@
 # MCP runs over stdin and stdout, so each session is one `run`:
 #   docker compose run --rm -T brain
+# Schedules and queued jobs need the long-running worker:
+#   docker compose --profile worker up -d worker
+# Only one of the two can use the store at a time, until MCP moves to HTTP.
 services:
   brain:
     build:
@@ -23,7 +26,18 @@ services:
     volumes:
       - ./models.yaml:/config/models.yaml:ro
       - ./brain.yaml:/config/brain.yaml:ro
+      - ./definitions:/config/definitions:ro
       - brain-data:/data
+
+  worker:
+    extends:
+      service: brain
+    profiles:
+      - worker
+    command: [worker]
+    stdin_open: false
+    restart: unless-stopped
+    init: true
 
 volumes:
   brain-data:

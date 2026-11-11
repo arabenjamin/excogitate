@@ -3,11 +3,12 @@
 
 use async_trait::async_trait;
 use chrono::{DateTime, NaiveDate, Utc};
+use serde_json::Value;
 
 use crate::{
     Chunk, ChunkHit, ClassFilter, Definition, DefinitionKey, DefinitionKind, Direction, Job, JobId,
-    Note, NoteId, Page, PageRequest, Record, RecordDecls, RecordId, RecordQuery, StoreError, Task,
-    TaskId, TaskQuery, UnitOfWork, WorkingEntry,
+    JobStatus, Note, NoteId, Page, PageRequest, Record, RecordDecls, RecordId, RecordQuery,
+    StoreError, Task, TaskId, TaskQuery, UnitOfWork, WorkingEntry,
 };
 
 /// Reads notes, and searches their chunks. Fusing the two searches happens
@@ -110,6 +111,17 @@ pub trait JobQueue {
     /// [`StoreError::Backend`] if the store fails.
     async fn get_job(&self, id: JobId) -> Result<Option<Job>, StoreError>;
 
+    /// Lists jobs, newest `run_at` first, optionally with one status.
+    ///
+    /// # Errors
+    ///
+    /// [`StoreError::Backend`] if the store fails.
+    async fn list_jobs(
+        &self,
+        status: Option<JobStatus>,
+        page: PageRequest,
+    ) -> Result<Page<Job>, StoreError>;
+
     /// Atomically claims the next runnable job: highest priority, then
     /// earliest `run_at`, then lowest id. A job whose lease has lapsed is
     /// runnable again, or dead if it's out of attempts. Each claim counts as
@@ -126,13 +138,13 @@ pub trait JobQueue {
         lease_until: DateTime<Utc>,
     ) -> Result<Option<Job>, StoreError>;
 
-    /// Marks a claimed job finished.
+    /// Marks a claimed job finished, and keeps what it produced.
     ///
     /// # Errors
     ///
     /// [`StoreError::NotFound`] if there's no such job.
     /// [`StoreError::Conflict`] if `worker` doesn't hold it.
-    async fn complete_job(&self, id: JobId, worker: &str) -> Result<(), StoreError>;
+    async fn complete_job(&self, id: JobId, worker: &str, result: Value) -> Result<(), StoreError>;
 
     /// Records a failed attempt. The job runs again at `retry_at`, or goes
     /// dead if it's out of attempts.

@@ -563,3 +563,94 @@ async fn a_question_longer_than_a_query_still_recalls() {
     let entry = &result["structuredContent"]["receipt"]["tool_calls"][0];
     assert_eq!(entry["status"], "ran", "{entry}");
 }
+
+/// A schedule's whole path: due, queued, run by a worker, recorded.
+async fn run_one_scheduled_chat(script: Vec<ChaosStep>) -> store::Job {
+    let store = Arc::new(MemoryStore::new(3));
+    let server = ChaosServer::start(script).await.unwrap();
+    let yaml = format!(
+        "version: 1\nproviders:\n  - {{name: c, base_url: '{}', no_log: true, timeout_secs: 10}}\n\
+         models:\n  - {{name: c, provider: c, wire_model: x, capabilities: [chat, tools], context_tokens: 1000000, max_output_tokens: 100}}\n",
+        server.base_url
+    );
+    let brain = Brain::assemble(
+        Arc::clone(&store) as Arc<dyn store::Store>,
+        Arc::new(MemorySink::new()),
+        Catalog::from_yaml(&yaml, |_| None).unwrap(),
+        config(),
+        &|_| None,
+    )
+    .unwrap();
+    let definition = store::Definition {
+        key: store::DefinitionKey {
+            kind: store::DefinitionKind::Schedule,
+            name: "each_hour".to_owned(),
+        },
+        body: json!({ "cron": "0 * * * *", "kind": "chat", "payload": { "message": "hi" } }),
+        source: "test".to_owned(),
+        updated_at: chrono::Utc::now(),
+    };
+    let store_port: Arc<dyn store::Store> = Arc::clone(&store) as _;
+    store_port
+        .apply(store::WriteOp::PutDefinition(definition).into())
+        .await
+        .unwrap();
+    let transport = Arc::new(work::StoreTransport(Arc::clone(&store_port)));
+    let scheduler = work::Scheduler::new(Arc::clone(&store_port), transport.clone());
+    assert_eq!(
+        scheduler.tick(chrono::Utc::now()).await.unwrap(),
+        ["each_hour"]
+    );
+
+    let options = work::WorkerOptions {
+        poll: std::time::Duration::from_millis(5),
+        backoff: std::time::Duration::ZERO,
+        ..work::WorkerOptions::default()
+    };
+    let worker =
+        Arc::new(work::Worker::new(transport, brain.job_handlers(), options, "w").unwrap());
+    let (stop, shutdown) = tokio::sync::watch::channel(false);
+    let running = tokio::spawn(worker.run(shutdown));
+
+    let mut settled = None;
+    for _ in 0..600 {
+        let listed = store::JobQueue::list_jobs(
+            store.as_ref(),
+            None,
+            store::PageRequest::new(10, 0).unwrap(),
+        )
+        .await
+        .unwrap();
+        let job = listed.items.into_iter().next().unwrap();
+        if matches!(
+            job.status,
+            store::JobStatus::Succeeded | store::JobStatus::Dead
+        ) {
+            settled = Some(job);
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+    }
+    stop.send(true).unwrap();
+    running.await.unwrap();
+    assert!(settled.is_some(), "the job never finished");
+    settled.unwrap()
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_scheduled_chat_runs_and_keeps_its_answer() {
+    let job = run_one_scheduled_chat(vec![ChaosStep::Text("Good morning.".to_owned())]).await;
+    assert_eq!(job.status, store::JobStatus::Succeeded);
+    assert_eq!(job.requested_by.as_str(), "schedule:each_hour");
+    let result = job.result.unwrap();
+    assert_eq!(result["answer"], "Good morning.");
+    assert_eq!(result["receipt"]["outcome"], "answered");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_scheduled_chat_with_no_answer_is_a_failed_job_that_says_why() {
+    let job = run_one_scheduled_chat(vec![ChaosStep::MalformedBody]).await;
+    assert_eq!(job.status, store::JobStatus::Dead);
+    assert_eq!(job.result, None);
+    assert_ne!(job.last_error.unwrap(), "");
+}

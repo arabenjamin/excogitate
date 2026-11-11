@@ -22,7 +22,8 @@ RUN ldconfig
 ENV EXCOGITATE_DATA_DIR=/data \
     EXCOGITATE_EXTENSION_DIR=/opt/duckdb-extensions \
     EXCOGITATE_MODELS=/config/models.yaml \
-    EXCOGITATE_CONFIG=/config/brain.yaml
+    EXCOGITATE_CONFIG=/config/brain.yaml \
+    EXCOGITATE_DEFINITIONS=/config/definitions
 USER brain
 VOLUME /data
 ENTRYPOINT ["excogitate"]

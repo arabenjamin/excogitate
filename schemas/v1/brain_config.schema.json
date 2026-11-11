@@ -342,6 +342,14 @@
       "maxLength": 16000,
       "minLength": 1,
       "type": "string"
+    },
+    "workers": {
+      "default": 1,
+      "description": "How many jobs run at once. One suits a single model server.",
+      "format": "uint32",
+      "maximum": 64,
+      "minimum": 1,
+      "type": "integer"
     }
   },
   "title": "BrainConfig",

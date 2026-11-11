@@ -52,7 +52,7 @@ macro_rules! store_conformance {
             spend_stays_within_the_cap, a_refused_reservation_changes_nothing,
             settling_replaces_the_reservation, spend_is_per_provider_and_per_day,
             reservations_at_once_cannot_overrun, huge_amounts_are_refused_not_wrapped,
-            settling_never_goes_below_zero
+            settling_never_goes_below_zero, jobs_list_newest_first_and_by_status
         );
     };
     (@cases $make:expr; $($case:ident),+ $(,)?) => {
