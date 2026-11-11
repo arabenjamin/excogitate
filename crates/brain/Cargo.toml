@@ -10,6 +10,7 @@ publish = false
 
 [dependencies]
 async-trait.workspace = true
+chrono.workspace = true
 dispatch = { path = "../dispatch" }
 events = { path = "../events" }
 memory = { path = "../memory" }

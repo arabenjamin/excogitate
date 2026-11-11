@@ -18,8 +18,8 @@ pub trait SpendLedger: Send + Sync + std::fmt::Debug {
     async fn settle(&self, provider: &str, reserved: u64, actual: u64, now: DateTime<Utc>);
 }
 
-/// A ledger in memory. A restart forgets the day's spend, so a deployment
-/// using a priced model needs a durable ledger instead.
+/// A ledger in memory, for tests. A restart forgets the day's spend, so the
+/// brain itself keeps its ledger in the store.
 #[derive(Debug, Default)]
 pub struct MemoryLedger(Mutex<HashMap<(String, NaiveDate), u64>>);
 

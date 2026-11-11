@@ -48,7 +48,11 @@ macro_rules! store_conformance {
             records_filter_by_equality_and_range, timestamps_compare_as_times,
             a_filter_on_an_undeclared_field_is_refused, a_filter_of_the_wrong_type_is_refused,
             neighbors_follow_both_directions, a_link_needs_both_records,
-            deleting_a_record_removes_its_links
+            deleting_a_record_removes_its_links,
+            spend_stays_within_the_cap, a_refused_reservation_changes_nothing,
+            settling_replaces_the_reservation, spend_is_per_provider_and_per_day,
+            reservations_at_once_cannot_overrun, huge_amounts_are_refused_not_wrapped,
+            settling_never_goes_below_zero
         );
     };
     (@cases $make:expr; $($case:ident),+ $(,)?) => {

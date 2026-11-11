@@ -5,12 +5,13 @@ use std::sync::Arc;
 use dispatch::ToolRegistry;
 use events::EventSink;
 use memory::{ChunkConfig, Embedder, GatewayEmbedder, Memory};
-use model::{Capability, Catalog, Gateway, MemoryLedger, OpenAiClient};
+use model::{Capability, Catalog, Gateway, OpenAiClient};
 use plugin_api::Tool;
 use store::Store;
 use tools::{HttpConfigError, HttpRequestTool, MemoryTool};
 
 use crate::BrainConfig;
+use crate::ledger::StoreLedger;
 use crate::mcp::{ChatTool, DispatchedTool};
 
 /// What embedding is for, which decides whether it may pay.
@@ -69,7 +70,7 @@ impl Brain {
         let gateway = Arc::new(Gateway::new(
             catalog,
             Arc::new(client),
-            Arc::new(MemoryLedger::new()),
+            Arc::new(StoreLedger(Arc::clone(&store))),
         ));
         let embedder = dimension.map(|width| {
             Arc::new(GatewayEmbedder::new(

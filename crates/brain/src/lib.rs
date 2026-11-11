@@ -5,6 +5,7 @@
 
 mod assemble;
 mod config;
+mod ledger;
 mod mcp;
 mod run;
 

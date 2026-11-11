@@ -29,8 +29,8 @@ If a call fails, the next model is tried, up to three, unless the server
 said the request itself was bad. When no model can take a call, the error
 names every model and why.
 
-`MemoryLedger` forgets the day's spend on a restart. A deployment using a
-priced model needs a durable ledger.
+The brain keeps this ledger in the store (`SpendLog`), so a restart can't reset
+a cap. `MemoryLedger` forgets on a restart, and is only for tests.
 
 ## Credentials
 

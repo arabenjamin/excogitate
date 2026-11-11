@@ -619,7 +619,11 @@ impl Session {
         self.totals.duration_ms = millis(self.started.elapsed());
         self.emit(
             EventKind::RunEnded,
-            json!({ "outcome": outcome, "budget_hit": self.hit }),
+            json!({
+                "outcome": outcome,
+                "budget_hit": self.hit,
+                "cost_usd_micros": self.totals.cost_usd_micros,
+            }),
         )
         .await;
         Receipt {

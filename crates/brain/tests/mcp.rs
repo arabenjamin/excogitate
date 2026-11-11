@@ -368,3 +368,43 @@ async fn a_chats_tool_results_are_sized_for_its_model() {
         "direct calls get it whole"
     );
 }
+
+const PRICED_MODEL: &str = "version: 1\nproviders:\n  - {name: c, base_url: 'URL', no_log: true, timeout_secs: 10, spend_cap_usd_micros_per_day: CAP, paid_for: [chat]}\n\
+     models:\n  - {name: c, provider: c, wire_model: x, capabilities: [chat, tools], context_tokens: 1000000, max_output_tokens: 100, price: {input_usd_micros_per_mtok: 1000000, output_usd_micros_per_mtok: 1000000}}\n";
+
+fn priced_brain(store: &Arc<MemoryStore>, url: &str, cap: u64) -> Brain {
+    let yaml = PRICED_MODEL
+        .replace("URL", url)
+        .replace("CAP", &cap.to_string());
+    let mut settings = config();
+    settings.budget.max_usd_micros = 1_000_000;
+    Brain::assemble(
+        Arc::clone(store) as Arc<dyn store::Store>,
+        Arc::new(MemorySink::new()),
+        Catalog::from_yaml(&yaml, |_| None).unwrap(),
+        settings,
+        &|_| None,
+    )
+    .unwrap()
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn spending_outlives_the_brain_that_spent_it() {
+    let (url, seen) = listening_model().await;
+    let store = Arc::new(MemoryStore::new(3));
+    let first = priced_brain(&store, &url, 1_000_000);
+    let answered = call_one(&first, "chat", &json!({ "message": "hi" })).await;
+    assert_eq!(answered["structuredContent"]["answer"], "heard");
+    let today = chrono::Utc::now().date_naive();
+    let spent = store::SpendLog::spent_on(store.as_ref(), "c", today)
+        .await
+        .unwrap();
+    assert_ne!(spent, 0, "the call went on the books");
+    drop(first);
+
+    // A new brain on the same store, with a cap that's now been reached.
+    let second = priced_brain(&store, &url, spent);
+    let refused = call_one(&second, "chat", &json!({ "message": "hi" })).await;
+    assert_eq!(refused["structuredContent"]["answer"], Value::Null);
+    assert_eq!(seen.lock().unwrap().len(), 1, "no second call was made");
+}

@@ -46,5 +46,7 @@ The vector width is fixed when the store is first created. It comes from the
 embedding model, or 1024 if there isn't one, so add the embedding model first
 if yours is a different width.
 
-The daily spend cap is kept in memory for now, so a restart forgets the day's
-spend. The brain says so at startup if a priced model is configured.
+A priced provider's daily cap is kept in the store, so a restart can't reset
+it. If the brain dies mid-call, that call's reservation stays on the books
+until the day ends: it can overcount a day's spend, and never undercount it.
+If the store can't be reached, priced calls are refused.
