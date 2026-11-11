@@ -250,17 +250,32 @@ impl Engine {
     /// [`WorkflowError`] if it can't start: no such workflow, or inputs that
     /// don't fit.
     pub async fn run(&self, name: &str, inputs: Value) -> Result<WorkflowRun, WorkflowError> {
+        let workflow = self.checked(name, &inputs).await?;
+        Ok(self.run_steps(name, &workflow, inputs).await)
+    }
+
+    /// The workflow, if it exists and `inputs` fit it.
+    async fn checked(&self, name: &str, inputs: &Value) -> Result<Workflow, WorkflowError> {
         let workflow: Workflow = self
             .definition(DefinitionKind::Workflow, name)
             .await?
             .ok_or_else(|| WorkflowError::Unknown(name.to_owned()))?;
         Validator::from_schema(&workflow.inputs)
             .map_err(|error| WorkflowError::Invalid(bounded(&error.to_string())))?
-            .check(&inputs)
+            .check(inputs)
             .map_err(|refusal| {
                 WorkflowError::Invalid(bounded(&format!("its inputs: {refusal}")))
             })?;
-        Ok(self.run_steps(name, &workflow, inputs).await)
+        Ok(workflow)
+    }
+
+    /// Checks that a run could start, without starting one.
+    ///
+    /// # Errors
+    ///
+    /// [`WorkflowError`] if there's no such workflow, or `inputs` don't fit.
+    pub async fn check_run(&self, name: &str, inputs: &Value) -> Result<(), WorkflowError> {
+        self.checked(name, inputs).await.map(|_| ())
     }
 
     async fn run_steps(&self, name: &str, workflow: &Workflow, inputs: Value) -> WorkflowRun {

@@ -651,6 +651,8 @@ async fn a_scheduled_chat_runs_and_keeps_its_answer() {
 async fn a_scheduled_chat_with_no_answer_is_a_failed_job_that_says_why() {
     let job = run_one_scheduled_chat(vec![ChaosStep::MalformedBody]).await;
     assert_eq!(job.status, store::JobStatus::Dead);
-    assert_eq!(job.result, None);
+    let left = job.result.unwrap();
+    assert_eq!(left["answer"], Value::Null);
+    assert_eq!(left["receipt"]["outcome"], "model_failed");
     assert_ne!(job.last_error.unwrap(), "");
 }

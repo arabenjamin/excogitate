@@ -35,7 +35,25 @@ pub trait JobHandler: Send + Sync + std::fmt::Debug {
     /// # Errors
     ///
     /// Why it failed, which is kept on the job.
-    async fn run(&self, job: &Job) -> Result<Value, String>;
+    async fn run(&self, job: &Job) -> Result<Value, JobFailure>;
+}
+
+/// Why a job failed, and what it did before it did.
+#[derive(Debug, Clone, PartialEq)]
+pub struct JobFailure {
+    /// Why it failed.
+    pub message: String,
+    /// What it left behind, kept as the job's result.
+    pub result: Option<Value>,
+}
+
+impl From<String> for JobFailure {
+    fn from(message: String) -> Self {
+        Self {
+            message,
+            result: None,
+        }
+    }
 }
 
 /// How workers behave.
@@ -189,23 +207,23 @@ impl Worker {
                 Ok(()) => eprintln!("job {} ({}) succeeded", job.id, job.kind),
                 Err(error) => eprintln!("job {} finished but wasn't recorded: {error}", job.id),
             },
-            Err(reason) => {
+            Err(failure) => {
                 eprintln!(
                     "job {} ({}) failed on attempt {} of {}: {}",
                     job.id,
                     job.kind,
                     job.attempts,
                     job.max_attempts,
-                    bounded(&reason)
+                    bounded(&failure.message)
                 );
-                self.record_failure(name, &job, &reason).await;
+                self.record_failure(name, &job, failure).await;
             }
         }
     }
 
-    async fn run_job(&self, job: &Job) -> Result<Value, String> {
+    async fn run_job(&self, job: &Job) -> Result<Value, JobFailure> {
         let Some(registered) = self.handlers.get(&job.kind) else {
-            return Err(format!("no handler for job kind {}", job.kind));
+            return Err(format!("no handler for job kind {}", job.kind).into());
         };
         registered
             .payload
@@ -219,10 +237,10 @@ impl Worker {
         let abort = task.abort_handle();
         match timeout(limit, task).await {
             Ok(Ok(result)) => result,
-            Ok(Err(_)) => Err("the job panicked".to_owned()),
+            Ok(Err(_)) => Err("the job panicked".to_owned().into()),
             Err(_) => {
                 abort.abort();
-                Err(format!("the job took longer than {}s", limit.as_secs()))
+                Err(format!("the job took longer than {}s", limit.as_secs()).into())
             }
         }
     }
@@ -236,13 +254,19 @@ impl Worker {
             .min(self.options.max_backoff)
     }
 
-    async fn record_failure(&self, name: &str, job: &Job, reason: &str) {
+    async fn record_failure(&self, name: &str, job: &Job, failure: JobFailure) {
         let wait = TimeDelta::from_std(self.backoff(job.attempts)).unwrap_or(TimeDelta::MAX);
         let now = Utc::now();
         let retry_at = now.checked_add_signed(wait).unwrap_or(now);
         if let Err(error) = self
             .transport
-            .fail(job.id, name, &bounded(reason), retry_at)
+            .fail(
+                job.id,
+                name,
+                &bounded(&failure.message),
+                failure.result,
+                retry_at,
+            )
             .await
         {
             eprintln!("job {} failed but wasn't recorded: {error}", job.id);

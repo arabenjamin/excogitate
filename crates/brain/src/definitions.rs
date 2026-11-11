@@ -9,7 +9,7 @@ use chrono::{DateTime, Utc};
 use schema::{Validator, bounded};
 use schemars::JsonSchema;
 use serde::de::DeserializeOwned;
-use store::{DefinitionKind, Store};
+use store::DefinitionKind;
 use work::{DefinitionError, DefinitionFile, Schedule, read_definition_files, save_definitions};
 use workflow::{Agent, Workflow, check_agent, check_workflow};
 
@@ -89,22 +89,23 @@ fn check_files(files: &[DefinitionFile], brain: &Brain) -> Result<(), Definition
     Ok(())
 }
 
-/// Reads and checks every definition file under `root`, then makes the store
-/// match them, all at once. Returns how many there are.
-///
-/// # Errors
-///
-/// [`DefinitionError`] naming the file and what's wrong with it.
-pub(crate) async fn load_definitions(
-    store: &dyn Store,
-    root: &Path,
-    brain: &Brain,
-    now: DateTime<Utc>,
-) -> Result<usize, DefinitionError> {
-    let files = read_definition_files(root, &DIRECTORIES)?;
-    check_files(&files, brain)?;
-    let kinds = DIRECTORIES.map(|(kind, _)| kind);
-    save_definitions(store, &files, &kinds, now).await
+impl Brain {
+    /// Reads and checks every definition file under `root`, then makes the
+    /// store match them, all at once. Returns how many there are.
+    ///
+    /// # Errors
+    ///
+    /// [`DefinitionError`] naming the file and what's wrong with it.
+    pub async fn load_definitions(
+        &self,
+        root: &Path,
+        now: DateTime<Utc>,
+    ) -> Result<usize, DefinitionError> {
+        let files = read_definition_files(root, &DIRECTORIES)?;
+        check_files(&files, self)?;
+        let kinds = DIRECTORIES.map(|(kind, _)| kind);
+        save_definitions(self.workflows.store.as_ref(), &files, &kinds, now).await
+    }
 }
 
 #[cfg(test)]
@@ -123,7 +124,7 @@ mod tests {
 
     use super::*;
     use crate::BrainConfig;
-    use crate::jobs::WorkflowJob;
+    use crate::jobs::{ChatJob, WorkflowJob};
 
     const CATALOG: &str = "version: 1\nproviders:\n  - {name: c, base_url: 'http://127.0.0.1:9', no_log: true, timeout_secs: 1}\n\
          models:\n  - {name: c, provider: c, wire_model: x, capabilities: [chat, tools], context_tokens: 1000, max_output_tokens: 100}\n";
@@ -150,7 +151,7 @@ mod tests {
             }
             let store = Arc::new(MemoryStore::new(3));
             let brain = Brain::assemble(
-                Arc::clone(&store) as Arc<dyn Store>,
+                Arc::clone(&store) as Arc<dyn store::Store>,
                 Arc::new(MemorySink::new()),
                 Catalog::from_yaml(CATALOG, |_| None).unwrap(),
                 BrainConfig::default(),
@@ -165,7 +166,7 @@ mod tests {
         }
 
         async fn load(&self) -> Result<usize, DefinitionError> {
-            load_definitions(self.store.as_ref(), &self.root, &self.brain, Utc::now()).await
+            self.brain.load_definitions(&self.root, Utc::now()).await
         }
 
         async fn stored(&self, kind: DefinitionKind) -> usize {
@@ -177,8 +178,8 @@ mod tests {
                 .len()
         }
 
-        async fn run_job(&self, payload: Value) -> Result<Value, String> {
-            let job = Job {
+        fn job(payload: Value) -> Job {
+            Job {
                 id: JobId::generate(),
                 kind: WORKFLOW_KIND.to_owned(),
                 payload,
@@ -191,8 +192,14 @@ mod tests {
                 lease: None,
                 last_error: None,
                 result: None,
-            };
-            WorkflowJob(self.brain.clone()).run(&job).await
+            }
+        }
+
+        async fn run_job(&self, payload: Value) -> Result<Value, String> {
+            WorkflowJob(self.brain.clone())
+                .run(&Self::job(payload))
+                .await
+                .map_err(|failure| failure.message)
         }
     }
 
@@ -312,6 +319,19 @@ mod tests {
             .unwrap();
         assert_eq!(result.get("output"), Some(&json!("done")));
         assert_eq!(result.get("outcome"), Some(&json!("completed")));
+    }
+
+    #[tokio::test]
+    async fn a_chat_with_no_answer_is_a_failed_job_that_keeps_its_receipt() {
+        let fixture = Fixture::new("chat-failed");
+        let mut job = Fixture::job(json!({ "message": "hi" }));
+        job.kind = "chat".to_owned();
+        let failure = ChatJob(fixture.brain.clone()).run(&job).await.unwrap_err();
+        let receipt = failure.result.unwrap();
+        assert_eq!(
+            receipt.pointer("/receipt/outcome"),
+            Some(&json!("model_failed"))
+        );
     }
 
     #[tokio::test]

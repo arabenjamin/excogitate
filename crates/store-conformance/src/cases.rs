@@ -644,7 +644,7 @@ pub async fn a_failing_job_retries_then_dies(store: &dyn Store) {
         .unwrap();
     store.claim_job("w", at(1), at(10)).await.unwrap().unwrap();
     store
-        .fail_job(j.id, "w", "first failure", at(30))
+        .fail_job(j.id, "w", "first failure", None, at(30))
         .await
         .unwrap();
     let queued = store.get_job(j.id).await.unwrap().unwrap();
@@ -652,12 +652,19 @@ pub async fn a_failing_job_retries_then_dies(store: &dyn Store) {
     assert_eq!(store.claim_job("w", at(29), at(40)).await.unwrap(), None);
     store.claim_job("w", at(30), at(40)).await.unwrap().unwrap();
     store
-        .fail_job(j.id, "w", "last failure", at(50))
+        .fail_job(
+            j.id,
+            "w",
+            "last failure",
+            Some(json!({ "left": "this" })),
+            at(50),
+        )
         .await
         .unwrap();
     let dead = store.get_job(j.id).await.unwrap().unwrap();
     assert_eq!(dead.status, JobStatus::Dead);
     assert_eq!(dead.last_error.as_deref(), Some("last failure"));
+    assert_eq!(dead.result, Some(json!({ "left": "this" })));
     assert_eq!(store.claim_job("w", at(60), at(70)).await.unwrap(), None);
 }
 

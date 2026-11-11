@@ -16,7 +16,7 @@ use work::{
 };
 
 use crate::assemble::embedding_dimension;
-use crate::definitions::load_definitions;
+use crate::http::check_owner_key;
 use crate::{Brain, BrainConfig, BrainError, ConfigError};
 
 /// The vector width of a store created with no embedding model configured.
@@ -24,6 +24,10 @@ const DEFAULT_DIMENSION: usize = 1024;
 /// How often the scheduler looks for what's due. Schedules can have seconds,
 /// but this is the finest it honors them.
 const SCHEDULER_TICK: Duration = Duration::from_secs(5);
+/// Where the HTTP server listens unless told otherwise.
+const DEFAULT_BIND: &str = "127.0.0.1:8080";
+/// How long open requests get to finish once it's told to stop.
+const HTTP_GRACE: Duration = Duration::from_secs(25);
 
 /// The brain couldn't start, or its connection failed.
 #[derive(Debug, thiserror::Error)]
@@ -61,6 +65,17 @@ pub enum RunError {
     /// The workers can't be set up.
     #[error(transparent)]
     Worker(#[from] WorkerError),
+    /// The owner key is missing or too short.
+    #[error("{variable}: {problem}")]
+    OwnerKey {
+        /// The variable it's read from.
+        variable: String,
+        /// What's wrong with it.
+        problem: String,
+    },
+    /// The HTTP server can't be set up.
+    #[error(transparent)]
+    Http(#[from] crate::http::HttpError),
 }
 
 fn read(path: &Path) -> Result<String, RunError> {
@@ -189,21 +204,38 @@ async fn stop_signal() {
     }
 }
 
-/// Runs the scheduler and workers until the process is told to stop.
+/// Serves HTTP and runs the scheduler and workers, until the process is told
+/// to stop. The store takes one process, so they all share this one.
 ///
 /// # Errors
 ///
 /// [`RunError`] if it can't start, or a definition file is wrong.
-pub async fn run_worker(product: &str) -> Result<(), RunError> {
+pub async fn run_server(product: &str, version: &str) -> Result<(), RunError> {
+    let prefix = product.to_uppercase();
+    let owner_key = std::env::var(format!("{prefix}_OWNER_KEY")).unwrap_or_default();
+    check_owner_key(&owner_key).map_err(|problem| RunError::OwnerKey {
+        variable: format!("{prefix}_OWNER_KEY"),
+        problem,
+    })?;
+    let bind = std::env::var(format!("{prefix}_BIND"))
+        .ok()
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| DEFAULT_BIND.to_owned());
     let Opened {
         store,
         brain,
         workers,
         definitions,
     } = open(product)?;
-    let handlers = brain.job_handlers();
-    let count = load_definitions(store.as_ref(), &definitions, &brain, Utc::now()).await?;
-    eprintln!("{count} definitions loaded, {workers} workers");
+    let count = brain.load_definitions(&definitions, Utc::now()).await?;
+    let router = brain.http_router(product, version, &owner_key)?;
+    let listener = tokio::net::TcpListener::bind(&bind)
+        .await
+        .map_err(|source| RunError::File {
+            path: bind.clone(),
+            source,
+        })?;
+    eprintln!("{count} definitions loaded, {workers} workers, listening on {bind}");
 
     let transport: Arc<dyn JobTransport> =
         Arc::new(StoreTransport(Arc::clone(&store) as Arc<dyn Store>));
@@ -213,14 +245,32 @@ pub async fn run_worker(product: &str) -> Result<(), RunError> {
     };
     let worker = Worker::new(
         Arc::clone(&transport),
-        handlers,
+        brain.job_handlers(),
         options,
         format!("{product}-{}", std::process::id()),
     )
     .map(Arc::new)?;
     let scheduler = Scheduler::new(Arc::clone(&store) as Arc<dyn Store>, transport);
     let (stop, shutdown) = watch::channel(false);
-    tokio::join!(
+    let mut http_stop = shutdown.clone();
+    let mut grace_stop = shutdown.clone();
+    let serving = axum::serve(listener, router)
+        .with_graceful_shutdown(async move {
+            let _ = http_stop.wait_for(|stopping| *stopping).await;
+        })
+        .into_future();
+    let (served, (), (), ()) = tokio::join!(
+        async move {
+            // A client that won't hang up can't hold the process open.
+            let grace = async {
+                let _ = grace_stop.wait_for(|stopping| *stopping).await;
+                tokio::time::sleep(HTTP_GRACE).await;
+            };
+            tokio::select! {
+                served = serving => served,
+                () = grace => Ok(()),
+            }
+        },
         worker.run(shutdown.clone()),
         scheduler.run(SCHEDULER_TICK, shutdown),
         async {
@@ -232,5 +282,5 @@ pub async fn run_worker(product: &str) -> Result<(), RunError> {
     );
     drop(brain);
     close(store);
-    Ok(())
+    served.map_err(RunError::Serve)
 }

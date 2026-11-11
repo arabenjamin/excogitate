@@ -46,7 +46,7 @@ pub trait JobTransport: Send + Sync + std::fmt::Debug {
     /// [`StoreError::Conflict`] if `worker` no longer holds it.
     async fn complete(&self, id: JobId, worker: &str, result: Value) -> Result<(), StoreError>;
 
-    /// Records a failed attempt. It runs again at `retry_at`, or is dead if
+    /// Records a failed attempt, and what it left behind. It runs again at `retry_at`, or is dead if
     /// it's out of attempts.
     ///
     /// # Errors
@@ -57,6 +57,7 @@ pub trait JobTransport: Send + Sync + std::fmt::Debug {
         id: JobId,
         worker: &str,
         error: &str,
+        result: Option<Value>,
         retry_at: DateTime<Utc>,
     ) -> Result<(), StoreError>;
 }
@@ -93,8 +94,9 @@ impl JobTransport for StoreTransport {
         id: JobId,
         worker: &str,
         error: &str,
+        result: Option<Value>,
         retry_at: DateTime<Utc>,
     ) -> Result<(), StoreError> {
-        self.0.fail_job(id, worker, error, retry_at).await
+        self.0.fail_job(id, worker, error, result, retry_at).await
     }
 }

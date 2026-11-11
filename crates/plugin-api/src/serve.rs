@@ -90,29 +90,66 @@ async fn call_tool(tools: &HashMap<String, Served>, id: &Value, params: &Value) 
     success(id, &result)
 }
 
-async fn handle(
-    message: &Value,
-    tools: &HashMap<String, Served>,
-    name: &str,
-    version: &str,
-) -> Option<String> {
-    // A message without an id is a notification, and gets no reply.
-    let id = message.get("id")?;
-    let params = message.get("params").cloned().unwrap_or_else(|| json!({}));
-    Some(match message.get("method").and_then(Value::as_str) {
-        Some("initialize") => success(
-            id,
-            &json!({
-                "protocolVersion": MCP_VERSION,
-                "capabilities": { "tools": {} },
-                "serverInfo": { "name": name, "version": version },
-            }),
-        ),
-        Some("ping") => success(id, &json!({})),
-        Some("tools/list") => success(id, &tool_listing(tools)),
-        Some("tools/call") => call_tool(tools, id, &params).await,
-        _ => failure(id, METHOD_NOT_FOUND, "no such method"),
-    })
+/// Answers MCP messages, whichever way they arrive.
+pub struct McpHandler {
+    name: String,
+    version: String,
+    tools: HashMap<String, Served>,
+}
+
+impl std::fmt::Debug for McpHandler {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("McpHandler")
+            .field("name", &self.name)
+            .field("version", &self.version)
+            .finish_non_exhaustive()
+    }
+}
+
+impl McpHandler {
+    /// A handler for `tools`. Arguments are checked against each tool's input
+    /// schema before it runs.
+    ///
+    /// # Errors
+    ///
+    /// The problem, if a tool's input schema isn't a valid schema.
+    pub fn new(name: &str, version: &str, tools: Vec<Arc<dyn Tool>>) -> std::io::Result<Self> {
+        let tools = tools
+            .into_iter()
+            .map(|tool| {
+                let definition = tool.definition();
+                let input = Validator::from_schema(&definition.input_schema)
+                    .map_err(std::io::Error::other)?;
+                Ok((definition.name, Served { tool, input }))
+            })
+            .collect::<std::io::Result<HashMap<_, _>>>()?;
+        Ok(Self {
+            name: name.to_owned(),
+            version: version.to_owned(),
+            tools,
+        })
+    }
+
+    /// The reply to one message. A notification gets none.
+    pub async fn handle(&self, message: &Value) -> Option<String> {
+        // A message without an id is a notification, and gets no reply.
+        let id = message.get("id")?;
+        let params = message.get("params").cloned().unwrap_or_else(|| json!({}));
+        Some(match message.get("method").and_then(Value::as_str) {
+            Some("initialize") => success(
+                id,
+                &json!({
+                    "protocolVersion": MCP_VERSION,
+                    "capabilities": { "tools": {} },
+                    "serverInfo": { "name": self.name, "version": self.version },
+                }),
+            ),
+            Some("ping") => success(id, &json!({})),
+            Some("tools/list") => success(id, &tool_listing(&self.tools)),
+            Some("tools/call") => call_tool(&self.tools, id, &params).await,
+            _ => failure(id, METHOD_NOT_FOUND, "no such method"),
+        })
+    }
 }
 
 /// Reads one line of at most [`MAX_LINE_BYTES`]. `None` means the stream
@@ -152,19 +189,11 @@ where
     R: AsyncRead + Unpin,
     W: AsyncWrite + Unpin,
 {
-    let tools = tools
-        .into_iter()
-        .map(|tool| {
-            let definition = tool.definition();
-            let input =
-                Validator::from_schema(&definition.input_schema).map_err(std::io::Error::other)?;
-            Ok((definition.name, Served { tool, input }))
-        })
-        .collect::<std::io::Result<HashMap<_, _>>>()?;
+    let handler = McpHandler::new(name, version, tools)?;
     let mut reader = BufReader::new(reader);
     while let Some(line) = read_line(&mut reader).await? {
         let reply = match serde_json::from_slice::<Value>(&line) {
-            Ok(message) => handle(&message, &tools, name, version).await,
+            Ok(message) => handler.handle(&message).await,
             Err(_) => Some(failure(&Value::Null, PARSE_ERROR, "not JSON")),
         };
         if let Some(reply) = reply {

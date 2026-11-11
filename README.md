@@ -9,9 +9,10 @@ itself from evidence.
 
 ## Status
 
-**Pre-alpha.** It serves [MCP over stdio](docs/mcp.md): it can chat, read a
-URL and remember what it read. CI runs the quickstart below with a scripted
-model. [Recall on a small local model](docs/mcp.md#recall) has been measured
+**Pre-alpha.** It serves [MCP, an OpenAI-compatible endpoint and a REST
+API](docs/api.md): it can chat, read a URL, remember what it read and run
+[workflows](docs/workflows.md) on a schedule. CI runs the quickstart below with a
+scripted model. [Recall on a small local model](docs/mcp.md#recall) has been measured
 only on a small set of short notes.
 Expect everything to change, and don't depend on any interface.
 
@@ -44,6 +45,7 @@ schemas, budgets, and memory. Excogitate is that harness.
 - **A model endpoint** that speaks the OpenAI wire format and supports tool
   calls. For vector search, also embeddings; without them, search falls back
   to keywords and says so.
+- **`openssl` and `curl`**, for the quickstart.
 - **About 1.5 GB of RAM** for a store of tens of thousands of notes.
 
 ## Quickstart
@@ -54,23 +56,26 @@ cd excogitate
 cp .env.example .env
 cp models.example.yaml models.yaml   # then point it at your model server
 cp brain.example.yaml brain.yaml
-docker compose build
+echo "EXCOGITATE_OWNER_KEY=$(openssl rand -hex 32)" >> .env
+docker compose up -d --build
 ```
 
-MCP runs over stdin and stdout, so each session is one `docker compose run`.
 Ask it something:
 
 ```sh
-{
-  echo '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"chat","arguments":{"message":"Read https://example.com and remember what it says."}}}'
-} | docker compose run --rm -T brain
+source .env
+curl http://127.0.0.1:8080/v1/chat/completions \
+  -H "Authorization: Bearer $EXCOGITATE_OWNER_KEY" \
+  -H 'Content-Type: application/json' \
+  -d '{"model":"brain","messages":[{"role":"user","content":"Read https://example.com and remember what it says."}]}'
 ```
 
 The reply has the answer and a receipt of what actually ran. Memory lives in
-the `brain-data` volume, so it's still there next session.
+the `brain-data` volume, so it's still there after a restart.
 
-To use it from an MCP client, make the server's command
-`docker compose -f /path/to/compose.yaml run --rm -T brain`.
+Any OpenAI client works with the base URL `http://127.0.0.1:8080/v1`, and an MCP
+client with `http://127.0.0.1:8080/mcp`. Both use the key as a bearer token.
+See [the API](docs/api.md).
 
 ## Configuration
 
@@ -85,7 +90,7 @@ The plan has four layers: a store port (DuckDB by default), a model port
 agents, workflows and Harness² on top. `docs/` describes each one as it is
 built: so far, [the store port](docs/store.md), [the model
 port](docs/models.md), [memory and retrieval](docs/memory.md), [dispatch](docs/dispatch.md),
-[the bundled tools](docs/tools.md), [MCP](docs/mcp.md), [work](docs/work.md),
+[the bundled tools](docs/tools.md), [MCP](docs/mcp.md), [the API](docs/api.md), [work](docs/work.md),
 [workflows](docs/workflows.md),
 [plugins](docs/plugins.md) and [schemas](docs/schemas.md).
 

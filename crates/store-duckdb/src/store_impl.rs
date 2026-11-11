@@ -371,6 +371,7 @@ impl JobQueue for DuckDbStore {
         id: JobId,
         worker: &str,
         error: &str,
+        result: Option<Value>,
         retry_at: DateTime<Utc>,
     ) -> Result<(), StoreError> {
         let (worker, error) = (worker.to_owned(), error.to_owned());
@@ -378,6 +379,7 @@ impl JobQueue for DuckDbStore {
             id,
             worker,
             error,
+            result,
             retry_at,
             reply,
         })

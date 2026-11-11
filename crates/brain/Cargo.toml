@@ -10,9 +10,11 @@ publish = false
 
 [dependencies]
 async-trait.workspace = true
+axum.workspace = true
 chrono.workspace = true
 dispatch = { path = "../dispatch" }
 events = { path = "../events" }
+futures-util = { version = "0.3", default-features = false, features = ["std"] }
 memory = { path = "../memory" }
 model = { path = "../model" }
 plugin-api = { path = "../plugin-api" }
@@ -22,17 +24,21 @@ schemars.workspace = true
 serde.workspace = true
 serde-saphyr.workspace = true
 serde_json.workspace = true
+sha2 = "0.10"
 store = { path = "../store" }
 store-duckdb = { path = "../store-duckdb" }
+subtle = "2"
 thiserror.workspace = true
 tokio = { workspace = true, features = ["signal"] }
 tools = { path = "../tools" }
+uuid = { workspace = true, features = ["v5"] }
 work = { path = "../work" }
 workflow = { path = "../workflow" }
 
 [dev-dependencies]
-axum.workspace = true
 chaos-model = { path = "../chaos-model" }
+proptest.workspace = true
+reqwest = { version = "0.13", default-features = false, features = ["json"] }
 store-memory = { path = "../store-memory" }
 
 [lints]

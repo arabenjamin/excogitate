@@ -1,0 +1,55 @@
+{
+  "$defs": {
+    "ProblemView": {
+      "additionalProperties": false,
+      "description": "One thing wrong with a request.",
+      "properties": {
+        "message": {
+          "description": "What's wrong there.",
+          "maxLength": 1024,
+          "type": "string"
+        },
+        "path": {
+          "description": "Where in the request, as a JSON pointer.",
+          "maxLength": 1024,
+          "type": "string"
+        }
+      },
+      "required": [
+        "path",
+        "message"
+      ],
+      "type": "object"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "Why the API refused or failed a request.",
+  "properties": {
+    "kind": {
+      "description": "What sort of problem it is.",
+      "maxLength": 32,
+      "type": "string"
+    },
+    "message": {
+      "description": "What went wrong.",
+      "maxLength": 2048,
+      "type": "string"
+    },
+    "problems": {
+      "description": "Each thing wrong with the request, if it didn't meet its schema.",
+      "items": {
+        "$ref": "#/$defs/ProblemView"
+      },
+      "maxItems": 16,
+      "type": "array"
+    }
+  },
+  "required": [
+    "kind",
+    "message",
+    "problems"
+  ],
+  "title": "ApiError",
+  "type": "object"
+}

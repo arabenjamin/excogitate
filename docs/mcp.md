@@ -2,6 +2,7 @@
 
 `serve` speaks the Model Context Protocol on stdin and stdout, one JSON-RPC
 message per line. Only MCP goes to stdout; everything else goes to stderr.
+The same tools are [served over HTTP](api.md#mcp) by the `server` command.
 
 ## What a client gets
 

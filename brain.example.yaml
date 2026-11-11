@@ -30,3 +30,9 @@ budget:
 #   allowed_methods: [GET, HEAD]
 #   # A service on your own network, reachable even though it's private.
 #   allowed_ranges: ["192.0.2.10/32"]
+
+# server:
+#   # How many chats and tool calls run at once. Past this, requests get a 503.
+#   max_concurrent_requests: 8
+#   # Browser origins allowed to call it. Others are refused.
+#   allowed_origins: []

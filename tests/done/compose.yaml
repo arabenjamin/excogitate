@@ -6,6 +6,13 @@ services:
       - ./tests/done/models.yaml:/config/models.yaml:ro
       - ./tests/done/brain.yaml:/config/brain.yaml:ro
 
+  server:
+    environment:
+      EXCOGITATE_OWNER_KEY: done-test-owner-key-of-sufficient-length
+    volumes:
+      - ./tests/done/models.yaml:/config/models.yaml:ro
+      - ./tests/done/brain.yaml:/config/brain.yaml:ro
+
   brain_chaos:
     image: excogitate:local
     stdin_open: true
