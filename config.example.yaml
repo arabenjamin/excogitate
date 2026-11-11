@@ -4,6 +4,11 @@
 # How much of each tool result a chat's model sees. Sized for a small model.
 max_result_chars: 12000
 
+# The agent that answers chats, with its own tools and `delegate` for the
+# rest. See docs/workflows.md#the-front-door and
+# definitions/agents/front-door.yaml.example.
+# front_door: front-door
+
 # How many notes to search for before a chat's first round. 0 turns it off.
 recall_limit: 3
 # How close in meaning a note must be to be used, from 0 to 1. This suits

@@ -90,6 +90,41 @@ An agent uses Excogitate's `budget` unless it sets its own. Either way, it can't
 use more than what's left of the run's money and time. Models are chosen with
 the purpose `workflow`, which is what a provider's `paid_for` matches.
 
+## The front door
+
+Set `front_door` in `config.yaml` to an agent's name, and that agent answers
+every chat: its instructions and its tools, in place of `system_prompt` and the
+full tool list. Without it, a chat is offered every tool but `delegate`, which
+stops working once plugins bring more than about 60 tools, and confuses a
+small model well before that.
+
+**`delegate` hands a task to another agent.** The front door lists it among
+its tools. On every chat, the agents it can hand work to are added to its
+instructions, each with its `description`, read fresh, so an agent added or
+changed is there on the next chat. The agent runs as its own run, with its own
+tools and budget, held to what the chat has left. It sees only the `task` and
+the `context` it's handed, not the conversation. What it returns, its answer,
+how its run ended and the run's id (readable at `/api/v1/runs/{id}`), is
+labelled untrusted, and what it cost goes on the chat's receipt.
+
+- **Give the front door `memory` too.** The harness's memory search before
+  the first round (`recall_limit`) runs only for a run offered `memory`, and
+  it's what lets a small model answer from what's stored; on a 4B local
+  model, a front door with only `delegate` handed a stored fact on and lost
+  it, and one with `memory` answered it every time.
+- What's in `context` reaches the agent marked as data, with the task, and
+  the agent is told to use its tools for anything it doesn't cover. An empty
+  `context` is left out.
+- An agent that has `delegate` itself isn't listed and is refused, so a
+  hand-off can't loop.
+- A hand-off counts as a write, since the agent may write, so a probe stubs it.
+- `delegate` isn't offered over MCP; a client reaches it through `chat`.
+- A missing front door agent stops the server at startup.
+
+The front door's runs are the agent's, so Harness² improves it like any other
+agent. `definitions/agents/front-door.yaml.example` and
+`researcher.yaml.example` are a pair to start from.
+
 ## A run
 
 Steps run in order. Each is its own dispatch session, so it has its own budget

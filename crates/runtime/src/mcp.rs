@@ -3,8 +3,8 @@
 
 use async_trait::async_trait;
 use dispatch::{
-    CallStatus, ChatResult, Conversation, Outcome, Receipt, RunSubject, Session, SessionConfig,
-    SessionError, harness_id,
+    Budget, CallStatus, ChatResult, Conversation, Outcome, Receipt, RunSubject, Session,
+    SessionConfig, SessionError, harness_id,
 };
 use model::{Message, ToolCall};
 use plugin_api::{Effect, Tool, ToolContext, ToolDefinition, ToolFailure, ToolOutput};
@@ -12,7 +12,10 @@ use protocol::{DataClass, RunId, Trust};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
+use std::fmt::Write as _;
 use std::sync::Arc;
+use store::{DefinitionKind, PageRequest};
+use workflow::{Agent, DELEGATE_TOOL};
 
 use crate::{Config, Runtime};
 
@@ -61,13 +64,31 @@ fn session_for(
     max_result_chars: usize,
     subject: RunSubject,
 ) -> Result<Session, ToolFailure> {
+    session_with(
+        runtime,
+        offered,
+        runtime.config.budget,
+        purpose,
+        max_result_chars,
+        subject,
+    )
+}
+
+fn session_with(
+    runtime: &Runtime,
+    offered: Vec<String>,
+    budget: Budget,
+    purpose: &str,
+    max_result_chars: usize,
+    subject: RunSubject,
+) -> Result<Session, ToolFailure> {
     Session::new(
         Arc::clone(&runtime.registry),
         Arc::clone(&runtime.sink),
         SessionConfig {
             run: RunId::generate(),
             offered,
-            budget: runtime.config.budget,
+            budget,
             data_class: DataClass::Private,
             purpose: purpose.to_owned(),
             max_result_chars,
@@ -88,7 +109,9 @@ async fn recall(
     question: &str,
     messages: &mut Vec<Message>,
 ) {
-    if config.recall_limit == 0 {
+    // A run that isn't offered memory, like a front door that delegates
+    // retrieval, gets no recall: the call would only be refused.
+    if config.recall_limit == 0 || !session.offers("memory") {
         return;
     }
     let query: String = question.chars().take(MAX_RECALL_QUERY).collect();
@@ -240,23 +263,30 @@ impl Runtime {
             temperature,
             max_output_tokens,
         } = input;
-        let offered: Vec<String> = self
-            .registry
-            .definitions()
-            .into_iter()
-            .map(|definition| definition.name)
-            .collect();
-        let subject = chat_subject(&self.config, &offered);
-        let mut session = session_for(
-            self,
-            offered,
-            purpose,
-            self.config.max_result_chars,
-            subject,
-        )?;
+        let (mut session, instructions) = if let Some(name) = &self.config.front_door {
+            self.front_door(name, purpose).await?
+        } else {
+            // Without a front door there's no roster, so nothing to delegate to.
+            let offered: Vec<String> = self
+                .registry
+                .definitions()
+                .into_iter()
+                .map(|definition| definition.name)
+                .filter(|name| name != DELEGATE_TOOL)
+                .collect();
+            let subject = chat_subject(&self.config, &offered);
+            let session = session_for(
+                self,
+                offered,
+                purpose,
+                self.config.max_result_chars,
+                subject,
+            )?;
+            (session, self.config.system_prompt.clone())
+        };
         let system = match extra_system {
-            Some(extra) => format!("{}\n\n{extra}", self.config.system_prompt),
-            None => self.config.system_prompt.clone(),
+            Some(extra) => format!("{instructions}\n\n{extra}"),
+            None => instructions,
         };
         let mut messages = vec![Message::system(system)];
         messages.extend(history);
@@ -269,6 +299,98 @@ impl Runtime {
         };
         Ok(session.converse(&self.gateway, conversation).await)
     }
+}
+
+impl Runtime {
+    /// A chat's session and instructions when an agent is the front door:
+    /// its tools, its budget, and its instructions with the roster added.
+    /// Its runs are that agent's, so Harness² can improve it like any other.
+    async fn front_door(
+        &self,
+        name: &str,
+        purpose: &str,
+    ) -> Result<(Session, String), ToolFailure> {
+        let agent = self
+            .workflows
+            .agent(name)
+            .await
+            .map_err(|error| ToolFailure(schema::bounded(&error.to_string())))?
+            .ok_or_else(|| {
+                ToolFailure(format!(
+                    "front_door names the agent {name}, and there's no such agent"
+                ))
+            })?;
+        let subject = RunSubject {
+            agent: format!("agent:{name}"),
+            harness: self.workflows.agent_harness(&agent),
+        };
+        let budget = agent.budget.unwrap_or(self.config.budget);
+        let mut instructions = agent.system_prompt.clone();
+        if agent.tools.iter().any(|tool| tool == DELEGATE_TOOL) {
+            instructions.push_str("\n\n");
+            instructions.push_str(&self.roster(name).await?);
+        }
+        let session = session_with(
+            self,
+            agent.tools,
+            budget,
+            purpose,
+            self.config.max_result_chars,
+            subject,
+        )?;
+        Ok((session, instructions))
+    }
+
+    /// The agents the front door can hand work to, read now, so a new or
+    /// changed agent is there on the next chat. An agent that can delegate
+    /// itself is left out, as `delegate` would refuse it.
+    async fn roster(&self, front_door: &str) -> Result<String, ToolFailure> {
+        let page =
+            PageRequest::new(ROSTER_LIMIT, 0).map_err(|error| ToolFailure(error.to_string()))?;
+        let listed = self
+            .workflows
+            .store
+            .list_definitions(DefinitionKind::Agent, page)
+            .await
+            .map_err(|error| ToolFailure(schema::bounded(&error.to_string())))?;
+        let mut lines = Vec::new();
+        for definition in &listed.items {
+            let Ok(agent) = serde_json::from_value::<Agent>(definition.body.clone()) else {
+                continue;
+            };
+            let name = &definition.key.name;
+            if name == front_door || agent.tools.iter().any(|tool| tool == DELEGATE_TOOL) {
+                continue;
+            }
+            let what = if agent.description.is_empty() {
+                "(no description)"
+            } else {
+                agent.description.as_str()
+            };
+            lines.push(format!("- {name}: {what}"));
+        }
+        Ok(roster_text(&lines, listed.has_more))
+    }
+}
+
+/// The most agents listed to the front door.
+const ROSTER_LIMIT: u32 = 100;
+
+fn roster_text(lines: &[String], cut: bool) -> String {
+    if lines.is_empty() {
+        return "There are no agents to hand work to with `delegate` yet.".to_owned();
+    }
+    let mut text = format!(
+        "The agents you can hand work to with `delegate`, by name:\n{}",
+        lines.join("\n")
+    );
+    if cut {
+        let _ = write!(
+            text,
+            "\n(Only the first {ROSTER_LIMIT} are listed; there are more.)"
+        );
+    }
+    text
 }
 
 /// What a tool's result looks like to a client. It's dispatch's reply.

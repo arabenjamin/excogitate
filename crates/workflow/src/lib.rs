@@ -15,7 +15,8 @@ mod template;
 
 pub use definition::{Agent, Step, Workflow, check_agent, check_workflow};
 pub use engine::{
-    Engine, EngineLimits, RunOutcome, StepReport, StepStatus, WorkflowError, WorkflowRun,
+    DELEGATE_TOOL, Engine, EngineLimits, RunOutcome, StepReport, StepStatus, WorkflowError,
+    WorkflowRun,
 };
 pub use probe::ProbeRun;
 pub use template::{TemplateError, render_text, render_value};
