@@ -19,10 +19,12 @@ claimed, then succeeded or dead, and a dead job stays readable with
 - **A retry waits longer each time.** Jobs that are out of attempts are dead.
 - **A panic or a hang costs that job only.**
 
-`chat` is the one kind so far. A chat that doesn't end in an answer is a failed
-job, so it can't look as though it worked. Chats from schedules pay as purpose
+There are four kinds. A `chat` that doesn't end in an answer is a failed job,
+so it can't look as though it worked. Chats from schedules pay as purpose
 `schedule`, which is what a provider's `paid_for` matches. A `workflow` job runs
 a [workflow](workflows.md), and one that stops at a failed step is a failed job.
+A `harness` job is one [Harness²](harness.md) attempt, and a `harness_pick` job
+chooses what to attempt.
 
 Jobs move through `JobTransport`. The store is the default, and another queue
 can take its place without changing the workers.

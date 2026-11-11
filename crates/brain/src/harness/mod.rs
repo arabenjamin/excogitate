@@ -14,8 +14,11 @@ use work::{JobFailure, JobHandler};
 use crate::Brain;
 
 mod adopt;
+mod pick;
 
 pub(crate) use adopt::ChangeError;
+pub(crate) use pick::PickJob;
+pub use pick::{PickArgs, Picked};
 
 /// The kind of job that runs an attempt.
 pub(crate) const HARNESS_KIND: &str = "harness";

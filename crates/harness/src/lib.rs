@@ -13,6 +13,7 @@ mod calibrate;
 mod change;
 mod cite;
 mod guard;
+mod pick;
 mod records;
 mod render;
 mod roles;
@@ -27,6 +28,7 @@ pub use change::{
 };
 pub use cite::Cite;
 pub use guard::{MAX_GROWTH_CHARS, check_instructions};
+pub use pick::{MIN_REPEATS, Pick, Recent, failure, pick, task};
 pub use records::{
     ATTEMPT_TYPE, CALIBRATION_TYPE, CHANGE_TYPE, HOLD_TYPE, declarations, hold_id, record,
     record_of,
