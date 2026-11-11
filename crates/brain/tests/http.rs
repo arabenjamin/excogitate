@@ -81,7 +81,8 @@ impl Running {
         self.client
             .post(format!("{}{path}", self.url))
             .bearer_auth(KEY)
-            .json(body)
+            .header("content-type", "application/json")
+            .body(body.to_string())
             .send()
             .await
             .unwrap()
@@ -126,7 +127,7 @@ impl Running {
         let path = format!("/api/v1/jobs/{job}");
         let mut seen = Value::Null;
         for _ in 0..400 {
-            seen = self.get(&path).await.json().await.unwrap();
+            seen = body_of(self.get(&path).await).await;
             if seen["status"] == "succeeded" || seen["status"] == "dead" {
                 break;
             }
@@ -143,7 +144,7 @@ fn rpc(id: u32, method: &str, params: &Value) -> Value {
 }
 
 async fn body_of(response: Response) -> Value {
-    response.json().await.unwrap()
+    serde_json::from_str(&response.text().await.unwrap()).unwrap()
 }
 
 // The key and what can be reached without it.
@@ -348,7 +349,8 @@ async fn a_protocol_version_it_doesnt_speak_is_refused() {
             .post(format!("{}/mcp", running.url))
             .bearer_auth(KEY)
             .header("mcp-protocol-version", version)
-            .json(&rpc(1, "ping", &json!({})))
+            .header("content-type", "application/json")
+            .body(rpc(1, "ping", &json!({})).to_string())
             .send()
     };
     assert_eq!(
@@ -368,6 +370,89 @@ async fn mcp_opens_no_stream_and_keeps_no_session() {
         running.get("/mcp").await.status(),
         StatusCode::METHOD_NOT_ALLOWED
     );
+}
+
+// The bridge for stdio clients.
+
+async fn bridged(url: &str, key: &str, lines: &[Value]) -> Vec<Value> {
+    let joined: Vec<String> = lines.iter().map(ToString::to_string).collect();
+    let input = joined.join(
+        "
+",
+    ) + "
+";
+    let mut output = Vec::new();
+    brain::relay(url, key, input.as_bytes(), &mut output)
+        .await
+        .unwrap();
+    String::from_utf8(output)
+        .unwrap()
+        .lines()
+        .map(|line| serde_json::from_str(line).unwrap())
+        .collect()
+}
+
+#[tokio::test]
+async fn a_stdio_client_can_use_a_running_server() {
+    let running = quiet("bridge", vec![ChaosStep::Text("Bridged.".to_owned())]).await;
+    let call = json!({ "name": "chat", "arguments": { "message": "hi" } });
+    let lines = [
+        rpc(1, "initialize", &json!({})),
+        json!({ "jsonrpc": "2.0", "method": "notifications/initialized" }),
+        rpc(2, "tools/call", &call),
+    ];
+    let replies = bridged(&format!("{}/", running.url), KEY, &lines).await;
+    assert_eq!(
+        replies.len(),
+        2,
+        "a notification gets no reply: {replies:?}"
+    );
+    assert_eq!(replies[0]["id"], 1);
+    assert_eq!(replies[1]["id"], 2);
+    assert_eq!(
+        replies[1]["result"]["structuredContent"]["answer"],
+        "Bridged."
+    );
+}
+
+#[tokio::test]
+async fn a_wrong_key_is_an_error_the_client_can_read() {
+    let running = quiet("bridgekey", vec![]).await;
+    let replies = bridged(&running.url, "wrong", &[rpc(7, "ping", &json!({}))]).await;
+    assert_eq!(replies[0]["id"], 7);
+    assert!(
+        replies[0]["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("owner key")
+    );
+}
+
+#[tokio::test]
+async fn a_server_thats_down_is_an_error_and_the_session_goes_on() {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("http://{}", listener.local_addr().unwrap());
+    drop(listener);
+    let lines = [rpc(1, "ping", &json!({})), rpc(2, "ping", &json!({}))];
+    let replies = bridged(&url, KEY, &lines).await;
+    let ids: Vec<&Value> = replies.iter().map(|reply| &reply["id"]).collect();
+    assert_eq!(ids, [&json!(1), &json!(2)]);
+    assert!(
+        replies[0]["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("can't reach")
+    );
+}
+
+#[tokio::test]
+async fn a_line_that_isnt_json_gets_an_error() {
+    let mut output = Vec::new();
+    brain::relay("http://127.0.0.1:9", KEY, &b"{nope\n"[..], &mut output)
+        .await
+        .unwrap();
+    let reply: Value = serde_json::from_slice(&output).unwrap();
+    assert_eq!(reply["error"]["code"], -32700);
 }
 
 // The front door.

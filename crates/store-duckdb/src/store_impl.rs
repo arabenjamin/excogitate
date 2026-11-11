@@ -41,6 +41,9 @@ pub struct DuckDbConfig {
     pub embedding_dimension: usize,
 }
 
+/// What `DuckDB` says when another process holds the file.
+const LOCK_CONFLICT: &str = "Could not set lock on file";
+
 /// A store could not be opened.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 #[non_exhaustive]
@@ -48,6 +51,12 @@ pub enum OpenError {
     /// `DuckDB` failed.
     #[error("couldn't open the database: {0}")]
     Database(String),
+    /// Another process has it open, and only one can.
+    #[error(
+        "another process has the store open, and only one can. If that's the server, \
+         use the `connect` command to reach it"
+    )]
+    InUse,
     /// A required extension isn't where it should be.
     #[error("{0}")]
     Extension(String),
@@ -84,7 +93,14 @@ impl DuckDbStore {
                 "embedding dimension must be 1 to 65535, got {dimension}"
             )));
         }
-        let database = |error: duckdb::Error| OpenError::Database(error.to_string());
+        let database = |error: duckdb::Error| {
+            let message = error.to_string();
+            if message.contains(LOCK_CONFLICT) {
+                OpenError::InUse
+            } else {
+                OpenError::Database(message)
+            }
+        };
         let root = match &config.path {
             Some(path) => Connection::open(path),
             None => Connection::open_in_memory(),

@@ -5,6 +5,7 @@
 
 mod assemble;
 mod config;
+mod connect;
 mod definitions;
 mod http;
 mod jobs;
@@ -14,10 +15,11 @@ mod run;
 
 pub use assemble::{Brain, BrainError};
 pub use config::{BrainConfig, ConfigError, ServerConfig};
+pub use connect::relay;
 pub use http::{
     ApiError, DefinitionList, DefinitionView, HttpError, JobList, JobStatusView, JobView,
     OpenAiRequest, RunRequest, RunStarted,
 };
 pub use jobs::WorkflowArgs;
 pub use mcp::{ChatArgs, ChatReply, ToolEnvelope};
-pub use run::{RunError, run_server, run_stdio};
+pub use run::{RunError, run_connect, run_server, run_stdio};

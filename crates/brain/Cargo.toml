@@ -19,6 +19,7 @@ memory = { path = "../memory" }
 model = { path = "../model" }
 plugin-api = { path = "../plugin-api" }
 protocol = { path = "../protocol" }
+reqwest = { version = "0.13", default-features = false, features = ["http2", "rustls"] }
 schema = { path = "../schema" }
 schemars.workspace = true
 serde.workspace = true
@@ -38,7 +39,6 @@ workflow = { path = "../workflow" }
 [dev-dependencies]
 chaos-model = { path = "../chaos-model" }
 proptest.workspace = true
-reqwest = { version = "0.13", default-features = false, features = ["json"] }
 store-memory = { path = "../store-memory" }
 
 [lints]

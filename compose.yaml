@@ -1,9 +1,10 @@
 # docker compose up -d runs the server: HTTP, the workers and the scheduler.
 # It needs EXCOGITATE_OWNER_KEY in .env.
 #
-# For an MCP client that wants stdio, stop the server and run a session:
+# For an MCP client that wants stdio, relay to the running server:
+#   docker compose run --rm -T --no-deps brain connect http://server:8080
+# With the server stopped, a session can open the store itself:
 #   docker compose run --rm -T brain
-# The store takes one process at a time, so the two can't run together.
 x-brain: &brain
   build:
     context: .
