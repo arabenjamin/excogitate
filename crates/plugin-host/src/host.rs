@@ -42,9 +42,6 @@ pub enum HostError {
         /// What it asked for.
         capability: PluginCapability,
     },
-    /// A separate process has no way to reach the runtime's capabilities.
-    #[error("plugin {0} runs as a service, and a service can't use capabilities or records")]
-    ServiceWithCapabilities(String),
     /// Its tools aren't the ones its manifest declares.
     #[error("plugin {plugin}: {problem}")]
     ToolMismatch {
@@ -132,6 +129,23 @@ fn compare_tools(manifest: &PluginManifest, tools: &[Arc<dyn Tool>]) -> Result<(
         }
     }
     Ok(())
+}
+
+/// Wraps the tools of a plugin that can bring in outside text, so what they
+/// return is untrusted and what their model calls cost is charged.
+fn guard(tools: Vec<Arc<dyn Tool>>, granted: &Granted) -> Vec<Arc<dyn Tool>> {
+    if !granted.guarded {
+        return tools;
+    }
+    tools
+        .into_iter()
+        .map(|inner| {
+            Arc::new(GuardedTool {
+                inner,
+                meter: granted.meter.clone(),
+            }) as Arc<dyn Tool>
+        })
+        .collect()
 }
 
 impl PluginHost {
@@ -238,19 +252,12 @@ impl PluginHost {
                 source,
             })?;
         compare_tools(&manifest, &tools)?;
-        let tools = if granted.guarded {
-            tools
-                .into_iter()
-                .map(|inner| {
-                    Arc::new(GuardedTool {
-                        inner,
-                        meter: granted.meter.clone(),
-                    }) as Arc<dyn Tool>
-                })
-                .collect()
-        } else {
-            tools
-        };
+        let tools = guard(tools, &granted);
+        self.declare_records(&manifest).await?;
+        self.register_tools(&manifest, tools)
+    }
+
+    async fn declare_records(&self, manifest: &PluginManifest) -> Result<(), HostError> {
         if let Some(records) = &manifest.records {
             self.store
                 .register_records(records)
@@ -260,12 +267,13 @@ impl PluginHost {
                     source,
                 })?;
         }
-        self.register_tools(&manifest, tools)
+        Ok(())
     }
 
     /// Starts a plugin as its own process and installs its tools. It gets
-    /// no capabilities, only the environment variables its spec names, and
-    /// everything it returns is labelled untrusted.
+    /// the capabilities its manifest declares and `plugins.yaml` grants, as
+    /// calls back over its connection, only the environment variables its
+    /// spec names, and everything it returns is labelled untrusted.
     ///
     /// # Errors
     ///
@@ -277,16 +285,16 @@ impl PluginHost {
     ) -> Result<(), HostError> {
         let manifest = PluginManifest::from_yaml(manifest_yaml)?;
         self.claim_name(&manifest)?;
-        if !manifest.capabilities.is_empty() || manifest.records.is_some() {
-            return Err(HostError::ServiceWithCapabilities(manifest.name));
-        }
-        let tools = service::start(&manifest, spec)
+        let granted = self.capabilities(&manifest)?;
+        self.declare_records(&manifest).await?;
+        let tools = service::start(&manifest, spec, granted.capabilities.clone())
             .await
             .map_err(|source| HostError::Service {
                 plugin: manifest.name.clone(),
                 source,
             })?;
         compare_tools(&manifest, &tools)?;
+        let tools = guard(tools, &granted);
         self.register_tools(&manifest, tools)
     }
 
@@ -501,8 +509,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_service_cannot_ask_for_capabilities() {
-        let (mut host, _) = host("records");
+    async fn a_service_asking_for_what_isnt_granted_is_refused_before_it_starts() {
+        let (mut host, _) = host("");
         let spec = ServiceSpec {
             command: "true".to_owned(),
             args: vec![],
@@ -513,10 +521,7 @@ mod tests {
             .install_service(&with_records(), &spec)
             .await
             .unwrap_err();
-        assert!(
-            matches!(error, HostError::ServiceWithCapabilities(_)),
-            "{error}"
-        );
+        assert!(matches!(error, HostError::NotGranted { .. }), "{error}");
     }
 
     #[tokio::test]

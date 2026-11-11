@@ -9,7 +9,7 @@ mod host;
 mod records;
 mod service;
 
-pub use config::{PluginConfig, PluginsConfig};
+pub use config::{PluginConfig, PluginsConfig, ProcessConfig};
 pub use guarded::{CapabilitySource, SpendMeter};
 pub use host::{HostError, PluginHost};
 pub use records::ScopedRecords;

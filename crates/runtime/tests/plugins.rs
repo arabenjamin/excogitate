@@ -116,3 +116,55 @@ async fn settings_can_name_a_plugin_tool() {
     };
     assert!(build(GRANT_RECORDS, config).await.is_ok());
 }
+
+fn manifest_file(name: &str, text: &str) -> String {
+    let path = std::env::temp_dir().join(format!("plugin-{name}-{}.yaml", std::process::id()));
+    std::fs::write(&path, text).unwrap();
+    path.display().to_string()
+}
+
+async fn build_processes(grants: &str) -> Result<Runtime, RuntimeError> {
+    Runtime::build(
+        Arc::new(MemoryStore::new(3)),
+        Arc::new(MemorySink::new()),
+        Catalog::from_yaml(MODELS, |_| None).unwrap(),
+        Config::default(),
+        &|_| None,
+        Plugins {
+            compiled: Vec::new(),
+            grants: PluginsConfig::from_yaml(grants).unwrap(),
+        },
+    )
+    .await
+}
+
+#[tokio::test]
+async fn a_process_plugin_whose_manifest_names_another_is_refused() {
+    let path = manifest_file("other", plugin_example::MANIFEST);
+    let grants = format!(
+        "version: 1\nplugins:\n  - name: notexample\n    capabilities: [records]\n    process: {{command: /bin/true, manifest: '{path}'}}\n"
+    );
+    let error = build_processes(&grants).await.unwrap_err();
+    assert!(error.to_string().contains("names it example"), "{error}");
+}
+
+#[tokio::test]
+async fn a_process_plugin_without_its_manifest_says_which_file() {
+    let grants = "version: 1\nplugins:\n  - name: example\n    capabilities: [records]\n    process: {command: /bin/true, manifest: /nonexistent/plugin.yaml}\n";
+    let error = build_processes(grants).await.unwrap_err();
+    assert!(
+        error.to_string().contains("/nonexistent/plugin.yaml"),
+        "{error}"
+    );
+}
+
+#[tokio::test]
+async fn a_process_plugin_is_started_from_plugins_yaml() {
+    // A program that exits at once: the host started it, and says it stopped.
+    let path = manifest_file("start", plugin_example::MANIFEST);
+    let grants = format!(
+        "version: 1\nplugins:\n  - name: example\n    capabilities: [records]\n    process: {{command: /bin/true, manifest: '{path}'}}\n"
+    );
+    let error = build_processes(&grants).await.unwrap_err();
+    assert!(error.to_string().contains("stopped"), "{error}");
+}

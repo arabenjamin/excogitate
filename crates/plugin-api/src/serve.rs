@@ -10,6 +10,7 @@ use schema::Validator;
 use serde_json::{Value, json};
 use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncRead, AsyncWrite, AsyncWriteExt, BufReader};
 
+use crate::wire::{CONTEXT_META, WireContext};
 use crate::{Tool, ToolContext};
 
 /// The MCP protocol version spoken.
@@ -53,6 +54,32 @@ fn tool_listing(tools: &HashMap<String, Served>) -> Value {
     json!({ "tools": listed })
 }
 
+/// The call's context, as the host sent it in `_meta`. Without one, it's a
+/// call from a client that isn't the host: a run of its own, private, with
+/// nothing to spend.
+fn context_of(params: &Value) -> ToolContext {
+    let sent = params
+        .get("_meta")
+        .and_then(|meta| meta.get(CONTEXT_META))
+        .and_then(|context| serde_json::from_value::<WireContext>(context.clone()).ok());
+    match sent {
+        Some(context) => ToolContext {
+            run: RunId::from_uuid(context.run),
+            data_class: if context.public {
+                DataClass::Public
+            } else {
+                DataClass::Private
+            },
+            budget_usd_micros: context.budget_usd_micros,
+        },
+        None => ToolContext {
+            run: RunId::generate(),
+            data_class: DataClass::Private,
+            budget_usd_micros: 0,
+        },
+    }
+}
+
 async fn call_tool(tools: &HashMap<String, Served>, id: &Value, params: &Value) -> String {
     let name = params.get("name").and_then(Value::as_str);
     let Some(Served { tool, input }) = name.and_then(|name| tools.get(name)) else {
@@ -69,13 +96,7 @@ async fn call_tool(tools: &HashMap<String, Served>, id: &Value, params: &Value) 
         });
         return success(id, &result);
     }
-    // The runtime holds the real run; a separate process only needs a value.
-    let context = ToolContext {
-        run: RunId::generate(),
-        data_class: DataClass::Private,
-        // A separate process can't spend the run's money.
-        budget_usd_micros: 0,
-    };
+    let context = context_of(params);
     let result = match tool.run(arguments, context).await {
         Ok(output) => json!({
             "content": [{ "type": "text", "text": output.value.to_string() }],

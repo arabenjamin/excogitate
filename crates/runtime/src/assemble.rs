@@ -8,8 +8,8 @@ use dispatch::ToolRegistry;
 use events::EventSink;
 use memory::{ChunkConfig, Embedder, GatewayEmbedder, Memory};
 use model::{Capability, Catalog, Gateway, OpenAiClient};
-use plugin_api::{Plugin, Tool};
-use plugin_host::{HostError, PluginHost, PluginsConfig};
+use plugin_api::{Plugin, PluginManifest, Tool};
+use plugin_host::{HostError, PluginHost, PluginsConfig, ProcessConfig, ServiceSpec};
 use store::Store;
 use tools::{HttpConfigError, HttpRequestTool, MemoryTool};
 use workflow::{DELEGATE_TOOL, Engine, EngineLimits};
@@ -52,6 +52,35 @@ pub struct Plugins {
     /// What each may use, from `plugins.yaml`. A plugin not listed there is
     /// granted nothing, so one that asks for a capability is refused.
     pub grants: PluginsConfig,
+}
+
+/// Starts a plugin `plugins.yaml` says runs as its own process.
+async fn install_process(
+    host: &mut PluginHost,
+    name: &str,
+    process: &ProcessConfig,
+) -> Result<(), RuntimeError> {
+    let manifest = std::fs::read_to_string(&process.manifest).map_err(|error| {
+        RuntimeError::Config(format!(
+            "plugin {name}: its manifest {}: {error}",
+            process.manifest
+        ))
+    })?;
+    let declared = PluginManifest::from_yaml(&manifest).map_err(HostError::from)?;
+    if declared.name != name {
+        return Err(RuntimeError::Config(format!(
+            "plugin {name}: its manifest names it {}",
+            declared.name
+        )));
+    }
+    let spec = ServiceSpec {
+        command: process.command.clone(),
+        args: process.args.clone(),
+        env_allow: process.env.clone(),
+        timeout_secs: process.timeout_secs,
+    };
+    host.install_service(&manifest, &spec).await?;
+    Ok(())
 }
 
 /// A runtime ready to serve.
@@ -120,10 +149,19 @@ impl Runtime {
             gateway: Arc::clone(&gateway),
             max_output_tokens: config.max_output_tokens,
         };
+        let processes: Vec<(String, ProcessConfig)> = plugins
+            .grants
+            .plugins
+            .iter()
+            .filter_map(|plugin| Some((plugin.name.clone(), plugin.process.clone()?)))
+            .collect();
         let mut host = PluginHost::new(Arc::clone(&store), plugins.grants, registry)
             .with_capabilities(Arc::new(source));
         for plugin in &plugins.compiled {
             host.install_compiled(plugin.as_ref()).await?;
+        }
+        for (name, process) in processes {
+            install_process(&mut host, &name, &process).await?;
         }
         let installed = host.installed();
         let mut runtime = Self::finish(store, sink, gateway, host.into_registry(), config)?;

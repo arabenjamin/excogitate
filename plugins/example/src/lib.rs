@@ -1,6 +1,6 @@
-//! The example plugin, and the starting point for a new one. The same tool
-//! code runs compiled in ([`ExamplePlugin`]) and as its own process
-//! (`src/main.rs`).
+//! The example plugin, and the starting point for a new one. The same plugin
+//! runs compiled in ([`ExamplePlugin`]) and as its own process
+//! (`src/main.rs`), with one manifest and the same capabilities either way.
 
 use std::sync::Arc;
 
@@ -12,10 +12,8 @@ use plugin_api::{
 use protocol::Trust;
 use serde_json::{Value, json};
 
-/// The manifest used when compiled in.
+/// The manifest, which both ways of running use.
 pub const MANIFEST: &str = include_str!("../plugin.yaml");
-/// The manifest used when run as a service.
-pub const SERVICE_MANIFEST: &str = include_str!("../plugin.service.yaml");
 
 const BOOKMARK: &str = "example.bookmark";
 

@@ -30,6 +30,39 @@ pub struct PluginConfig {
     /// The capabilities it may use.
     #[schemars(length(max = 8))]
     pub capabilities: Vec<PluginCapability>,
+    /// How to start it as its own process. Left out, it's a plugin compiled
+    /// into the binary.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub process: Option<ProcessConfig>,
+}
+
+/// A plugin that runs as its own process.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ProcessConfig {
+    /// The program to run.
+    #[schemars(length(min = 1, max = 1024))]
+    pub command: String,
+    /// Its arguments.
+    #[serde(default)]
+    #[schemars(length(max = 32), inner(length(max = 1024)))]
+    pub args: Vec<String>,
+    /// Its manifest file. Its name must be this plugin's.
+    #[schemars(length(min = 1, max = 1024))]
+    pub manifest: String,
+    /// The environment variables it may see. Its environment is otherwise
+    /// empty.
+    #[serde(default)]
+    #[schemars(length(max = 32), inner(length(min = 1, max = 128)))]
+    pub env: Vec<String>,
+    /// How long one call may take, in seconds.
+    #[serde(default = "default_timeout")]
+    #[schemars(range(min = 1, max = 3600))]
+    pub timeout_secs: u32,
+}
+
+const fn default_timeout() -> u32 {
+    30
 }
 
 impl Default for PluginsConfig {
