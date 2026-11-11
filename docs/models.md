@@ -23,7 +23,11 @@ The models left are tried cheapest first, and in configured order among equal
 prices. Before a call to a priced model, its worst case is reserved against
 the provider's daily cap, so concurrent calls can't overrun it together. The
 call then settles at what it really cost, or at the worst case if the server
-doesn't report usage.
+doesn't report usage. When the server reports what it billed, as a router
+does, the call costs the higher of that and the listed price. A router can send
+the same model to upstreams at different prices, and the listed price is only
+the lowest: in one run, calls billed 1.2 to 6 times it. So a cap counts what was
+billed, never less.
 
 If a call fails, the next model is tried, up to three, unless the server
 said the request itself was bad. When no model can take a call, the error
@@ -44,4 +48,10 @@ followed, and a key can't be printed.
 server enforces it when the model has `json_schema`; otherwise the model is
 told it in a message), takes the first complete JSON object from the reply,
 and validates it. A refused reply gets one repair attempt, and then the call
-fails, with both reasons.
+fails, with both reasons. An empty reply says so; a reasoning model can spend
+its turn thinking and answer nothing.
+
+Mark a model `json_schema` only once you've measured it that way. A server
+that enforces a schema while it decodes can mangle the reply: in one run,
+enforcement turned a short field into `", \"R` and dropped required lists, and
+the same model got every field right when it was only told the schema.

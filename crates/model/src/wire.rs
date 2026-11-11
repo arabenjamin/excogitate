@@ -131,6 +131,24 @@ struct WireFunction {
 struct WireUsage {
     prompt_tokens: Option<u32>,
     completion_tokens: Option<u32>,
+    /// What a router billed, in dollars, if it says.
+    cost: Option<f64>,
+}
+
+/// A reported cost in dollars as millionths of a dollar, rounded up. Anything
+/// that isn't a sensible amount is ignored.
+fn reported_micros(dollars: Option<f64>) -> Option<u64> {
+    let micros = (dollars? * 1_000_000.0).ceil();
+    // u64::MAX as f64 rounds up, so stop well short of it.
+    (0.0..1e18).contains(&micros).then(|| {
+        #[allow(
+            clippy::cast_possible_truncation,
+            clippy::cast_sign_loss,
+            reason = "checked above to be a whole number in range"
+        )]
+        let whole = micros as u64;
+        whole
+    })
 }
 
 /// Content is a string on most servers, and a list of text parts on some.
@@ -175,6 +193,7 @@ pub fn parse_chat(body: &[u8]) -> Result<ChatResponse, ModelError> {
         Some(Usage {
             input_tokens: usage.prompt_tokens?,
             output_tokens: usage.completion_tokens?,
+            reported_cost_usd_micros: reported_micros(usage.cost),
         })
     });
     let Some(choice) = wire.choices.into_iter().next() else {
@@ -335,9 +354,31 @@ mod tests {
             reply.usage,
             Some(Usage {
                 input_tokens: 3,
-                output_tokens: 4
+                output_tokens: 4,
+                reported_cost_usd_micros: None,
             })
         );
+    }
+
+    #[test]
+    fn a_billed_cost_is_read_and_nonsense_is_ignored() {
+        let billed = |cost: &str| {
+            let body = format!(
+                r#"{{"choices":[{{"message":{{"content":"a"}}}}],
+                "usage":{{"prompt_tokens":3,"completion_tokens":4,"cost":{cost}}}}}"#
+            );
+            parse_chat(body.as_bytes())
+                .unwrap()
+                .usage
+                .unwrap()
+                .reported_cost_usd_micros
+        };
+        assert_eq!(billed("0.000955"), Some(955));
+        assert_eq!(billed("0.0000001"), Some(1));
+        assert_eq!(billed("0"), Some(0));
+        assert_eq!(billed("-1"), None);
+        assert_eq!(billed("1e300"), None);
+        assert_eq!(billed("null"), None);
     }
 
     #[test]

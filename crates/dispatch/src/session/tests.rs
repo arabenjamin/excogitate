@@ -579,6 +579,7 @@ fn request() -> ChatRequest {
 const USED: Option<Usage> = Some(Usage {
     input_tokens: 10,
     output_tokens: 20,
+    reported_cost_usd_micros: None,
 });
 
 #[tokio::test]
@@ -654,6 +655,7 @@ async fn the_token_budget_stops_the_run() {
     let client = Canned::new(Some(Usage {
         input_tokens: 5000,
         output_tokens: 5000,
+        reported_cost_usd_micros: None,
     }));
     let gateway = gateway(FREE, client);
     let mut session = session_with(&[], &[], budget());

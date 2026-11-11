@@ -29,16 +29,28 @@ fn squeeze(text: &str) -> String {
 }
 
 impl Cite {
+    /// The run's label. Steps are shown as `[R3]`, so a judge that writes the
+    /// run as `R3` for step 3 means run `R`; the quote is still checked.
+    fn label(&self) -> &str {
+        let digits = self.step.to_string();
+        match self.run.strip_suffix(digits.as_str()) {
+            Some(label) if !label.is_empty() && !label.ends_with(|c: char| c.is_ascii_digit()) => {
+                label
+            }
+            _ => &self.run,
+        }
+    }
+
     /// Checks that the quote is in the step it names.
     ///
     /// # Errors
     ///
     /// Why it isn't evidence, in a sentence.
     pub fn check(&self, runs: &[&Rendered]) -> Result<(), String> {
-        let label = &self.run;
+        let label = self.label();
         let run = runs
             .iter()
-            .find(|run| run.label == *label)
+            .find(|run| run.label == label)
             .ok_or_else(|| format!("there is no run {label}"))?;
         let number = usize::try_from(self.step).unwrap_or(usize::MAX);
         let step = run
@@ -89,6 +101,20 @@ mod tests {
             step,
             quote: quote.to_owned(),
         }
+    }
+
+    #[test]
+    fn a_run_written_with_its_step_number_is_read_as_the_run() {
+        let joined = Cite {
+            run: "R1".to_owned(),
+            ..cite(1, "I don't know.")
+        };
+        assert_eq!(joined.check(&[&run()]), Ok(()));
+        let wrong_step = Cite {
+            run: "R2".to_owned(),
+            ..cite(1, "I don't know.")
+        };
+        assert!(wrong_step.check(&[&run()]).is_err());
     }
 
     #[test]

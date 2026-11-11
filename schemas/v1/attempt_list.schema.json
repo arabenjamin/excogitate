@@ -205,9 +205,19 @@
           "type": "string"
         },
         "cites": {
-          "description": "The editor's evidence.",
+          "description": "The editor's evidence that held.",
           "items": {
             "$ref": "#/$defs/Cite"
+          },
+          "maxItems": 8,
+          "type": "array"
+        },
+        "dropped": {
+          "default": [],
+          "description": "The editor's citations that didn't hold, and why. They count for\nnothing.",
+          "items": {
+            "maxLength": 2048,
+            "type": "string"
           },
           "maxItems": 8,
           "type": "array"

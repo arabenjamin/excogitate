@@ -66,7 +66,13 @@ Each rule below is a way judges have gone wrong in practice.
 ## Running one
 
 The judges need a capable model: one marked `investigative` in `models.yaml`.
-The agent being improved can be small. What the judges may spend is
+The agent being improved can be small. Measure a judge before you trust it;
+the known-answer test is a floor, not a guarantee. In the first real runs, on
+an agent whose prompt never said to use its memory, one free model wrote
+garbage on any long prompt, another put placeholders where the instructions
+belong, and a cheap one found and fixed the defect three times out of three
+for well under a cent an attempt. In every run, nothing the judges got wrong
+was adopted. What the judges may spend is
 `harness.judge_usd_micros` in `brain.yaml`, 0 by default, and which reads a probe
 really runs is `harness.probe_reads`, `[memory]` by default.
 
