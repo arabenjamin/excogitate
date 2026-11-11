@@ -4,8 +4,8 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use dispatch::{
-    Budget, CallStatus, Conversation, Outcome, Receipt, RunSubject, Session, SessionConfig,
-    ToolRegistry, harness_id,
+    Budget, CallStatus, ChatResult, Conversation, Outcome, Probe, Receipt, RunSubject, Session,
+    SessionConfig, ToolRegistry, harness_id,
 };
 use events::EventSink;
 use model::{Gateway, Message, ToolCall};
@@ -21,6 +21,8 @@ use crate::{Agent, Step, Workflow};
 
 /// What workflows are for, which decides whether they may pay.
 const PURPOSE: &str = "workflow";
+/// What a Harness² probe is for.
+const PROBE_PURPOSE: &str = "harness";
 /// How much of a tool's result a later step can use, in characters.
 const STEP_RESULT_CHARS: usize = 500_000;
 /// The most of its output a run keeps.
@@ -169,9 +171,9 @@ struct StepDone {
 
 /// What's left of a run when a step starts.
 #[derive(Clone, Copy)]
-struct Left {
-    money: u64,
-    time: Duration,
+pub(crate) struct Left {
+    pub(crate) money: u64,
+    pub(crate) time: Duration,
 }
 
 impl Left {
@@ -229,6 +231,7 @@ impl Engine {
         budget: Budget,
         chars: usize,
         subject: RunSubject,
+        probe: Option<Probe>,
     ) -> Result<Session, String> {
         Session::new(
             Arc::clone(&self.registry),
@@ -238,9 +241,15 @@ impl Engine {
                 offered,
                 budget,
                 data_class: DataClass::Private,
-                purpose: PURPOSE.to_owned(),
+                purpose: if probe.is_some() {
+                    PROBE_PURPOSE
+                } else {
+                    PURPOSE
+                }
+                .to_owned(),
                 max_result_chars: chars,
                 subject,
+                probe,
             },
         )
         .map_err(|error| bounded(&error.to_string()))
@@ -413,8 +422,13 @@ impl Engine {
             agent: format!("tool:{tool}"),
             harness: harness_id(&json!({ "tool": tool, "result_chars": STEP_RESULT_CHARS })),
         };
-        let mut session =
-            self.session(vec![tool.to_owned()], budget, STEP_RESULT_CHARS, subject)?;
+        let mut session = self.session(
+            vec![tool.to_owned()],
+            budget,
+            STEP_RESULT_CHARS,
+            subject,
+            None,
+        )?;
         let call = ToolCall {
             id: id.to_owned(),
             name: tool.to_owned(),
@@ -450,6 +464,62 @@ impl Engine {
         }
     }
 
+    /// What decides how `agent` behaves, for its harness id. What a workflow
+    /// has left changes from run to run, so it's the agent's own limits, not
+    /// what this run got.
+    #[must_use]
+    pub fn agent_harness(&self, agent: &Agent) -> String {
+        harness_id(&json!({
+            "system_prompt": agent.system_prompt,
+            "tools": agent.tools,
+            "budget": agent.budget.unwrap_or(self.limits.agent_budget),
+            "max_output_tokens": self.output_tokens(agent),
+            "result_chars": self.limits.agent_result_chars,
+        }))
+    }
+
+    fn output_tokens(&self, agent: &Agent) -> u32 {
+        agent
+            .max_output_tokens
+            .unwrap_or(self.limits.agent_output_tokens)
+    }
+
+    /// Runs `agent` on `question` as `subject`, held to what's `left`.
+    pub(crate) async fn converse_as(
+        &self,
+        subject: &str,
+        agent: &Agent,
+        question: String,
+        left: Left,
+        probe: Option<Probe>,
+    ) -> Result<ChatResult, String> {
+        let own = agent.budget.unwrap_or(self.limits.agent_budget);
+        let subject = RunSubject {
+            agent: subject.to_owned(),
+            harness: self.agent_harness(agent),
+        };
+        let session = self.session(
+            agent.tools.clone(),
+            left.clip(own),
+            self.limits.agent_result_chars,
+            subject,
+            probe,
+        )?;
+        Ok(session
+            .converse(
+                &self.gateway,
+                Conversation {
+                    messages: vec![
+                        Message::system(agent.system_prompt.clone()),
+                        Message::user(question),
+                    ],
+                    max_output_tokens: self.output_tokens(agent),
+                    temperature: None,
+                },
+            )
+            .await)
+    }
+
     async fn run_agent(
         &self,
         name: &str,
@@ -461,41 +531,9 @@ impl Engine {
             .await
             .map_err(|error| error.to_string())?
             .ok_or_else(|| format!("there is no agent {name}"))?;
-        let own = agent.budget.unwrap_or(self.limits.agent_budget);
-        let output_tokens = agent
-            .max_output_tokens
-            .unwrap_or(self.limits.agent_output_tokens);
-        // What a workflow has left changes from run to run, so the harness is
-        // the agent's own limits, not what this run got.
-        let subject = RunSubject {
-            agent: format!("agent:{name}"),
-            harness: harness_id(&json!({
-                "system_prompt": agent.system_prompt,
-                "tools": agent.tools,
-                "budget": own,
-                "max_output_tokens": output_tokens,
-                "result_chars": self.limits.agent_result_chars,
-            })),
-        };
-        let session = self.session(
-            agent.tools.clone(),
-            left.clip(own),
-            self.limits.agent_result_chars,
-            subject,
-        )?;
-        let result = session
-            .converse(
-                &self.gateway,
-                Conversation {
-                    messages: vec![
-                        Message::system(agent.system_prompt),
-                        Message::user(question),
-                    ],
-                    max_output_tokens: output_tokens,
-                    temperature: None,
-                },
-            )
-            .await;
+        let result = self
+            .converse_as(&format!("agent:{name}"), &agent, question, left, None)
+            .await?;
         let problem = if result.receipt.outcome != Outcome::Answered {
             Some(
                 result

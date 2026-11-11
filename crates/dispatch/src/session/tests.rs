@@ -129,6 +129,7 @@ fn config(offered: &[&str], budget: Budget) -> SessionConfig {
             agent: "test".to_owned(),
             harness: "test".to_owned(),
         },
+        probe: None,
     }
 }
 
@@ -1245,4 +1246,30 @@ async fn a_conversation_reads_back_as_its_trajectory() {
         }
     ));
     assert_eq!(steps.len(), 7);
+}
+
+#[tokio::test]
+async fn a_probe_stubs_writes_but_still_holds_the_write_budget() {
+    let writer = Fixture::new("writer", Effect::Write, Behavior::Good);
+    let mut registry = ToolRegistry::new();
+    registry
+        .register(Arc::clone(&writer) as Arc<dyn Tool>)
+        .unwrap();
+    let mut probed = config(
+        &["writer"],
+        Budget {
+            max_writes: 1,
+            ..budget()
+        },
+    );
+    probed.probe = Some(Probe::default());
+    let mut session =
+        Session::new(Arc::new(registry), Arc::new(MemorySink::new()), probed).unwrap();
+    let first = session.dispatch(&call("writer", GOOD_ARGS)).await;
+    assert_eq!(first.status, CallStatus::Stubbed);
+    assert!(first.content.contains("would have run"));
+    let second = session.dispatch(&call("writer", GOOD_ARGS)).await;
+    assert_eq!(second.status, CallStatus::Refused);
+    assert!(second.content.contains("write budget"));
+    assert_eq!(writer.runs.lock().unwrap().len(), 0);
 }

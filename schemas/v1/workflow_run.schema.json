@@ -62,6 +62,11 @@
           "const": "timed_out",
           "description": "It started and ran out of time, so it may have had effects.",
           "type": "string"
+        },
+        {
+          "const": "stubbed",
+          "description": "It passed every check, but the run is a probe, so it didn't run and\nnothing happened.",
+          "type": "string"
         }
       ]
     },

@@ -137,6 +137,7 @@ async fn run_seed(seed: u64, budget: Budget) -> Ran {
                 agent: "test".to_owned(),
                 harness: "test".to_owned(),
             },
+            probe: None,
         },
     )
     .unwrap();
@@ -321,6 +322,7 @@ async fn a_lying_token_count_ends_the_run_at_the_token_budget() {
                 agent: "test".to_owned(),
                 harness: "test".to_owned(),
             },
+            probe: None,
         },
     )
     .unwrap();

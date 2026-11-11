@@ -36,13 +36,16 @@ pub enum CallStatus {
     Failed,
     /// It started and ran out of time, so it may have had effects.
     TimedOut,
+    /// It passed every check, but the run is a probe, so it didn't run and
+    /// nothing happened.
+    Stubbed,
 }
 
 impl CallStatus {
     /// Whether the tool actually started.
     #[must_use]
     pub const fn started(self) -> bool {
-        !matches!(self, Self::Refused)
+        !matches!(self, Self::Refused | Self::Stubbed)
     }
 }
 
