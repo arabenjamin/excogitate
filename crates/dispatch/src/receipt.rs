@@ -137,6 +137,8 @@ pub struct Receipt {
     pub outcome: Outcome,
     /// Which limit it hit, if it hit one.
     pub budget_hit: Option<BudgetKind>,
+    /// True if the answer was cut off at the output limit.
+    pub answer_cut_off: bool,
     /// Every model call.
     #[schemars(length(max = 512))]
     pub model_calls: Vec<ModelEntry>,

@@ -1,3 +1,4 @@
+use std::collections::VecDeque;
 use std::sync::Mutex;
 
 use async_trait::async_trait;
@@ -459,6 +460,82 @@ impl ModelClient for Canned {
     }
 }
 
+/// Plays back replies, one per call.
+#[derive(Debug, Default)]
+struct Scripted {
+    replies: Mutex<VecDeque<ChatResponse>>,
+    seen: Mutex<Vec<ChatRequest>>,
+}
+
+impl Scripted {
+    fn new(replies: Vec<ChatResponse>) -> Arc<Self> {
+        Arc::new(Self {
+            replies: Mutex::new(replies.into()),
+            seen: Mutex::default(),
+        })
+    }
+}
+
+#[async_trait]
+impl ModelClient for Scripted {
+    async fn chat(
+        &self,
+        _model: &Model,
+        request: &ChatRequest,
+        _output_tokens: u32,
+    ) -> Result<ChatResponse, ModelError> {
+        self.seen.lock().unwrap().push(request.clone());
+        self.replies
+            .lock()
+            .unwrap()
+            .pop_front()
+            .ok_or(ModelError::Timeout)
+    }
+
+    async fn embed(&self, _: &Model, _: &[String]) -> Result<Vec<Vec<f32>>, ModelError> {
+        Err(ModelError::Timeout)
+    }
+}
+
+fn says(content: &str, finish: FinishReason) -> ChatResponse {
+    ChatResponse {
+        content: content.to_owned(),
+        tool_calls: vec![],
+        finish,
+        usage: USED,
+    }
+}
+
+fn calls(name: &str) -> ChatResponse {
+    ChatResponse {
+        content: "looking".to_owned(),
+        tool_calls: vec![call(name, GOOD_ARGS)],
+        finish: FinishReason::ToolCalls,
+        usage: USED,
+    }
+}
+
+async fn converse_with(
+    yaml: &str,
+    client: Arc<Scripted>,
+    tools: &[Arc<Fixture>],
+    offered: &[&str],
+    budget: Budget,
+) -> ChatResult {
+    let catalog = Catalog::from_yaml(yaml, |_| None).unwrap();
+    let gateway = Gateway::new(catalog, client, Arc::new(MemoryLedger::new()));
+    session_with(tools, offered, budget)
+        .converse(
+            &gateway,
+            Conversation {
+                messages: vec![Message::user("hello")],
+                max_output_tokens: 400,
+                temperature: None,
+            },
+        )
+        .await
+}
+
 const FREE: &str = "
 version: 1
 providers:
@@ -862,4 +939,140 @@ proptest! {
             Ok(())
         })?;
     }
+}
+
+const CHAT_ONLY: &str = "
+version: 1
+providers:
+  - {name: p, base_url: 'http://a/v1', no_log: true, timeout_secs: 5}
+models:
+  - {name: m, provider: p, wire_model: a, capabilities: [chat],
+     context_tokens: 100000, max_output_tokens: 500}
+";
+
+#[tokio::test]
+async fn a_conversation_runs_tools_and_ends_with_the_answer() {
+    let client = Scripted::new(vec![calls("reader"), says("done", FinishReason::Stop)]);
+    let reader = Fixture::new("reader", Effect::Read, Behavior::Good);
+    let result = converse_with(
+        FREE,
+        Arc::clone(&client),
+        std::slice::from_ref(&reader),
+        &["reader"],
+        budget(),
+    )
+    .await;
+    assert_eq!(result.answer.as_deref(), Some("done"));
+    assert_eq!(result.stopped_because, None);
+    assert_eq!(result.receipt.outcome, Outcome::Answered);
+    assert!(!result.receipt.answer_cut_off);
+    assert_eq!(result.receipt.tool_calls.len(), 1);
+    assert_eq!(reader.run_count(), 1);
+
+    let seen = client.seen.lock().unwrap();
+    assert_eq!(seen.len(), 2);
+    let second = &seen[1].messages;
+    assert_eq!(second.len(), 3, "the question, the call and its result");
+    assert_eq!(second[1].tool_calls.len(), 1);
+    assert_eq!(second[1].content, "looking");
+    assert_eq!(second[2].tool_call_id.as_deref(), Some("c1"));
+    assert!(second[2].content.contains("hello"), "{}", second[2].content);
+}
+
+#[tokio::test]
+async fn an_empty_reply_is_not_an_answer() {
+    let client = Scripted::new(vec![says("  \n", FinishReason::Stop)]);
+    let result = converse_with(FREE, client, &[], &[], budget()).await;
+    assert_eq!(result.answer, None);
+    assert_eq!(result.receipt.outcome, Outcome::ModelFailed);
+    assert!(result.stopped_because.unwrap().contains("empty"));
+    assert!(
+        result.receipt.model_calls[0]
+            .detail
+            .as_deref()
+            .unwrap()
+            .contains("empty")
+    );
+}
+
+#[tokio::test]
+async fn an_answer_cut_off_says_so() {
+    let client = Scripted::new(vec![says("half an ans", FinishReason::Length)]);
+    let result = converse_with(FREE, client, &[], &[], budget()).await;
+    assert_eq!(result.answer.as_deref(), Some("half an ans"));
+    assert!(result.receipt.answer_cut_off);
+}
+
+#[tokio::test]
+async fn a_model_that_never_stops_is_stopped_by_the_rounds_budget() {
+    let client = Scripted::new(vec![calls("reader"); 20]);
+    let reader = Fixture::new("reader", Effect::Read, Behavior::Good);
+    let result = converse_with(FREE, Arc::clone(&client), &[reader], &["reader"], budget()).await;
+    assert_eq!(result.answer, None);
+    assert_eq!(result.receipt.outcome, Outcome::BudgetHit);
+    assert_eq!(result.receipt.budget_hit, Some(BudgetKind::Rounds));
+    assert!(result.stopped_because.unwrap().contains("rounds"));
+    assert_eq!(client.seen.lock().unwrap().len(), 3);
+}
+
+#[tokio::test]
+async fn running_out_during_a_round_ends_the_run_at_once() {
+    let client = Scripted::new(vec![
+        calls("writer"),
+        calls("writer"),
+        says("late", FinishReason::Stop),
+    ]);
+    let writer = Fixture::new("writer", Effect::Write, Behavior::Good);
+    let result = converse_with(
+        FREE,
+        Arc::clone(&client),
+        std::slice::from_ref(&writer),
+        &["writer"],
+        budget(),
+    )
+    .await;
+    assert_eq!(result.receipt.budget_hit, Some(BudgetKind::Writes));
+    assert_eq!(result.answer, None);
+    assert_eq!(writer.run_count(), 1);
+    assert_eq!(
+        client.seen.lock().unwrap().len(),
+        2,
+        "no round after the limit"
+    );
+}
+
+#[tokio::test]
+async fn a_failing_tool_goes_back_to_the_model() {
+    let client = Scripted::new(vec![calls("broken"), says("it broke", FinishReason::Stop)]);
+    let broken = Fixture::new("broken", Effect::Read, Behavior::Fail);
+    let result = converse_with(FREE, client, &[broken], &["broken"], budget()).await;
+    assert_eq!(result.answer.as_deref(), Some("it broke"));
+    assert_eq!(result.receipt.tool_calls[0].status, CallStatus::Failed);
+}
+
+#[tokio::test]
+async fn when_no_model_answers_the_run_says_why() {
+    let result = converse_with(FREE, Scripted::new(vec![]), &[], &[], budget()).await;
+    assert_eq!(result.answer, None);
+    assert_eq!(result.receipt.outcome, Outcome::ModelFailed);
+    assert_ne!(result.stopped_because.unwrap(), "");
+}
+
+#[tokio::test]
+async fn tools_need_a_model_that_can_use_them() {
+    let client = Scripted::new(vec![says("hi", FinishReason::Stop)]);
+    let reader = Fixture::new("reader", Effect::Read, Behavior::Good);
+    let refused = converse_with(
+        CHAT_ONLY,
+        Arc::clone(&client),
+        &[reader],
+        &["reader"],
+        budget(),
+    )
+    .await;
+    assert_eq!(refused.receipt.outcome, Outcome::ModelFailed);
+    assert_eq!(client.seen.lock().unwrap().len(), 0);
+
+    let answered = converse_with(CHAT_ONLY, client, &[], &[], budget()).await;
+    assert_eq!(answered.answer.as_deref(), Some("hi"));
 }

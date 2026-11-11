@@ -21,6 +21,19 @@ In order, and the first failure ends it:
 The model always gets a JSON reply it can act on: the result, a refusal with
 what to fix, or a failure. Results from outside are labelled `untrusted`.
 
+## The round loop
+
+`Session::converse` is the loop: call the model, run what it asks for, send
+back the results, repeat. Each round uses up the rounds budget, so it always
+ends. It routes only to models that can use tools when the run has any.
+
+- **An answer** is a reply with text and no tool calls. A reply cut off at
+  the output limit is still an answer, and the receipt says `answer_cut_off`.
+- **An empty reply isn't one.** The run ends as `model_failed` and says so.
+- **A tool that fails** goes back to the model, which decides what to do.
+- **Hitting a budget** ends the run at once, with no answer and
+  `stopped_because` saying which limit it was.
+
 ## Budgets
 
 Every run has limits on rounds, tool calls, writes, tokens, money, request size
@@ -42,7 +55,7 @@ Every run ends in one outcome: `answered`, `refused`, `budget_hit`,
 `crates/chaos-model` is an OpenAI-wire server that plays a seeded script of
 malformed bodies, wrong types, extra fields, huge strings, made-up tools,
 false token counts and obeyed prompt injections. `crates/dispatch/tests/chaos.rs`
-runs the harness against it through the real HTTP client, and checks that each
+runs the round loop against it through the real HTTP client, and checks that each
 run stays within budget, that its receipt matches what really ran, and that
 nothing not offered ever executes.
 

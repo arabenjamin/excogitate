@@ -1,5 +1,4 @@
-//! The harness against a hostile model, through the real HTTP client. The
-//! driver here is a stand-in for the chat loop that arrives in Phase 2a.
+//! The real round loop against a hostile model, through the real HTTP client.
 
 #![allow(clippy::unwrap_used, reason = "a test: a panic is how it fails")]
 
@@ -8,8 +7,8 @@ use std::sync::{Arc, Mutex};
 use async_trait::async_trait;
 use chaos_model::{ChaosServer, ChaosStep, ChaosTool, generate_script};
 use dispatch::{
-    Budget, BudgetKind, CallStatus, Effect, ModelStop, Outcome, Receipt, Session, SessionConfig,
-    Tool, ToolContext, ToolDefinition, ToolFailure, ToolOutput, ToolRegistry,
+    Budget, BudgetKind, CallStatus, Conversation, Effect, ModelStop, Outcome, Receipt, Session,
+    SessionConfig, Tool, ToolContext, ToolDefinition, ToolFailure, ToolOutput, ToolRegistry,
 };
 use events::MemorySink;
 use model::{Catalog, ChatRequest, Gateway, MemoryLedger, Message, OpenAiClient};
@@ -124,7 +123,7 @@ async fn run_seed(seed: u64, budget: Budget) -> Ran {
         Arc::new(OpenAiClient::new().unwrap()),
         Arc::new(MemoryLedger::new()),
     );
-    let mut session = Session::new(
+    let session = Session::new(
         Arc::new(registry),
         Arc::new(MemorySink::new()),
         SessionConfig {
@@ -137,37 +136,27 @@ async fn run_seed(seed: u64, budget: Budget) -> Ran {
         },
     )
     .unwrap();
-
-    let mut messages = vec![Message::user("do the thing")];
-    let claimed = loop {
-        let request = ChatRequest {
-            messages: messages.clone(),
-            tools: vec![],
-            max_output_tokens: 100,
-            temperature: None,
-            response_schema: None,
-        };
-        let completion = match session.call_model(&gateway, &[], request).await {
-            Ok(completion) => completion,
-            Err(ModelStop::Budget(_)) => break Outcome::BudgetHit,
-            Err(_) => break Outcome::ModelFailed,
-        };
-        let calls = completion.response.tool_calls.clone();
-        if calls.is_empty() {
-            break Outcome::Answered;
-        }
-        let mut assistant = Message::assistant(completion.response.content);
-        assistant.tool_calls.clone_from(&calls);
-        messages.push(assistant);
-        for call in &calls {
-            let reply = session.dispatch(call).await;
-            messages.push(Message::tool(reply.call_id, reply.content));
-        }
-        if session.budget_hit().is_some() {
-            break Outcome::BudgetHit;
-        }
-    };
-    let receipt = session.finish(claimed).await;
+    let result = session
+        .converse(
+            &gateway,
+            Conversation {
+                messages: vec![Message::user("do the thing")],
+                max_output_tokens: 100,
+                temperature: None,
+            },
+        )
+        .await;
+    assert_eq!(
+        result.answer.is_some(),
+        result.receipt.outcome == Outcome::Answered,
+        "seed {seed}"
+    );
+    assert_eq!(
+        result.stopped_because.is_some(),
+        result.answer.is_none(),
+        "seed {seed}"
+    );
+    let receipt = result.receipt;
     Ran {
         served: server.served(),
         receipt,

@@ -15,6 +15,10 @@ use schema::{Refusal, Validator, bounded};
 use serde_json::{Value, json};
 use tokio::time::timeout;
 
+mod converse;
+
+pub use converse::{ChatResult, Conversation};
+
 use crate::tool::Registered;
 use crate::{
     Budget, BudgetKind, CallStatus, ModelEntry, Outcome, Receipt, RefusalKind, ToolContext,
@@ -134,6 +138,7 @@ pub struct Session {
     tool_calls: Vec<ToolEntry>,
     calls_not_recorded: u64,
     events_lost: u32,
+    answer_cut_off: bool,
 }
 
 /// A refusal on its way back to the model.
@@ -187,6 +192,7 @@ impl Session {
             tool_calls: Vec::new(),
             calls_not_recorded: 0,
             events_lost: 0,
+            answer_cut_off: false,
         })
     }
 
@@ -620,6 +626,7 @@ impl Session {
             run: self.config.run.to_string(),
             outcome,
             budget_hit: self.hit,
+            answer_cut_off: self.answer_cut_off,
             model_calls: self.model_calls,
             tool_calls: self.tool_calls,
             calls_not_recorded: self.calls_not_recorded,
