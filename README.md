@@ -28,8 +28,8 @@ schemas, budgets, and memory. Excogitate is that harness.
   ran.
 - **It improves its own agents from evidence (Harness²).** It records each
   run, tries candidate changes with side effects stubbed, compares the
-  runs, and proposes only the changes the evidence supports. A person
-  adopts them.
+  runs, and adopts only the changes the evidence supports. It tells you of
+  each one, and you can revert any of them.
 - **It needs no database server.** Memory, retrieval and the job queue live
   in an embedded DuckDB file. Other stores plug in behind the same port.
 - **It takes no side on models.** It works with any endpoint that speaks the

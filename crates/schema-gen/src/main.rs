@@ -15,6 +15,10 @@ fn generated() -> BTreeMap<&'static str, Value> {
     BTreeMap::from([
         ("brain_config", schema_of::<brain::BrainConfig>()),
         ("budget", schema_of::<dispatch::Budget>()),
+        ("change_list", schema_of::<brain::ChangeList>()),
+        ("change_view", schema_of::<brain::ChangeView>()),
+        ("hold_list", schema_of::<brain::HoldList>()),
+        ("hold_request", schema_of::<brain::HoldRequest>()),
         ("http_config", schema_of::<tools::HttpConfig>()),
         ("models_config", schema_of::<model::ModelsConfig>()),
         ("plugin_manifest", schema_of::<plugin_api::PluginManifest>()),

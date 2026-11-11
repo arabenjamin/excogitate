@@ -13,6 +13,10 @@ use work::{JobFailure, JobHandler};
 
 use crate::Brain;
 
+mod adopt;
+
+pub(crate) use adopt::ChangeError;
+
 /// The kind of job that runs an attempt.
 pub(crate) const HARNESS_KIND: &str = "harness";
 
@@ -48,15 +52,23 @@ impl Brain {
             },
             settings: &settings,
         };
-        let attempt = looped.improve(request).await;
+        let mut attempt = looped.improve(request).await;
         let id = RecordId::generate();
-        let record = harness::record_of(id, &attempt).map_err(|error| error.to_string())?;
+        self.keep(id, &attempt).await?;
+        if attempt.status == Status::Supported {
+            attempt.adoption = Some(self.adopt(id, &attempt).await);
+            self.keep(id, &attempt).await?;
+        }
+        Ok((id, attempt))
+    }
+
+    async fn keep(&self, id: RecordId, attempt: &Attempt) -> Result<(), String> {
+        let record = harness::record_of(id, attempt).map_err(|error| error.to_string())?;
         self.workflows
             .store
             .apply(UnitOfWork::new().with(WriteOp::PutRecord(record)))
             .await
-            .map_err(|error| error.to_string())?;
-        Ok((id, attempt))
+            .map_err(|error| error.to_string())
     }
 
     /// Kept attempts, by id, optionally only those that ended `status`.

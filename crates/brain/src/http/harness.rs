@@ -4,10 +4,10 @@ use axum::body::Bytes;
 use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
-use axum::routing::{get, post};
+use axum::routing::{get, post, put};
 use axum::{Json, Router};
 use chrono::Utc;
-use harness::{Attempt, Request};
+use harness::{Attempt, Change, Hold, Request};
 use protocol::Actor;
 use schemars::JsonSchema;
 use serde::Serialize;
@@ -16,7 +16,7 @@ use uuid::Uuid;
 
 use super::rest::{DEFAULT_LIMIT, MAX_LIMIT, Params, RunStarted, number, only};
 use super::{ApiError, App, json_body};
-use crate::harness::HARNESS_KIND;
+use crate::harness::{ChangeError, HARNESS_KIND};
 
 /// Who a request came from, until there are users.
 const OWNER: &str = "owner";
@@ -111,17 +111,9 @@ async fn list(
             "status must be kept, supported or failed",
         ));
     }
-    let limit = number(&params, "limit", DEFAULT_LIMIT)?;
-    if limit == 0 || limit > MAX_LIMIT {
-        return Err(ApiError::invalid(&format!(
-            "limit must be 1 to {MAX_LIMIT}"
-        )));
-    }
-    let page = PageRequest::new(limit, number(&params, "offset", 0)?)
-        .map_err(|error| ApiError::invalid(&error.to_string()))?;
     let found = app
         .brain
-        .attempts(status, page)
+        .attempts(status, page_of(&params)?)
         .await
         .map_err(|error| ApiError::internal(&error))?;
     let items = found
@@ -151,8 +143,190 @@ async fn get_one(
     view(id, data).map(Json)
 }
 
+/// A change the system made to an agent, as the API shows it.
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+#[schemars(deny_unknown_fields)]
+pub struct ChangeView {
+    /// Its id, which reverting it takes.
+    #[schemars(length(max = 36))]
+    pub id: String,
+    /// The change.
+    pub change: Change,
+}
+
+/// One page of changes, oldest first.
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+#[schemars(deny_unknown_fields)]
+pub struct ChangeList {
+    /// The changes.
+    #[schemars(length(max = MAX_LIMIT))]
+    pub items: Vec<ChangeView>,
+    /// True if there are more past this page.
+    pub has_more: bool,
+}
+
+/// The agents the system leaves alone.
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+#[schemars(deny_unknown_fields)]
+pub struct HoldList {
+    /// The holds.
+    #[schemars(length(max = MAX_LIMIT))]
+    pub items: Vec<Hold>,
+    /// True if there are more past this page.
+    pub has_more: bool,
+}
+
+/// Holds an agent.
+#[derive(Debug, Clone, serde::Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct HoldRequest {
+    /// Why, for whoever reads the hold later.
+    #[schemars(length(min = 1, max = 2048))]
+    pub reason: String,
+}
+
+impl From<ChangeError> for ApiError {
+    fn from(error: ChangeError) -> Self {
+        match error {
+            ChangeError::NotFound(why) => Self::not_found(&why),
+            ChangeError::Conflict(why) => Self::new(StatusCode::CONFLICT, "conflict", &why),
+            ChangeError::Internal(why) => Self::internal(&why),
+        }
+    }
+}
+
+fn page_of(params: &std::collections::BTreeMap<String, String>) -> Result<PageRequest, ApiError> {
+    let limit = number(params, "limit", DEFAULT_LIMIT)?;
+    if limit == 0 || limit > MAX_LIMIT {
+        return Err(ApiError::invalid(&format!(
+            "limit must be 1 to {MAX_LIMIT}"
+        )));
+    }
+    PageRequest::new(limit, number(params, "offset", 0)?)
+        .map_err(|error| ApiError::invalid(&error.to_string()))
+}
+
+fn change_id(id: &str) -> Result<RecordId, ApiError> {
+    Uuid::parse_str(id)
+        .map(RecordId::from_uuid)
+        .map_err(|_| ApiError::invalid("a change id is a UUID"))
+}
+
+fn agent_name(name: &str) -> Result<&str, ApiError> {
+    let fits = !name.is_empty()
+        && name.len() <= 64
+        && name
+            .chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_' || c == '-');
+    if fits {
+        Ok(name)
+    } else {
+        Err(ApiError::invalid(
+            "an agent's name is 1 to 64 of a-z, 0-9, _ and -",
+        ))
+    }
+}
+
+async fn list_changes(
+    State(app): State<App>,
+    Query(params): Params,
+) -> Result<Json<ChangeList>, ApiError> {
+    only(&params, &["agent", "status", "limit", "offset"])?;
+    let agent = params
+        .get("agent")
+        .map(|name| agent_name(name))
+        .transpose()?;
+    let status = params.get("status").map(String::as_str);
+    if let Some(status) = status
+        && !matches!(status, "live" | "reverted" | "replaced")
+    {
+        return Err(ApiError::invalid(
+            "status must be live, reverted or replaced",
+        ));
+    }
+    let found = app.brain.changes(agent, status, page_of(&params)?).await?;
+    Ok(Json(ChangeList {
+        items: found
+            .items
+            .into_iter()
+            .map(|(id, change)| ChangeView {
+                id: id.to_string(),
+                change,
+            })
+            .collect(),
+        has_more: found.has_more,
+    }))
+}
+
+async fn get_change(
+    State(app): State<App>,
+    Path(id): Path<String>,
+) -> Result<Json<ChangeView>, ApiError> {
+    let id = change_id(&id)?;
+    let change = app.brain.change(id).await?;
+    Ok(Json(ChangeView {
+        id: id.to_string(),
+        change,
+    }))
+}
+
+async fn revert(
+    State(app): State<App>,
+    Path(id): Path<String>,
+) -> Result<Json<ChangeView>, ApiError> {
+    let id = change_id(&id)?;
+    let change = app.brain.revert(id).await?;
+    Ok(Json(ChangeView {
+        id: id.to_string(),
+        change,
+    }))
+}
+
+async fn list_holds(
+    State(app): State<App>,
+    Query(params): Params,
+) -> Result<Json<HoldList>, ApiError> {
+    only(&params, &["limit", "offset"])?;
+    let found = app.brain.holds(page_of(&params)?).await?;
+    Ok(Json(HoldList {
+        items: found.items,
+        has_more: found.has_more,
+    }))
+}
+
+async fn hold(
+    State(app): State<App>,
+    Path(agent): Path<String>,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Result<Json<Hold>, ApiError> {
+    let agent = agent_name(&agent)?;
+    let raw = json_body(&headers, &body)?;
+    let request: HoldRequest = app
+        .hold_request
+        .parse(raw)
+        .map_err(|refusal| ApiError::refused(&refusal))?;
+    let held = app.brain.set_hold(agent, Some(request.reason)).await?;
+    held.map(Json)
+        .ok_or_else(|| ApiError::internal(&"the hold wasn't kept"))
+}
+
+async fn release(
+    State(app): State<App>,
+    Path(agent): Path<String>,
+) -> Result<StatusCode, ApiError> {
+    let agent = agent_name(&agent)?;
+    app.brain.set_hold(agent, None).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
 pub(super) fn routes() -> Router<App> {
     Router::new()
         .route("/api/v1/harness/attempts", post(start).get(list))
         .route("/api/v1/harness/attempts/{id}", get(get_one))
+        .route("/api/v1/harness/changes", get(list_changes))
+        .route("/api/v1/harness/changes/{id}", get(get_change))
+        .route("/api/v1/harness/changes/{id}/revert", post(revert))
+        .route("/api/v1/harness/holds", get(list_holds))
+        .route("/api/v1/harness/holds/{agent}", put(hold).delete(release))
 }

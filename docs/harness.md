@@ -4,8 +4,9 @@ Harness² is how Excogitate improves its own agents from evidence. It follows
 *Harness²: Recursive Agent Harnessing for an Open World* (arXiv 2610.14224).
 
 It's being built in pieces. So far there are [trajectories](dispatch.md#trajectories),
-the record every comparison cites, probes, and the loop that finds what an
-evidence-backed edit would be. The system doesn't yet change an agent itself.
+the record every comparison cites, probes, the loop that finds what an
+evidence-backed edit would be, and adoption: the system changes the agent's
+file itself, tells the owner, and the owner can revert any change.
 
 ## Probes
 
@@ -76,10 +77,53 @@ job's result has the attempt and its id. `GET /api/v1/harness/attempts?status=`
 lists kept attempts, oldest first, and `GET /api/v1/harness/attempts/{id}` is one
 ([schema](../schemas/v1/attempt_view.schema.json)).
 
+## Adoption
+
+When an attempt ends `supported`, the system adopts the edit on its own if
+every rule below holds. The attempt's `adoption` says what happened and why.
+
+- **The judge passed its known-answer test.** Before a composer's decision can
+  change an agent, the model it ran on judges three cases whose answers are
+  known: a candidate that fixed a run, one that broke it, and one that changed
+  nothing. A wrong answer or a citation that doesn't hold fails it. A pass is
+  trusted for 7 days, and each test is kept (`harness.calibration` records).
+- **The agent didn't change while it was being improved.**
+- **At most one change per agent per day.**
+- **The owner's word is final.** An agent the owner reverted, held or edited by
+  hand after a change is left alone until released. A harness the owner
+  reverted is never adopted again.
+- **Only instructions change.** An edit that would add a tool or raise a
+  budget isn't one the loop makes.
+
+Adopting writes `agents/<name>.yaml` all at once, opening with a comment that
+names the change and how to revert it, and reloads every definition. If they
+don't load, the old file goes back. The change is logged with its evidence,
+the judge model, and the whole file it replaced, so a revert restores the
+file exactly, comments and all. The server needs write access to the
+definitions directory; compose mounts it writable for the server only. Set
+`harness.adopt: false` in `brain.yaml` to keep supported edits without adopting
+them.
+
+### Being told, and having the last word
+
+- **The change log:** `GET /api/v1/harness/changes?agent=&status=`
+  ([schema](../schemas/v1/change_list.schema.json)) lists every change, `live`,
+  `reverted` or `replaced`, oldest first. `GET /api/v1/harness/changes/{id}` is
+  one.
+- **A webhook:** set `harness.notify_url`, and each change is posted there as it
+  happens, with its id, agent, summary and revert path. The change records
+  whether that worked. The post carries the editor's summary of a private run,
+  so point it somewhere you trust.
+- **Revert:** `POST /api/v1/harness/changes/{id}/revert` puts the old file back
+  and holds the agent. It's refused if the change isn't live, or if the file
+  has been edited since, so it never undoes the owner's own edit.
+- **Hold and release:** `PUT /api/v1/harness/holds/{agent}` with `{"reason"}`
+  holds an agent, `DELETE` releases it, and `GET /api/v1/harness/holds` lists
+  them.
+- **Override:** edit the agent's file. The edit stands, and the agent is held
+  the next time the system looks at changing it.
+
 ## What comes next
 
-- **Adoption:** when the evidence supports an edit, the system writes the
-  agent's file itself, records the change with its evidence, tells the owner,
-  and keeps what it replaced so the change can be reverted or overridden.
-- **Judges measured** on known answers before they're trusted to adopt.
 - **What to improve,** found from real runs that went wrong, on a schedule.
+- **Workflows,** improved the same way as agents.

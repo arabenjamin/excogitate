@@ -1,5 +1,6 @@
 //! Builds the brain from its parts.
 
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -45,6 +46,11 @@ pub struct Brain {
     pub(crate) sink: Arc<dyn EventSink>,
     pub(crate) config: Arc<BrainConfig>,
     pub(crate) workflows: Engine,
+    /// Where definition files live, once the server has loaded them. Harness²
+    /// writes agent files here, and only here.
+    pub(crate) definitions: Option<Arc<PathBuf>>,
+    /// Held while a change to an agent's file is made, so two never race.
+    pub(crate) changing: Arc<tokio::sync::Mutex<()>>,
 }
 
 /// The width of the vectors, if the catalog has an embedding model.
@@ -123,7 +129,17 @@ impl Brain {
             sink,
             workflows,
             config: Arc::new(config),
+            definitions: None,
+            changing: Arc::new(tokio::sync::Mutex::new(())),
         })
+    }
+
+    /// Says where the definition files are, so Harness² can change an agent's
+    /// file. Without it, a supported edit is kept and never adopted.
+    #[must_use]
+    pub fn with_definitions(mut self, root: PathBuf) -> Self {
+        self.definitions = Some(Arc::new(root));
+        self
     }
 
     /// What it offers over MCP: a chat, and each bundled tool. All of them

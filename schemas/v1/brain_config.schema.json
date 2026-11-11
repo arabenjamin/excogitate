@@ -106,6 +106,11 @@
       "additionalProperties": false,
       "description": "How Harness² improves agents.",
       "properties": {
+        "adopt": {
+          "default": true,
+          "description": "Whether the system changes an agent's file itself when the evidence\nsupports it. Every change is logged and can be reverted.",
+          "type": "boolean"
+        },
         "judge_output_tokens": {
           "default": 4000,
           "description": "The longest reply a judge may give.",
@@ -120,6 +125,16 @@
           "format": "uint64",
           "minimum": 0,
           "type": "integer"
+        },
+        "notify_url": {
+          "default": null,
+          "description": "Where to post each change as it's made, so the owner hears of it. The\nchange log over REST has them all either way.",
+          "maxLength": 2048,
+          "pattern": "^https?://",
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "probe_reads": {
           "default": [
@@ -336,8 +351,10 @@
     "harness": {
       "$ref": "#/$defs/HarnessConfig",
       "default": {
+        "adopt": true,
         "judge_output_tokens": 4000,
         "judge_usd_micros": 0,
+        "notify_url": null,
         "probe_reads": [
           "memory"
         ],

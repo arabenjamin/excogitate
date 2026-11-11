@@ -1165,6 +1165,7 @@ dependencies = [
  "store-memory",
  "thiserror",
  "tokio",
+ "uuid",
  "workflow",
 ]
 

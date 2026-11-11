@@ -35,6 +35,14 @@ services:
     command: [server]
     environment:
       EXCOGITATE_BIND: 0.0.0.0:8080
+    volumes:
+      - ./models.yaml:/config/models.yaml:ro
+      - ./brain.yaml:/config/brain.yaml:ro
+      # Writable here, and only here: Harness² changes agent files when the
+      # evidence supports it (harness.adopt in brain.yaml). The container runs
+      # as uid 1000, which must be able to write it.
+      - ./definitions:/config/definitions
+      - brain-data:/data
     ports:
       # Only this machine can reach it. Put TLS in front before changing that.
       - 127.0.0.1:${BRAIN_PORT:-8080}:8080

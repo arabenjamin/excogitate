@@ -1,9 +1,48 @@
 {
   "$defs": {
+    "Adoption": {
+      "additionalProperties": false,
+      "description": "Whether a supported edit was adopted.",
+      "properties": {
+        "adopted": {
+          "description": "True if the agent's file was changed.",
+          "type": "boolean"
+        },
+        "change_id": {
+          "description": "The change, if there is one.",
+          "maxLength": 36,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "reason": {
+          "description": "Why, in a sentence.",
+          "maxLength": 2048,
+          "type": "string"
+        }
+      },
+      "required": [
+        "adopted",
+        "reason"
+      ],
+      "type": "object"
+    },
     "Attempt": {
       "additionalProperties": false,
       "description": "One attempt to improve an agent.",
       "properties": {
+        "adoption": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Adoption"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "What became of a supported edit, once the system looked at adopting it."
+        },
         "base_harness": {
           "description": "The agent's harness when it started.",
           "maxLength": 64,
@@ -23,6 +62,14 @@
         "chosen": {
           "description": "The candidate the evidence supports, for `supported`.",
           "maxLength": 4,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "composer_model": {
+          "description": "The model the composer ran on. Only a model that passed its known-answer\ntest may have its decisions adopted.",
+          "maxLength": 256,
           "type": [
             "string",
             "null"

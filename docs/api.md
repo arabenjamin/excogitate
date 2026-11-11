@@ -103,7 +103,10 @@ the same one had the same instructions, tools and limits.
 
 `POST /api/v1/harness/attempts` queues an attempt to improve an agent, and
 `GET /api/v1/harness/attempts` and `GET /api/v1/harness/attempts/{id}` read what
-attempts found. See [Harness²](harness.md#running-one).
+attempts found. See [Harness²](harness.md#running-one). The system adopts what
+the evidence supports on its own; `GET /api/v1/harness/changes`,
+`POST /api/v1/harness/changes/{id}/revert` and `/api/v1/harness/holds` are how the
+owner sees and undoes it. See [adoption](harness.md#adoption).
 
 ### Definitions
 
