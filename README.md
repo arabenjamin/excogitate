@@ -9,11 +9,10 @@ itself from evidence.
 
 ## Status
 
-**Pre-alpha: nothing here runs yet.** The interfaces are being built first
-(Phase 1: the schemas, the store and model ports, dispatch and the plugin
-contract are in place, and nothing uses them end to end yet). The
-first usable release, Phase 2a, is a brain that can look something up on the
-web and remember it.
+**Pre-alpha.** It serves [MCP over stdio](docs/mcp.md): it can chat, read a
+URL and remember what it read. There's no packaged way to run it yet, and it
+hasn't been measured against a real model. The first usable release, Phase 2a,
+adds a quickstart that CI runs.
 Until then, expect everything to change, and don't depend on any interface.
 
 ## What it is, and why
@@ -66,8 +65,8 @@ The plan has four layers: a store port (DuckDB by default), a model port
 agents, workflows and Harness² on top. `docs/` describes each one as it is
 built: so far, [the store port](docs/store.md), [the model
 port](docs/models.md), [memory and retrieval](docs/memory.md), [dispatch](docs/dispatch.md),
-[the bundled tools](docs/tools.md), [plugins](docs/plugins.md) and
-[schemas](docs/schemas.md).
+[the bundled tools](docs/tools.md), [MCP](docs/mcp.md),
+[plugins](docs/plugins.md) and [schemas](docs/schemas.md).
 
 ## Writing a plugin
 

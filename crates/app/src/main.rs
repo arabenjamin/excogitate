@@ -1,6 +1,6 @@
-//! The command-line entry point. For now it only reports its version and
-//! compiled-in plugins; the server arrives in Phase 2a.
+//! The command-line entry point.
 
+use std::process::ExitCode;
 use std::sync::Arc;
 
 use plugin_api::Plugin;
@@ -8,8 +8,26 @@ use plugin_api::Plugin;
 /// The version this binary was built as, from Cargo.
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 
-fn main() {
-    println!("{}", banner());
+#[tokio::main]
+async fn main() -> ExitCode {
+    let arguments: Vec<String> = std::env::args().skip(1).collect();
+    match arguments.iter().map(String::as_str).collect::<Vec<_>>()[..] {
+        [] | ["--version" | "version"] => {
+            println!("{}", banner());
+            ExitCode::SUCCESS
+        }
+        ["serve"] => match brain::run_stdio(env!("CARGO_BIN_NAME"), VERSION).await {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(error) => {
+                eprintln!("error: {error}");
+                ExitCode::FAILURE
+            }
+        },
+        _ => {
+            eprintln!("usage: {} [serve | version]", env!("CARGO_BIN_NAME"));
+            ExitCode::from(2)
+        }
+    }
 }
 
 /// The plugins this build was compiled with, one cargo feature each.

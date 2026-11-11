@@ -6,6 +6,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use protocol::{DataClass, RunId};
+use schema::Validator;
 use serde_json::{Value, json};
 use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncRead, AsyncWrite, AsyncWriteExt, BufReader};
 
@@ -29,10 +30,16 @@ fn failure(id: &Value, code: i64, message: &str) -> String {
     json!({ "jsonrpc": "2.0", "id": id, "error": { "code": code, "message": message } }).to_string()
 }
 
-fn tool_listing(tools: &HashMap<String, Arc<dyn Tool>>) -> Value {
+/// A tool, and the check its arguments must pass.
+struct Served {
+    tool: Arc<dyn Tool>,
+    input: Validator,
+}
+
+fn tool_listing(tools: &HashMap<String, Served>) -> Value {
     let mut listed: Vec<Value> = tools
         .values()
-        .map(|tool| {
+        .map(|Served { tool, .. }| {
             let definition = tool.definition();
             json!({
                 "name": definition.name,
@@ -46,15 +53,22 @@ fn tool_listing(tools: &HashMap<String, Arc<dyn Tool>>) -> Value {
     json!({ "tools": listed })
 }
 
-async fn call_tool(tools: &HashMap<String, Arc<dyn Tool>>, id: &Value, params: &Value) -> String {
+async fn call_tool(tools: &HashMap<String, Served>, id: &Value, params: &Value) -> String {
     let name = params.get("name").and_then(Value::as_str);
-    let Some(tool) = name.and_then(|name| tools.get(name)) else {
+    let Some(Served { tool, input }) = name.and_then(|name| tools.get(name)) else {
         return failure(id, INVALID_PARAMS, "no such tool");
     };
     let arguments = params
         .get("arguments")
         .cloned()
         .unwrap_or_else(|| json!({}));
+    if let Err(refusal) = input.check(&arguments) {
+        let result = json!({
+            "content": [{ "type": "text", "text": refusal.to_string() }],
+            "isError": true,
+        });
+        return success(id, &result);
+    }
     // The brain holds the real run; a separate process only needs a value.
     let context = ToolContext {
         run: RunId::generate(),
@@ -78,7 +92,7 @@ async fn call_tool(tools: &HashMap<String, Arc<dyn Tool>>, id: &Value, params: &
 
 async fn handle(
     message: &Value,
-    tools: &HashMap<String, Arc<dyn Tool>>,
+    tools: &HashMap<String, Served>,
     name: &str,
     version: &str,
 ) -> Option<String> {
@@ -94,6 +108,7 @@ async fn handle(
                 "serverInfo": { "name": name, "version": version },
             }),
         ),
+        Some("ping") => success(id, &json!({})),
         Some("tools/list") => success(id, &tool_listing(tools)),
         Some("tools/call") => call_tool(tools, id, &params).await,
         _ => failure(id, METHOD_NOT_FOUND, "no such method"),
@@ -119,11 +134,13 @@ pub async fn read_line<R: AsyncBufRead + Unpin>(
     Ok(Some(line))
 }
 
-/// Serves `tools` over any byte stream until it ends.
+/// Serves `tools` over any byte stream until it ends. Arguments are checked
+/// against each tool's input schema before it runs.
 ///
 /// # Errors
 ///
-/// The I/O error, if reading or writing fails.
+/// The I/O error, if reading or writing fails, or if a tool's input schema
+/// isn't a valid schema.
 pub async fn serve<R, W>(
     name: &str,
     version: &str,
@@ -135,10 +152,15 @@ where
     R: AsyncRead + Unpin,
     W: AsyncWrite + Unpin,
 {
-    let tools: HashMap<String, Arc<dyn Tool>> = tools
+    let tools = tools
         .into_iter()
-        .map(|tool| (tool.definition().name, tool))
-        .collect();
+        .map(|tool| {
+            let definition = tool.definition();
+            let input =
+                Validator::from_schema(&definition.input_schema).map_err(std::io::Error::other)?;
+            Ok((definition.name, Served { tool, input }))
+        })
+        .collect::<std::io::Result<HashMap<_, _>>>()?;
     let mut reader = BufReader::new(reader);
     while let Some(line) = read_line(&mut reader).await? {
         let reply = match serde_json::from_slice::<Value>(&line) {
@@ -192,7 +214,10 @@ mod tests {
             ToolDefinition {
                 name: "demo_echo".to_owned(),
                 description: "d".to_owned(),
-                input_schema: json!({ "type": "object", "additionalProperties": false }),
+                input_schema: json!({
+                    "type": "object",
+                    "properties": { "tight": { "type": "integer" } }
+                }),
                 output_schema: json!({ "type": "object", "additionalProperties": false }),
                 effect: Effect::Read,
             }
@@ -260,6 +285,24 @@ mod tests {
         ))
         .await;
         assert_eq!(replies.first().unwrap()["result"]["isError"], true);
+    }
+
+    #[tokio::test]
+    async fn arguments_that_miss_the_schema_never_reach_the_tool() {
+        let replies = exchange(concat!(
+            r#"{"id":1,"method":"tools/call","params":{"name":"demo_echo","arguments":{"tight":"x","fail":true}}}"#,
+            "\n"
+        ))
+        .await;
+        let result = &replies.first().unwrap()["result"];
+        assert_eq!(result["isError"], true);
+        assert_ne!(result["content"][0]["text"], "nope", "it ran");
+    }
+
+    #[tokio::test]
+    async fn ping_is_answered() {
+        let replies = exchange(concat!(r#"{"id":1,"method":"ping"}"#, "\n")).await;
+        assert_eq!(replies.first().unwrap()["result"], json!({}));
     }
 
     #[tokio::test]

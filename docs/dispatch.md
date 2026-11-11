@@ -48,7 +48,8 @@ is, so only real writes use the write budget.
 
 `Session::finish` returns the `Receipt`, built only from what dispatch saw.
 Every run ends in one outcome: `answered`, `refused`, `budget_hit`,
-`tool_failed` or `model_failed`. A claim the record contradicts is corrected.
+`tool_failed`, `model_failed`, or `direct` for a single tool call made with
+no model. A claim the record contradicts is corrected.
 
 ## Testing against a hostile model
 

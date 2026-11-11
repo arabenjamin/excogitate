@@ -13,6 +13,7 @@ use serde_json::Value;
 /// Every published schema, by file stem.
 fn generated() -> BTreeMap<&'static str, Value> {
     BTreeMap::from([
+        ("brain_config", schema_of::<brain::BrainConfig>()),
         ("budget", schema_of::<dispatch::Budget>()),
         ("http_config", schema_of::<tools::HttpConfig>()),
         ("models_config", schema_of::<model::ModelsConfig>()),

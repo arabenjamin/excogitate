@@ -20,6 +20,8 @@ pub enum Outcome {
     ToolFailed,
     /// No model could answer.
     ModelFailed,
+    /// One tool call made directly, with no model involved.
+    Direct,
 }
 
 /// What became of one tool call.

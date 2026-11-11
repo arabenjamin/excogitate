@@ -40,6 +40,19 @@ pub fn check_strict(schema: &Value) -> Vec<Violation> {
     found
 }
 
+/// A tool's input schema as shown to a model or a client. Some providers
+/// refuse `allOf` at the root of a tool's schema, so conditions there are
+/// left out. They're still enforced: arguments are checked against the full
+/// schema, and a refusal says what was missing.
+#[must_use]
+pub fn for_model(schema: &Value) -> Value {
+    let mut shown = schema.clone();
+    if let Value::Object(root) = &mut shown {
+        root.remove("allOf");
+    }
+    shown
+}
+
 fn walk(node: &Value, path: &str, found: &mut Vec<Violation>) {
     let Value::Object(schema) = node else {
         if *node != Value::Bool(false) {
@@ -220,6 +233,18 @@ mod tests {
             "allOf": [{ "if": { "properties": {} }, "then": { "required": ["a"] } }]
         });
         assert_eq!(check_strict(&schema), vec![]);
+    }
+
+    #[test]
+    fn a_model_sees_no_root_conditions_but_the_rest_stays() {
+        let schema = json!({
+            "type": "object",
+            "properties": { "a": { "allOf": [{ "type": "string" }] } },
+            "allOf": [{ "if": { "required": ["a"] }, "then": { "required": ["b"] } }]
+        });
+        let shown = for_model(&schema);
+        assert_eq!(shown.get("allOf"), None);
+        assert_eq!(shown["properties"], schema["properties"]);
     }
 
     #[test]
