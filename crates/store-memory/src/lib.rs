@@ -6,13 +6,14 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Mutex, MutexGuard, PoisonError};
 
 use async_trait::async_trait;
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, NaiveDate, Utc};
 use protocol::DataClass;
 use store::{
     Chunk, ChunkHit, ChunkId, ClassFilter, Definition, DefinitionKey, DefinitionKind,
     DefinitionReader, Direction, Job, JobId, JobQueue, JobStatus, Lease, Note, NoteId, NoteReader,
     Page, PageRequest, Record, RecordCatalog, RecordDecls, RecordId, RecordQuery, RecordReader,
-    Store, StoreError, Task, TaskId, TaskQuery, TaskReader, UnitOfWork, WorkingEntry, WriteOp,
+    SpendLog, Store, StoreError, Task, TaskId, TaskQuery, TaskReader, UnitOfWork, WorkingEntry,
+    WriteOp,
 };
 
 #[derive(Debug, Clone, Default)]
@@ -26,6 +27,7 @@ struct State {
     records: BTreeMap<(String, RecordId), Record>,
     links: BTreeSet<(String, RecordId, RecordId)>,
     catalog: RecordCatalog,
+    spend: BTreeMap<(String, NaiveDate), u64>,
 }
 
 /// A complete store held in a mutex.
@@ -386,6 +388,49 @@ impl TaskReader for MemoryStore {
             .get(&(scope.to_owned(), key.to_owned()))
             .filter(|entry| entry.expires_at.is_none_or(|at| at > now))
             .cloned())
+    }
+}
+
+#[async_trait]
+impl SpendLog for MemoryStore {
+    async fn reserve_spend(
+        &self,
+        provider: &str,
+        day: NaiveDate,
+        amount: u64,
+        cap: u64,
+    ) -> Result<bool, StoreError> {
+        let mut state = self.state();
+        let spent = state.spend.entry((provider.to_owned(), day)).or_default();
+        Ok(match spent.checked_add(amount) {
+            Some(total) if total <= cap => {
+                *spent = total;
+                true
+            }
+            _ => false,
+        })
+    }
+
+    async fn settle_spend(
+        &self,
+        provider: &str,
+        day: NaiveDate,
+        reserved: u64,
+        actual: u64,
+    ) -> Result<(), StoreError> {
+        let mut state = self.state();
+        let spent = state.spend.entry((provider.to_owned(), day)).or_default();
+        *spent = spent.saturating_sub(reserved).saturating_add(actual);
+        Ok(())
+    }
+
+    async fn spent_on(&self, provider: &str, day: NaiveDate) -> Result<u64, StoreError> {
+        Ok(self
+            .state()
+            .spend
+            .get(&(provider.to_owned(), day))
+            .copied()
+            .unwrap_or(0))
     }
 }
 

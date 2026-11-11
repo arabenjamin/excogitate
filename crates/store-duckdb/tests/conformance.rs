@@ -5,7 +5,7 @@
 use std::path::PathBuf;
 
 use protocol::RunId;
-use store::{ClassFilter, NoteReader, PageRequest, Store, UnitOfWork, WriteOp};
+use store::{ClassFilter, NoteReader, PageRequest, SpendLog, Store, UnitOfWork, WriteOp};
 use store_duckdb::{DuckDbConfig, DuckDbStore, OpenError};
 
 /// Where `scripts/fetch_duckdb_extensions.sh` puts the extensions.
@@ -137,6 +137,10 @@ const CRASH_FILE: &str = "STORE_TEST_CRASH_FILE";
 /// Printed by the crash test's child once its writes are committed.
 const CRASH_READY: &str = "crash-child-ready";
 
+fn crash_day() -> chrono::NaiveDate {
+    chrono::NaiveDate::from_ymd_opt(2027, 1, 1).unwrap()
+}
+
 /// Writes two notes, says so, and waits to be killed. Runs only as the child
 /// of `committed_writes_survive_a_crash`.
 #[tokio::test(flavor = "multi_thread")]
@@ -148,6 +152,7 @@ async fn crash_child() {
     for text in ["crashone", "crashtwo"] {
         store.apply(note_unit(text).1).await.unwrap();
     }
+    assert!(store.reserve_spend("p", crash_day(), 7, 10).await.unwrap());
     println!("{CRASH_READY}");
     std::thread::sleep(std::time::Duration::from_secs(60));
 }
@@ -185,6 +190,9 @@ async fn committed_writes_survive_a_crash() {
         .await
         .unwrap();
     assert_eq!(vectors.items.len(), 2);
+    // A crash can't reset a daily cap, and the reservation still counts.
+    assert_eq!(store.spent_on("p", crash_day()).await.unwrap(), 7);
+    assert!(!store.reserve_spend("p", crash_day(), 4, 10).await.unwrap());
     // Search still follows new writes after the log was replayed.
     store.apply(note_unit("aftercrash").1).await.unwrap();
     let hits = store

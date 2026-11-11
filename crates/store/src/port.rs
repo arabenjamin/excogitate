@@ -2,7 +2,7 @@
 //! through [`Store::apply`].
 
 use async_trait::async_trait;
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, NaiveDate, Utc};
 
 use crate::{
     Chunk, ChunkHit, ClassFilter, Definition, DefinitionKey, DefinitionKind, Direction, Job, JobId,
@@ -219,10 +219,59 @@ pub trait RecordReader {
     ) -> Result<Page<Record>, StoreError>;
 }
 
+/// What each provider has spent per UTC day, in millionths of a dollar. It
+/// has to survive a restart, or a restart would reset a daily cap.
+#[async_trait]
+pub trait SpendLog {
+    /// Adds `amount` to the day if the total stays within `cap`. Returns
+    /// false and changes nothing if it wouldn't. Atomic, so calls made at the
+    /// same time can't overrun the cap together.
+    ///
+    /// # Errors
+    ///
+    /// [`StoreError::Backend`] if the store fails.
+    async fn reserve_spend(
+        &self,
+        provider: &str,
+        day: NaiveDate,
+        amount: u64,
+        cap: u64,
+    ) -> Result<bool, StoreError>;
+
+    /// Replaces a reservation with what the call really cost. The total
+    /// never goes below zero.
+    ///
+    /// # Errors
+    ///
+    /// [`StoreError::Backend`] if the store fails.
+    async fn settle_spend(
+        &self,
+        provider: &str,
+        day: NaiveDate,
+        reserved: u64,
+        actual: u64,
+    ) -> Result<(), StoreError>;
+
+    /// What the provider has spent or reserved that day.
+    ///
+    /// # Errors
+    ///
+    /// [`StoreError::Backend`] if the store fails.
+    async fn spent_on(&self, provider: &str, day: NaiveDate) -> Result<u64, StoreError>;
+}
+
 /// A complete store. The `store-conformance` crate defines what it must do.
 #[async_trait]
 pub trait Store:
-    NoteReader + TaskReader + JobQueue + DefinitionReader + RecordReader + Send + Sync + std::fmt::Debug
+    NoteReader
+    + TaskReader
+    + JobQueue
+    + DefinitionReader
+    + RecordReader
+    + SpendLog
+    + Send
+    + Sync
+    + std::fmt::Debug
 {
     /// Applies every write in `unit` in order, or none of them. Readers see
     /// all of it or none of it.

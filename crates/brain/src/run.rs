@@ -96,12 +96,6 @@ pub async fn run_stdio(product: &str, version: &str) -> Result<(), RunError> {
         Some(path) => BrainConfig::from_yaml(&read(path)?)?,
         None => BrainConfig::default(),
     };
-    if catalog.models().iter().any(|model| model.is_paid()) {
-        eprintln!(
-            "note: a priced model is configured, and the daily spend cap is kept in memory, \
-             so a restart forgets the day's spend"
-        );
-    }
     std::fs::create_dir_all(&places.data).map_err(|source| RunError::File {
         path: places.data.display().to_string(),
         source,

@@ -4,7 +4,7 @@
 use std::fmt;
 use std::sync::Arc;
 
-use chrono::Utc;
+use chrono::{DateTime, Utc};
 
 use crate::route::{Candidate, NoRoute, Rejection, RoutePolicy, TokenEstimate, plan};
 use crate::{
@@ -108,7 +108,7 @@ impl Gateway {
     }
 
     /// Reserves the worst case on a priced model. Returns false at the cap.
-    async fn reserve(&self, candidate: &Candidate) -> bool {
+    async fn reserve(&self, candidate: &Candidate, at: DateTime<Utc>) -> bool {
         let model = &candidate.model;
         if !model.is_paid() {
             return true;
@@ -120,12 +120,13 @@ impl Gateway {
                 &model.provider.name,
                 candidate.worst_case_usd_micros,
                 cap,
-                Utc::now(),
+                at,
             )
             .await
     }
 
-    async fn settle(&self, candidate: &Candidate, actual: u64) {
+    /// Settles on the day of the reservation, even past midnight.
+    async fn settle(&self, candidate: &Candidate, actual: u64, at: DateTime<Utc>) {
         let model = &candidate.model;
         if model.is_paid() {
             self.ledger
@@ -133,7 +134,7 @@ impl Gateway {
                     &model.provider.name,
                     candidate.worst_case_usd_micros,
                     actual,
-                    Utc::now(),
+                    at,
                 )
                 .await;
         }
@@ -157,13 +158,14 @@ impl Gateway {
                 break;
             }
             let model_name = candidate.model.name.clone();
-            if !self.reserve(&candidate).await {
+            let reserved_at = Utc::now();
+            if !self.reserve(&candidate, reserved_at).await {
                 at_cap.push((model_name, Rejection::OverDailyCap));
                 continue;
             }
             match call(candidate.clone()).await {
                 Ok((value, cost_usd_micros)) => {
-                    self.settle(&candidate, cost_usd_micros).await;
+                    self.settle(&candidate, cost_usd_micros, reserved_at).await;
                     return Ok(Answered {
                         value,
                         model: model_name,
@@ -172,7 +174,7 @@ impl Gateway {
                     });
                 }
                 Err(error) => {
-                    self.settle(&candidate, 0).await;
+                    self.settle(&candidate, 0, reserved_at).await;
                     let go_on = error.worth_trying_elsewhere();
                     failed_attempts.push(FailedAttempt {
                         model: model_name,

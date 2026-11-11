@@ -3,7 +3,7 @@
 use std::collections::{BTreeSet, VecDeque};
 use std::sync::{Arc, RwLock};
 
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, NaiveDate, Utc};
 use duckdb::{Connection, params};
 use store::{
     Chunk, ChunkId, Definition, DefinitionKey, Job, JobId, JobStatus, Note, NoteId, Record,
@@ -46,13 +46,37 @@ pub(crate) enum Command {
         retry_at: DateTime<Utc>,
         reply: Reply<()>,
     },
+    ReserveSpend {
+        provider: String,
+        day: NaiveDate,
+        amount: u64,
+        cap: u64,
+        reply: Reply<bool>,
+    },
+    SettleSpend {
+        provider: String,
+        day: NaiveDate,
+        reserved: u64,
+        actual: u64,
+        reply: Reply<()>,
+    },
+    SpentOn {
+        provider: String,
+        day: NaiveDate,
+        reply: Reply<u64>,
+    },
 }
 
 impl Command {
     const fn is_job_operation(&self) -> bool {
         matches!(
             self,
-            Self::Claim { .. } | Self::Complete { .. } | Self::Fail { .. }
+            Self::Claim { .. }
+                | Self::Complete { .. }
+                | Self::Fail { .. }
+                | Self::ReserveSpend { .. }
+                | Self::SettleSpend { .. }
+                | Self::SpentOn { .. }
         )
     }
 }
@@ -178,6 +202,31 @@ impl Writer<'_> {
                 reply,
             } => {
                 let _ = reply.send(self.fail(id, &worker, &error, retry_at));
+            }
+            Command::ReserveSpend {
+                provider,
+                day,
+                amount,
+                cap,
+                reply,
+            } => {
+                let _ = reply.send(self.reserve_spend(&provider, day, amount, cap));
+            }
+            Command::SettleSpend {
+                provider,
+                day,
+                reserved,
+                actual,
+                reply,
+            } => {
+                let _ = reply.send(self.settle_spend(&provider, day, reserved, actual));
+            }
+            Command::SpentOn {
+                provider,
+                day,
+                reply,
+            } => {
+                let _ = reply.send(self.spent_on(&provider, day));
             }
         }
     }
@@ -702,6 +751,76 @@ impl Writer<'_> {
             )
             .map(|_| ())
             .map_err(backend)
+    }
+
+    fn spent_on(&self, provider: &str, day: NaiveDate) -> Result<u64, StoreError> {
+        let found = self.connection.query_row(
+            "SELECT usd_micros FROM spend WHERE provider = ? AND day = ?",
+            params![provider, day],
+            |row| row.get::<_, u64>(0),
+        );
+        match found {
+            Ok(spent) => Ok(spent),
+            Err(duckdb::Error::QueryReturnedNoRows) => Ok(0),
+            Err(error) => Err(backend(error)),
+        }
+    }
+
+    /// Writes a day's total. No primary key, as with the other tables, so
+    /// it's one writer's update-or-insert.
+    fn set_spend(&self, provider: &str, day: NaiveDate, total: u64) -> Result<(), StoreError> {
+        let changed = self
+            .connection
+            .execute(
+                "UPDATE spend SET usd_micros = ? WHERE provider = ? AND day = ?",
+                params![total, provider, day],
+            )
+            .map_err(backend)?;
+        if changed == 0 {
+            self.connection
+                .execute(
+                    "INSERT INTO spend VALUES (?, ?, ?)",
+                    params![provider, day, total],
+                )
+                .map_err(backend)?;
+        }
+        Ok(())
+    }
+
+    fn reserve_spend(
+        &self,
+        provider: &str,
+        day: NaiveDate,
+        amount: u64,
+        cap: u64,
+    ) -> Result<bool, StoreError> {
+        self.transaction(|| {
+            let spent = self.spent_on(provider, day)?;
+            match spent.checked_add(amount) {
+                Some(total) if total <= cap => {
+                    self.set_spend(provider, day, total)?;
+                    Ok(true)
+                }
+                _ => Ok(false),
+            }
+        })
+    }
+
+    fn settle_spend(
+        &self,
+        provider: &str,
+        day: NaiveDate,
+        reserved: u64,
+        actual: u64,
+    ) -> Result<(), StoreError> {
+        self.transaction(|| {
+            let spent = self.spent_on(provider, day)?;
+            self.set_spend(
+                provider,
+                day,
+                spent.saturating_sub(reserved).saturating_add(actual),
+            )
+        })
     }
 
     fn fail(

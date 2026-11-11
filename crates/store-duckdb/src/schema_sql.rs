@@ -44,6 +44,11 @@ CREATE TABLE records (
 CREATE TABLE links (relation VARCHAR NOT NULL, from_id VARCHAR NOT NULL, to_id VARCHAR NOT NULL);
 ";
 
+/// What each provider has spent per day. Created on every open, so a file
+/// from before this table existed gets it without a migration.
+const SPEND_TABLE: &str = "CREATE TABLE IF NOT EXISTS spend (
+    provider VARCHAR NOT NULL, day DATE NOT NULL, usd_micros UBIGINT NOT NULL);";
+
 fn quoted(text: &str) -> String {
     text.replace('\'', "''")
 }
@@ -117,8 +122,17 @@ pub(crate) fn prepare(
 ) -> Result<(), OpenError> {
     configure(connection, extension_dir)?;
     if is_new(connection)? {
-        return create(connection, dimension);
+        create(connection, dimension)?;
+    } else {
+        check_existing(connection, dimension)?;
     }
+    connection
+        .execute_batch(SPEND_TABLE)
+        .map_err(|error| OpenError::Database(error.to_string()))
+}
+
+/// Refuses a file this code can't read.
+fn check_existing(connection: &Connection, dimension: usize) -> Result<(), OpenError> {
     let version = meta(connection, "schema_version")?;
     if version.as_deref() != Some(SCHEMA_VERSION) {
         return Err(OpenError::Incompatible(format!(

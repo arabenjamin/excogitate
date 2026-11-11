@@ -27,7 +27,7 @@ pub use kinds::{
     Note, Provenance, Task, TaskQuery, TaskStatus, WorkingEntry,
 };
 pub use page::{MAX_PAGE_LIMIT, Page, PageRequest};
-pub use port::{DefinitionReader, JobQueue, NoteReader, RecordReader, Store, TaskReader};
+pub use port::{DefinitionReader, JobQueue, NoteReader, RecordReader, SpendLog, Store, TaskReader};
 pub use record::{
     Direction, FieldFilter, FieldKind, FieldOp, FieldValue, FilterableField, Record, RecordDecls,
     RecordQuery, RecordTypeDecl, RelationDecl,

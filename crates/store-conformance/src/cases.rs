@@ -982,3 +982,79 @@ pub async fn deleting_a_record_removes_its_links(store: &dyn Store) {
         .unwrap();
     assert_eq!(after.items, [two.clone()]);
 }
+
+fn day(number: u32) -> chrono::NaiveDate {
+    chrono::NaiveDate::from_ymd_opt(2027, 1, number).unwrap()
+}
+
+/// Money is set aside up to the cap, and the first day's total is readable.
+pub async fn spend_stays_within_the_cap(store: &dyn Store) {
+    assert_eq!(store.spent_on("p", day(1)).await.unwrap(), 0);
+    assert!(store.reserve_spend("p", day(1), 6, 10).await.unwrap());
+    assert!(store.reserve_spend("p", day(1), 4, 10).await.unwrap());
+    assert_eq!(store.spent_on("p", day(1)).await.unwrap(), 10);
+}
+
+/// A refusal leaves the books as they were.
+pub async fn a_refused_reservation_changes_nothing(store: &dyn Store) {
+    assert!(store.reserve_spend("p", day(1), 6, 10).await.unwrap());
+    assert!(!store.reserve_spend("p", day(1), 5, 10).await.unwrap());
+    assert_eq!(store.spent_on("p", day(1)).await.unwrap(), 6);
+}
+
+/// What wasn't used comes back, and a dearer call than reserved counts.
+pub async fn settling_replaces_the_reservation(store: &dyn Store) {
+    assert!(store.reserve_spend("p", day(1), 10, 10).await.unwrap());
+    store.settle_spend("p", day(1), 10, 3).await.unwrap();
+    assert_eq!(store.spent_on("p", day(1)).await.unwrap(), 3);
+    assert!(store.reserve_spend("p", day(1), 7, 10).await.unwrap());
+    store.settle_spend("p", day(1), 7, 9).await.unwrap();
+    assert_eq!(store.spent_on("p", day(1)).await.unwrap(), 12);
+}
+
+/// Each provider and each day has its own total.
+pub async fn spend_is_per_provider_and_per_day(store: &dyn Store) {
+    assert!(store.reserve_spend("p", day(1), 10, 10).await.unwrap());
+    assert!(store.reserve_spend("q", day(1), 10, 10).await.unwrap());
+    assert!(store.reserve_spend("p", day(2), 10, 10).await.unwrap());
+    store.settle_spend("p", day(2), 10, 1).await.unwrap();
+    assert_eq!(store.spent_on("p", day(1)).await.unwrap(), 10);
+    assert_eq!(store.spent_on("q", day(1)).await.unwrap(), 10);
+    assert_eq!(store.spent_on("p", day(2)).await.unwrap(), 1);
+
+    // A call that straddles midnight settles on its first day, and that
+    // mustn't touch the next day's total.
+    store.settle_spend("p", day(1), 10, 2).await.unwrap();
+    assert_eq!(store.spent_on("p", day(1)).await.unwrap(), 2);
+    assert_eq!(store.spent_on("p", day(2)).await.unwrap(), 1);
+}
+
+/// Calls made together can't each see room that only one of them can have.
+pub async fn reservations_at_once_cannot_overrun(store: &dyn Store) {
+    let reserve = || store.reserve_spend("p", day(1), 4, 10);
+    let (a, b, c, d) = tokio::join!(reserve(), reserve(), reserve(), reserve());
+    let won = [a, b, c, d]
+        .into_iter()
+        .filter(|r| *r.as_ref().unwrap())
+        .count();
+    assert_eq!(won, 2);
+    assert_eq!(store.spent_on("p", day(1)).await.unwrap(), 8);
+}
+
+/// An amount past what the column holds is refused, not wrapped around.
+pub async fn huge_amounts_are_refused_not_wrapped(store: &dyn Store) {
+    assert!(
+        store
+            .reserve_spend("p", day(1), u64::MAX, u64::MAX)
+            .await
+            .unwrap()
+    );
+    assert_eq!(store.spent_on("p", day(1)).await.unwrap(), u64::MAX);
+    assert!(!store.reserve_spend("p", day(1), 1, u64::MAX).await.unwrap());
+}
+
+/// A settle with no reservation behind it can't make the total negative.
+pub async fn settling_never_goes_below_zero(store: &dyn Store) {
+    store.settle_spend("p", day(1), 100, 1).await.unwrap();
+    assert_eq!(store.spent_on("p", day(1)).await.unwrap(), 1);
+}

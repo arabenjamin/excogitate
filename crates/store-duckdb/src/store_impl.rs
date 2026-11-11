@@ -5,13 +5,13 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, PoisonError, RwLock};
 
 use async_trait::async_trait;
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, NaiveDate, Utc};
 use duckdb::{Connection, params};
 use store::{
     Chunk, ChunkHit, ClassFilter, Definition, DefinitionKey, DefinitionKind, DefinitionReader,
     Direction, Job, JobId, JobQueue, Note, NoteId, NoteReader, Page, PageRequest, Record,
-    RecordCatalog, RecordDecls, RecordId, RecordQuery, RecordReader, Store, StoreError, Task,
-    TaskId, TaskQuery, TaskReader, UnitOfWork, WorkingEntry,
+    RecordCatalog, RecordDecls, RecordId, RecordQuery, RecordReader, SpendLog, Store, StoreError,
+    Task, TaskId, TaskQuery, TaskReader, UnitOfWork, WorkingEntry,
 };
 use tokio::sync::{Semaphore, mpsc, oneshot};
 
@@ -356,6 +356,55 @@ impl JobQueue for DuckDbStore {
             worker,
             error,
             retry_at,
+            reply,
+        })
+        .await
+    }
+}
+
+#[async_trait]
+impl SpendLog for DuckDbStore {
+    async fn reserve_spend(
+        &self,
+        provider: &str,
+        day: NaiveDate,
+        amount: u64,
+        cap: u64,
+    ) -> Result<bool, StoreError> {
+        let provider = provider.to_owned();
+        self.send(|reply| Command::ReserveSpend {
+            provider,
+            day,
+            amount,
+            cap,
+            reply,
+        })
+        .await
+    }
+
+    async fn settle_spend(
+        &self,
+        provider: &str,
+        day: NaiveDate,
+        reserved: u64,
+        actual: u64,
+    ) -> Result<(), StoreError> {
+        let provider = provider.to_owned();
+        self.send(|reply| Command::SettleSpend {
+            provider,
+            day,
+            reserved,
+            actual,
+            reply,
+        })
+        .await
+    }
+
+    async fn spent_on(&self, provider: &str, day: NaiveDate) -> Result<u64, StoreError> {
+        let provider = provider.to_owned();
+        self.send(|reply| Command::SpentOn {
+            provider,
+            day,
             reply,
         })
         .await
