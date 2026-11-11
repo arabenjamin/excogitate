@@ -9,6 +9,9 @@ x-brain: &brain
   build:
     context: .
     target: brain
+    args:
+      # app/neo4j adds the Neo4j store (EXCOGITATE_STORE=neo4j).
+      FEATURES: ${FEATURES:-}
   image: excogitate:local
   env_file:
     - path: .env

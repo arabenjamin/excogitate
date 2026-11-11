@@ -3,8 +3,8 @@
 # scripted model in place of a real one. It checks that the brain boots with
 # no plugins and no database server, that it can fetch a page, store it and
 # find it again in a new session, that a hostile model can't crash it or get
-# it past its budgets, and that Harness² adopts only what the evidence supports
-# and can be reverted.
+# it past its budgets, that Harness² adopts only what the evidence supports
+# and can be reverted, and that the Neo4j store keeps what it's given.
 #
 # Set DONE_TEST_NO_BUILD=1 if the images are already built.
 set -euo pipefail
@@ -41,6 +41,9 @@ call() {
     '{jsonrpc:"2.0",id:$id,method:"tools/call",params:{name:$tool,arguments:$args}}'
 }
 
+# The image under test has the Neo4j store compiled in. DuckDB stays the
+# default, so every section but the last runs on it.
+export FEATURES=app/neo4j
 [[ ${DONE_TEST_NO_BUILD:-} == 1 ]] || compose build
 compose up --detach --wait fixture chaos
 
@@ -237,6 +240,38 @@ api -X POST "$h2/api/v1/harness/changes/$change/revert" >"$reverted"
 check "the owner can revert it" "$reverted" '.[0].change.status == "reverted"'
 cmp -s <(printf '%s' "$helper") "$h2_defs/agents/helper.yaml" || fail "the revert didn't put the file back exactly"
 ok "and the revert puts the file back exactly"
+
+# The Neo4j store, on a scratch database: what one process stores, another
+# finds, and it's still there after a restart.
+export NEO4J_PORT=18477
+n4="http://127.0.0.1:$NEO4J_PORT"
+compose up --detach --wait neo4j
+compose up --detach --no-deps neo4j_server
+up() {
+  for ((try = 1; try <= 60; try++)); do
+    curl --silent --fail "$n4/health" >/dev/null 2>&1 && return
+    sleep 1
+  done
+  fail "the server on Neo4j never came up"
+}
+up
+ok "the server starts on the Neo4j store"
+graph_stored="$work/graph_stored"
+api "$n4/mcp" -d "$(call 1 memory '{"operation":"store","title":"badgers","text":"Honey badgers raid beehives in 2026."}')" >"$graph_stored"
+check "it stores a note" "$graph_stored" '.[0].result.structuredContent.result.result == "stored"'
+graph_found="$work/graph_found"
+{
+  hello
+  call 1 memory '{"operation":"search","query":"BEEHIVES 2026"}'
+} | compose run --rm --no-deps -T neo4j_brain >"$graph_found"
+check "a second process opens the same graph and finds it" "$graph_found" \
+  'map(select(.id==1))[0].result.structuredContent.result.hits[0].text | contains("Honey badgers")'
+compose restart neo4j_server >/dev/null
+up
+graph_kept="$work/graph_kept"
+api "$n4/mcp" -d "$(call 1 memory '{"operation":"search","query":"badgers"}')" >"$graph_kept"
+check "and it's still there after a restart" "$graph_kept" \
+  '.[0].result.structuredContent.result.hits | length == 1'
 
 passed=1
 echo "The done-test passed."

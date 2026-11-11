@@ -8,6 +8,10 @@ license.workspace = true
 repository.workspace = true
 publish = false
 
+[features]
+# The Neo4j store, chosen at run time with the STORE setting.
+neo4j = ["dep:store-neo4j"]
+
 [dependencies]
 async-trait.workspace = true
 axum.workspace = true
@@ -29,6 +33,7 @@ serde_json.workspace = true
 sha2 = "0.10"
 store = { path = "../store" }
 store-duckdb = { path = "../store-duckdb" }
+store-neo4j = { path = "../store-neo4j", optional = true }
 subtle = "2"
 thiserror.workspace = true
 tokio = { workspace = true, features = ["signal"] }

@@ -1,0 +1,28 @@
+[package]
+name = "store-neo4j"
+description = "A store on a Neo4j database, for deployments that keep their memory in a graph."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[dependencies]
+async-trait.workspace = true
+chrono.workspace = true
+neo4rs = "0.8.0"
+protocol = { path = "../protocol" }
+schema = { path = "../schema" }
+serde.workspace = true
+serde_json.workspace = true
+store = { path = "../store" }
+tokio.workspace = true
+uuid.workspace = true
+
+[dev-dependencies]
+store-conformance = { path = "../store-conformance" }
+tokio.workspace = true
+
+[lints]
+workspace = true

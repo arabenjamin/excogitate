@@ -50,6 +50,18 @@ pub enum RunError {
     /// The store couldn't be opened.
     #[error(transparent)]
     Store(#[from] store_duckdb::OpenError),
+    /// The store setting names a store this build doesn't have, or one it
+    /// needs is missing.
+    #[error("{variable}: {problem}")]
+    StoreSetting {
+        /// The variable it's read from.
+        variable: String,
+        /// What's wrong with it.
+        problem: String,
+    },
+    /// A store other than the default couldn't be opened.
+    #[error("the store: {0}")]
+    OpenStore(store::StoreError),
     /// The event log couldn't be opened.
     #[error("the event log: {0}")]
     Events(#[from] events::EventError),
@@ -109,15 +121,99 @@ impl Places {
     }
 }
 
+/// The store that was opened, which decides what closing it takes.
+enum OpenStore {
+    DuckDb(Arc<DuckDbStore>),
+    #[cfg(feature = "neo4j")]
+    Neo4j(Arc<store_neo4j::Neo4jStore>),
+}
+
+impl OpenStore {
+    fn shared(&self) -> Arc<dyn Store> {
+        match self {
+            Self::DuckDb(store) => Arc::clone(store) as Arc<dyn Store>,
+            #[cfg(feature = "neo4j")]
+            Self::Neo4j(store) => Arc::clone(store) as Arc<dyn Store>,
+        }
+    }
+
+    /// The `DuckDB` writer has to finish before the process ends. Neo4j's
+    /// connections close on their own.
+    fn close(self) {
+        match self {
+            Self::DuckDb(store) => match Arc::try_unwrap(store) {
+                Ok(store) => store.close(),
+                Err(_) => eprintln!("note: the store was still in use at shutdown"),
+            },
+            #[cfg(feature = "neo4j")]
+            Self::Neo4j(_) => {}
+        }
+    }
+}
+
+/// Opens the store the `STORE` setting names: `duckdb`, the default, or
+/// `neo4j` in a build with that feature.
+#[cfg_attr(
+    not(feature = "neo4j"),
+    expect(clippy::unused_async, reason = "only the neo4j store connects")
+)]
+async fn open_store(
+    prefix: &str,
+    variable: &dyn Fn(&str) -> Option<String>,
+    places: &Places,
+    dimension: usize,
+) -> Result<OpenStore, RunError> {
+    let setting = |problem: String| RunError::StoreSetting {
+        variable: format!("{prefix}_STORE"),
+        problem,
+    };
+    match variable("STORE").as_deref() {
+        None | Some("duckdb") => Ok(OpenStore::DuckDb(Arc::new(DuckDbStore::open(
+            &DuckDbConfig {
+                path: Some(places.data.join("brain.duckdb")),
+                extension_dir: places.extensions.clone(),
+                embedding_dimension: dimension,
+            },
+        )?))),
+        #[cfg(feature = "neo4j")]
+        Some("neo4j") => {
+            let required = |name: &str| {
+                variable(name).ok_or_else(|| RunError::StoreSetting {
+                    variable: format!("{prefix}_{name}"),
+                    problem: "the neo4j store needs it".to_owned(),
+                })
+            };
+            let config = store_neo4j::Neo4jConfig {
+                uri: required("NEO4J_URI")?,
+                user: variable("NEO4J_USER").unwrap_or_else(|| "neo4j".to_owned()),
+                password: required("NEO4J_PASSWORD")?,
+                database: variable("NEO4J_DATABASE"),
+                embedding_dimension: dimension,
+            };
+            let store = store_neo4j::Neo4jStore::connect(&config)
+                .await
+                .map_err(RunError::OpenStore)?;
+            Ok(OpenStore::Neo4j(Arc::new(store)))
+        }
+        #[cfg(not(feature = "neo4j"))]
+        Some("neo4j") => Err(setting(
+            "this build has no neo4j store; build it with the neo4j feature".to_owned(),
+        )),
+        Some(other) => Err(setting(format!(
+            "unknown store {other}; expected duckdb or neo4j"
+        ))),
+    }
+}
+
 /// Everything both ways of running share.
 struct Opened {
-    store: Arc<DuckDbStore>,
+    store: OpenStore,
     brain: Brain,
     workers: u32,
     definitions: PathBuf,
 }
 
-fn open(product: &str) -> Result<Opened, RunError> {
+async fn open(product: &str) -> Result<Opened, RunError> {
     let prefix = product.to_uppercase();
     let variable = |name: &str| {
         std::env::var(format!("{prefix}_{name}"))
@@ -134,34 +230,20 @@ fn open(product: &str) -> Result<Opened, RunError> {
         path: places.data.display().to_string(),
         source,
     })?;
-    let store = Arc::new(DuckDbStore::open(&DuckDbConfig {
-        path: Some(places.data.join("brain.duckdb")),
-        extension_dir: places.extensions,
-        embedding_dimension: embedding_dimension(&catalog).unwrap_or(DEFAULT_DIMENSION),
-    })?);
+    let dimension = embedding_dimension(&catalog).unwrap_or(DEFAULT_DIMENSION);
+    let store = open_store(&prefix, &variable, &places, dimension).await?;
     let sink: Arc<dyn EventSink> =
         Arc::new(DuckDbSink::open(Some(&places.data.join("events.duckdb")))?);
     let workers = config.workers;
-    let brain = Brain::assemble(
-        Arc::clone(&store) as Arc<dyn Store>,
-        sink,
-        catalog,
-        config,
-        &|name| std::env::var(name).ok(),
-    )?;
+    let brain = Brain::assemble(store.shared(), sink, catalog, config, &|name| {
+        std::env::var(name).ok()
+    })?;
     Ok(Opened {
         store,
         brain,
         workers,
         definitions: places.definitions,
     })
-}
-
-fn close(store: Arc<DuckDbStore>) {
-    match Arc::try_unwrap(store) {
-        Ok(store) => store.close(),
-        Err(_) => eprintln!("note: the store was still in use at shutdown"),
-    }
 }
 
 /// Serves MCP on stdin and stdout until the client hangs up. `product` is
@@ -171,13 +253,13 @@ fn close(store: Arc<DuckDbStore>) {
 ///
 /// [`RunError`] if it can't start or the connection fails.
 pub async fn run_stdio(product: &str, version: &str) -> Result<(), RunError> {
-    let Opened { store, brain, .. } = open(product)?;
+    let Opened { store, brain, .. } = open(product).await?;
     let tools = brain.mcp_tools();
     drop(brain);
     let served = plugin_api::serve_stdio(product, version, tools)
         .await
         .map_err(RunError::Serve);
-    close(store);
+    store.close();
     served
 }
 
@@ -246,7 +328,7 @@ pub async fn run_server(product: &str, version: &str) -> Result<(), RunError> {
         brain,
         workers,
         definitions,
-    } = open(product)?;
+    } = open(product).await?;
     let brain = brain.with_definitions(definitions.clone());
     let count = brain.load_definitions(&definitions, Utc::now()).await?;
     let router = brain.http_router(product, version, &owner_key)?;
@@ -258,8 +340,7 @@ pub async fn run_server(product: &str, version: &str) -> Result<(), RunError> {
         })?;
     eprintln!("{count} definitions loaded, {workers} workers, listening on {bind}");
 
-    let transport: Arc<dyn JobTransport> =
-        Arc::new(StoreTransport(Arc::clone(&store) as Arc<dyn Store>));
+    let transport: Arc<dyn JobTransport> = Arc::new(StoreTransport(store.shared()));
     let options = WorkerOptions {
         concurrency: workers as usize,
         ..WorkerOptions::default()
@@ -271,7 +352,7 @@ pub async fn run_server(product: &str, version: &str) -> Result<(), RunError> {
         format!("{product}-{}", std::process::id()),
     )
     .map(Arc::new)?;
-    let scheduler = Scheduler::new(Arc::clone(&store) as Arc<dyn Store>, transport);
+    let scheduler = Scheduler::new(store.shared(), transport);
     let (stop, shutdown) = watch::channel(false);
     let mut http_stop = shutdown.clone();
     let mut grace_stop = shutdown.clone();
@@ -302,6 +383,6 @@ pub async fn run_server(product: &str, version: &str) -> Result<(), RunError> {
         },
     );
     drop(brain);
-    close(store);
+    store.close();
     served.map_err(RunError::Serve)
 }

@@ -1,6 +1,6 @@
 //! The event sink. Telemetry and trajectories are high-volume appends that
 //! are read for analysis, not served, so they stay out of the store and a
-//! store plugin never has to take them.
+//! store never has to take them.
 //!
 //! The port has no update and no delete: what happened stays what happened.
 

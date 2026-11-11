@@ -37,8 +37,7 @@ provenance, and the privacy class comes from the run.
 ## Two ways to run
 
 **Compiled in.** Implement `Plugin`, and add the crate to `crates/app` behind a
-cargo feature. The default build has no plugins. A store plugin always runs
-this way, because the store sits on every call.
+cargo feature. The default build has no plugins.
 
 **As its own process.** Call `serve_stdio` from `main`: an MCP server over
 stdio, installed with `PluginHost::install_service`. The process gets an empty

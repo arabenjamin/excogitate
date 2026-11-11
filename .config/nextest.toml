@@ -1,0 +1,9 @@
+# nextest runs each test in its own process, so a lock inside the test
+# binary can't keep cases apart. The Neo4j store's cases share one database,
+# so this group runs them one at a time.
+[test-groups]
+neo4j = { max-threads = 1 }
+
+[[profile.default.overrides]]
+filter = "package(store-neo4j)"
+test-group = "neo4j"

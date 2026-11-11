@@ -176,6 +176,26 @@ impl RecordCatalog {
             .ok_or_else(|| StoreError::Invalid(format!("undeclared relation {name}")))
     }
 
+    /// The declared filterable fields a record has, each read as its
+    /// declared kind. For stores that index filter fields themselves; a
+    /// field that's missing or of another type is left out, so it matches
+    /// no filter, as in [`matches`](Self::matches).
+    #[must_use]
+    pub fn filter_values<'a>(&'a self, record: &Record) -> Vec<(&'a str, FieldValue)> {
+        let Some(compiled) = self.types.get(&record.record_type) else {
+            return Vec::new();
+        };
+        compiled
+            .decl
+            .filterable
+            .iter()
+            .filter_map(|field| {
+                read_field(&record.data, &field.name, field.kind)
+                    .map(|value| (field.name.as_str(), value))
+            })
+            .collect()
+    }
+
     /// Whether a record meets filters that have passed
     /// [`check_filters`](Self::check_filters). For stores that evaluate
     /// filters in process; a record lacking a field doesn't match.
