@@ -1,6 +1,6 @@
 [package]
 name = "store"
-description = "The store port: the brain's kinds, generic records, and a unit of work."
+description = "The store port: the runtime's kinds, generic records, and a unit of work."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

@@ -17,7 +17,7 @@ use store::{
 };
 use workflow::Agent;
 
-use crate::Brain;
+use crate::Runtime;
 
 /// How long the owner's webhook has to answer.
 const NOTIFY_TIMEOUT: Duration = Duration::from_secs(10);
@@ -91,7 +91,7 @@ fn agent_file(root: &Path, name: &str) -> PathBuf {
     root.join("agents").join(format!("{name}.yaml"))
 }
 
-impl Brain {
+impl Runtime {
     fn root(&self) -> Result<PathBuf, ChangeError> {
         self.definitions.as_deref().cloned().ok_or_else(|| {
             ChangeError::Conflict("there's no definitions directory to write".to_owned())
@@ -199,7 +199,7 @@ impl Brain {
         attempt: &Attempt,
     ) -> Result<Adoption, ChangeError> {
         if !self.config.harness.adopt {
-            return Ok(not_adopted("adoption is turned off in brain.yaml"));
+            return Ok(not_adopted("adoption is turned off in config.yaml"));
         }
         let _changing = self.changing.lock().await;
         let root = self.root()?;

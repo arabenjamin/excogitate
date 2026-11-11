@@ -2,13 +2,13 @@
 # It needs EXCOGITATE_OWNER_KEY in .env.
 #
 # For an MCP client that wants stdio, relay to the running server:
-#   docker compose run --rm -T --no-deps brain connect http://server:8080
+#   docker compose run --rm -T --no-deps session connect http://server:8080
 # With the server stopped, a session can open the store itself:
-#   docker compose run --rm -T brain
-x-brain: &brain
+#   docker compose run --rm -T session
+x-excogitate: &excogitate
   build:
     context: .
-    target: brain
+    target: excogitate
     args:
       # app/neo4j adds the Neo4j store (EXCOGITATE_STORE=neo4j).
       FEATURES: ${FEATURES:-}
@@ -28,36 +28,36 @@ x-brain: &brain
     - no-new-privileges:true
   volumes:
     - ./models.yaml:/config/models.yaml:ro
-    - ./brain.yaml:/config/brain.yaml:ro
+    - ./config.yaml:/config/config.yaml:ro
     - ./definitions:/config/definitions:ro
-    - brain-data:/data
+    - data:/data
 
 services:
   server:
-    <<: *brain
+    <<: *excogitate
     command: [server]
     environment:
       EXCOGITATE_BIND: 0.0.0.0:8080
     volumes:
       - ./models.yaml:/config/models.yaml:ro
-      - ./brain.yaml:/config/brain.yaml:ro
+      - ./config.yaml:/config/config.yaml:ro
       # Writable here, and only here: Harness² changes agent files when the
-      # evidence supports it (harness.adopt in brain.yaml). The container runs
+      # evidence supports it (harness.adopt in config.yaml). The container runs
       # as uid 1000, which must be able to write it.
       - ./definitions:/config/definitions
-      - brain-data:/data
+      - data:/data
     ports:
       # Only this machine can reach it. Put TLS in front before changing that.
-      - 127.0.0.1:${BRAIN_PORT:-8080}:8080
+      - 127.0.0.1:${HOST_PORT:-8080}:8080
     restart: unless-stopped
     init: true
     stop_grace_period: 30s
 
-  brain:
-    <<: *brain
+  session:
+    <<: *excogitate
     profiles:
       - stdio
     stdin_open: true
 
 volumes:
-  brain-data:
+  data:

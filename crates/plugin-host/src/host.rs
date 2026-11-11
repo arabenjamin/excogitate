@@ -41,7 +41,7 @@ pub enum HostError {
         /// What it asked for.
         capability: PluginCapability,
     },
-    /// A separate process has no way to reach the brain's capabilities.
+    /// A separate process has no way to reach the runtime's capabilities.
     #[error("plugin {0} runs as a service, and a service can't use capabilities or records")]
     ServiceWithCapabilities(String),
     /// Its tools aren't the ones its manifest declares.
@@ -124,7 +124,7 @@ fn compare_tools(manifest: &PluginManifest, tools: &[Arc<dyn Tool>]) -> Result<(
 }
 
 impl PluginHost {
-    /// A host with no plugins, which is a complete brain.
+    /// A host with no plugins, which is a complete runtime.
     #[must_use]
     pub fn new(store: Arc<dyn Store>, config: PluginsConfig, registry: ToolRegistry) -> Self {
         Self {

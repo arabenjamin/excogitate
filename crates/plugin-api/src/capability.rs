@@ -1,4 +1,4 @@
-//! What a plugin can ask the brain to do. Each one is granted by name, and
+//! What a plugin can ask the runtime to do. Each one is granted by name, and
 //! there's deliberately no way to call another tool.
 
 use std::sync::Arc;
@@ -19,13 +19,13 @@ pub enum CapabilityError {
     /// The request isn't allowed or isn't valid.
     #[error("refused: {0}")]
     Refused(String),
-    /// The brain couldn't do it.
+    /// The runtime couldn't do it.
     #[error("failed: {0}")]
     Failed(String),
 }
 
 /// The plugin's own records, and only its own: every type and relation name
-/// must carry the plugin's prefix. The brain sets each record's provenance.
+/// must carry the plugin's prefix. The runtime sets each record's provenance.
 #[async_trait]
 pub trait RecordsCapability: Send + Sync + std::fmt::Debug {
     /// Adds or replaces a record, returning its id.
@@ -89,7 +89,7 @@ pub trait RecordsCapability: Send + Sync + std::fmt::Debug {
     ) -> Result<Page<Record>, CapabilityError>;
 }
 
-/// An HTTP request, which the brain makes under its own network rules.
+/// An HTTP request, which the runtime makes under its own network rules.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HttpRequest {
     /// The method.
@@ -113,7 +113,7 @@ pub struct HttpResponse {
     pub truncated: bool,
 }
 
-/// HTTP through the brain.
+/// HTTP through the runtime.
 #[async_trait]
 pub trait HttpCapability: Send + Sync + std::fmt::Debug {
     /// Makes a request. Private addresses are refused by the host.
@@ -124,10 +124,10 @@ pub trait HttpCapability: Send + Sync + std::fmt::Debug {
     async fn request(&self, request: HttpRequest) -> Result<HttpResponse, CapabilityError>;
 }
 
-/// One-shot model calls, routed and charged by the brain.
+/// One-shot model calls, routed and charged by the runtime.
 #[async_trait]
 pub trait ModelCapability: Send + Sync + std::fmt::Debug {
-    /// Asks a model. The brain picks the model, under the run's privacy class.
+    /// Asks a model. The runtime picks the model, under the run's privacy class.
     ///
     /// # Errors
     ///

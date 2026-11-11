@@ -1,6 +1,6 @@
 # Models
 
-`crates/model` is the only way the brain calls a model. It works with any
+`crates/model` is the only way Excogitate calls a model. It works with any
 endpoint on the OpenAI wire, local or cloud. Models are named in `models.yaml`
 (start from `models.example.yaml`) and never in code; agents ask for
 capabilities.
@@ -33,7 +33,7 @@ If a call fails, the next model is tried, up to three, unless the server
 said the request itself was bad. When no model can take a call, the error
 names every model and why.
 
-The brain keeps this ledger in the store (`SpendLog`), so a restart can't reset
+Excogitate keeps this ledger in the store (`SpendLog`), so a restart can't reset
 a cap. `MemoryLedger` forgets on a restart, and is only for tests.
 
 ## Credentials

@@ -2,7 +2,7 @@
   "$defs": {
     "Credential": {
       "additionalProperties": false,
-      "description": "A key the brain attaches to requests for one host. The model never sees\nits value.",
+      "description": "A key the runtime attaches to requests for one host. The model never sees\nits value.",
       "properties": {
         "allow_insecure": {
           "default": false,
@@ -178,8 +178,8 @@
       "type": "integer"
     },
     "user_agent": {
-      "default": "brain",
-      "description": "The `User-Agent` it sends.",
+      "default": "runtime",
+      "description": "The `User-Agent` it sends. Left at the default, the server sends the\nprogram's name instead.",
       "maxLength": 256,
       "minLength": 1,
       "type": "string"

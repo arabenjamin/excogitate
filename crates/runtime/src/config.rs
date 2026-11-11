@@ -18,7 +18,7 @@ Say you did something only if a tool did it.";
 /// Everything about a run that the owner sets.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields, default)]
-pub struct BrainConfig {
+pub struct Config {
     /// The limits on each run. Spending defaults to zero, so a priced model
     /// is only used if this allows it.
     pub budget: Budget,
@@ -118,7 +118,7 @@ impl Default for ServerConfig {
     }
 }
 
-impl Default for BrainConfig {
+impl Default for Config {
     fn default() -> Self {
         Self {
             budget: Budget {
@@ -156,7 +156,7 @@ pub enum ConfigError {
     Invalid(String),
 }
 
-impl BrainConfig {
+impl Config {
     /// Reads and checks a configuration. Anything left out keeps its default.
     ///
     /// # Errors
@@ -178,15 +178,15 @@ mod tests {
 
     #[test]
     fn what_is_left_out_keeps_its_default() {
-        let config = BrainConfig::from_yaml("max_result_chars: 5").unwrap();
+        let config = Config::from_yaml("max_result_chars: 5").unwrap();
         assert_eq!(config.max_result_chars, 5);
-        assert_eq!(config.budget, BrainConfig::default().budget);
+        assert_eq!(config.budget, Config::default().budget);
     }
 
     #[test]
     fn the_defaults_meet_the_schema() {
-        let raw = serde_json::to_value(BrainConfig::default()).unwrap();
-        Validator::for_type::<BrainConfig>()
+        let raw = serde_json::to_value(Config::default()).unwrap();
+        Validator::for_type::<Config>()
             .unwrap()
             .check(&raw)
             .unwrap();
@@ -194,24 +194,24 @@ mod tests {
 
     #[test]
     fn the_example_file_is_valid_and_says_what_the_defaults_are() {
-        let example = BrainConfig::from_yaml(include_str!("../../../brain.example.yaml")).unwrap();
-        assert_eq!(example, BrainConfig::default());
+        let example = Config::from_yaml(include_str!("../../../config.example.yaml")).unwrap();
+        assert_eq!(example, Config::default());
     }
 
     #[test]
     fn unknown_settings_are_refused() {
-        let error = BrainConfig::from_yaml("max_result_char: 5").unwrap_err();
+        let error = Config::from_yaml("max_result_char: 5").unwrap_err();
         assert!(matches!(error, ConfigError::Invalid(_)), "{error}");
     }
 
     #[test]
     fn a_budget_must_be_complete() {
-        let error = BrainConfig::from_yaml("budget: {max_rounds: 1}").unwrap_err();
+        let error = Config::from_yaml("budget: {max_rounds: 1}").unwrap_err();
         assert!(matches!(error, ConfigError::Invalid(_)), "{error}");
     }
 
     #[test]
     fn spending_is_off_unless_the_owner_turns_it_on() {
-        assert_eq!(BrainConfig::default().budget.max_usd_micros, 0);
+        assert_eq!(Config::default().budget.max_usd_micros, 0);
     }
 }

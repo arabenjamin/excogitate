@@ -6,7 +6,7 @@ Every variable starts with the product's name in capitals. The image and
 | Variable | Default outside Docker | What it is |
 |---|---|---|
 | `EXCOGITATE_MODELS` | `models.yaml` | [The models file](models.md). |
-| `EXCOGITATE_CONFIG` | none | Optional settings. See `brain.example.yaml` and [`schemas/v1/brain_config.schema.json`](../schemas/v1/brain_config.schema.json). |
+| `EXCOGITATE_CONFIG` | none | Optional settings. See `config.example.yaml` and [`schemas/v1/config.schema.json`](../schemas/v1/config.schema.json). |
 | `EXCOGITATE_DATA_DIR` | `data` | Where the store and the event log live. With the Neo4j store, only the event log. |
 | `EXCOGITATE_STORE` | `duckdb` | `duckdb`, or `neo4j` in a build with that feature. See [the store](store.md#the-neo4j-store). |
 | `EXCOGITATE_NEO4J_URI` | none | With `STORE=neo4j`: the Bolt address, such as `bolt://neo4j:7687`. Required. |
@@ -16,7 +16,7 @@ Every variable starts with the product's name in capitals. The image and
 | `EXCOGITATE_DEFINITIONS` | `definitions` | Where agent, workflow and schedule files live. See [workflows](workflows.md). |
 | `EXCOGITATE_OWNER_KEY` | none | The `server` command won't start without it. At least 32 characters. See [the API](api.md). |
 | `EXCOGITATE_BIND` | `127.0.0.1:8080` | Where the server listens. |
-| `BRAIN_PORT` | `8080` | Compose only: the port on this machine. |
+| `HOST_PORT` | `8080` | Compose only: the port on this machine. |
 | `FEATURES` | none | Compose only: features to build in, such as `app/neo4j`. |
 | `EXCOGITATE_EXTENSION_DIR` | `.cache/duckdb-extensions` | DuckDB's extensions, from `scripts/fetch_duckdb_extensions.sh`. The image includes them. Nothing is downloaded at run time. |
 

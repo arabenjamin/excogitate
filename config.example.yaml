@@ -1,5 +1,5 @@
-# Copy to brain.yaml. Anything left out keeps its default; the reference is
-# schemas/v1/brain_config.schema.json.
+# Copy to config.yaml. Anything left out keeps its default; the reference is
+# schemas/v1/config.schema.json.
 
 # How much of each tool result a chat's model sees. Sized for a small model.
 max_result_chars: 12000
@@ -49,4 +49,4 @@ budget:
 #   # Every change is logged and can be reverted.
 #   adopt: true
 #   # Where to post each change as it's made.
-#   notify_url: https://example.com/hooks/brain
+#   notify_url: https://example.com/hooks/agent-changes

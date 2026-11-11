@@ -46,14 +46,14 @@ catch_up_seconds: 3600
 ```
 
 The files are the one home of a schedule: they're read at startup, and a file
-that's gone removes its schedule. Anything wrong with any file stops the brain
+that's gone removes its schedule. Anything wrong with any file stops Excogitate
 there, naming the file.
 
 **A schedule fires once per slot.** The job's id comes from the schedule's name
 and the time of the slot, so a restart or a second process adds nothing. There's
 no "last run" to lose.
 
-**If the brain was down,** it runs the latest missed slot, if that's within
+**If Excogitate was down,** it runs the latest missed slot, if that's within
 `catch_up_seconds`. Older slots are skipped, and a schedule never runs a backlog.
 
 A schedule defaults to one attempt, because a retry can spend money or repeat

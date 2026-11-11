@@ -1,5 +1,5 @@
 //! Running a plugin as its own process: a small MCP server over stdio, one
-//! JSON-RPC message per line. Everything the brain needs is covered; nothing
+//! JSON-RPC message per line. Everything the runtime needs is covered; nothing
 //! else is implemented.
 
 use std::collections::HashMap;
@@ -69,7 +69,7 @@ async fn call_tool(tools: &HashMap<String, Served>, id: &Value, params: &Value) 
         });
         return success(id, &result);
     }
-    // The brain holds the real run; a separate process only needs a value.
+    // The runtime holds the real run; a separate process only needs a value.
     let context = ToolContext {
         run: RunId::generate(),
         data_class: DataClass::Private,

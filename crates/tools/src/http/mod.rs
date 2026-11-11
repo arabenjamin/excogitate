@@ -2,7 +2,7 @@
 //!
 //! It defends against the model that calls it and the sites it fetches. The
 //! address of every hop is checked, including after DNS, so a name can't
-//! rebind to something internal. Keys are attached by the brain and never
+//! rebind to something internal. Keys are attached by the runtime and never
 //! reach the model. Whatever comes back is labelled untrusted.
 
 mod config;

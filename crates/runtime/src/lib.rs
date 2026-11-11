@@ -1,4 +1,4 @@
-//! Where the parts become one brain: configuration, assembly, and the tools
+//! Where the parts become one runtime: configuration, assembly, and the tools
 //! it offers over MCP. The binary only calls [`run_stdio`] and [`run_server`].
 
 #![deny(clippy::string_slice, clippy::indexing_slicing)]
@@ -14,8 +14,8 @@ mod ledger;
 mod mcp;
 mod run;
 
-pub use assemble::{Brain, BrainError};
-pub use config::{BrainConfig, ConfigError, HarnessConfig, ServerConfig};
+pub use assemble::{Runtime, RuntimeError};
+pub use config::{Config, ConfigError, HarnessConfig, ServerConfig};
 pub use connect::relay;
 pub use harness::{PickArgs, Picked};
 pub use http::{

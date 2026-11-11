@@ -1,4 +1,4 @@
-//! The default store: an embedded `DuckDB` file, so the brain needs no database
+//! The default store: an embedded `DuckDB` file, so the runtime needs no database
 //! server.
 //!
 //! The design comes from measuring it (`DuckDB` 2.0):

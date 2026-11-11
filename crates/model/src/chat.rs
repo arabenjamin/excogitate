@@ -1,4 +1,4 @@
-//! Requests and replies, in the brain's own types.
+//! Requests and replies, in the runtime's own types.
 
 use serde_json::Value;
 

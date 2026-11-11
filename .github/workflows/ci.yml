@@ -42,7 +42,7 @@ jobs:
               - 'plugins/**'
               - 'schemas/**'
               - 'models.example.yaml'
-              - 'brain.example.yaml'
+              - 'config.example.yaml'
               - 'definitions/**'
               - 'eval/**'
               - 'scripts/fetch_duckdb_extensions.sh'
@@ -132,7 +132,7 @@ jobs:
       - run: cargo nextest run --locked --workspace --all-features
       - name: Doctests (nextest skips them)
         run: cargo test --locked --workspace --doc
-      - name: The brain with no plugins compiled in
+      - name: The runtime with no plugins compiled in
         run: cargo nextest run --locked -p app --no-default-features
 
   docs:

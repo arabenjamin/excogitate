@@ -12,7 +12,7 @@ providers:
     timeout_secs: 300
 
   # A paid cloud endpoint: uncomment this and the large-chat model below, and
-  # set max_usd_micros in brain.yaml. Anything priced needs a daily cap, and
+  # set max_usd_micros in config.yaml. Anything priced needs a daily cap, and
   # only the purposes listed in paid_for may use it (chat, tool, memory,
   # schedule and workflow).
   # The key is read from the variable named here, and only ever sent to this

@@ -29,7 +29,7 @@ fn definition_from(manifest: &str, name: &str) -> Result<ToolDefinition, PluginE
         .ok_or_else(|| PluginError::Other(format!("{name} isn't in the manifest")))
 }
 
-/// Counts words. It needs nothing from the brain.
+/// Counts words. It needs nothing from the runtime.
 #[derive(Debug)]
 pub struct WordCount(ToolDefinition);
 

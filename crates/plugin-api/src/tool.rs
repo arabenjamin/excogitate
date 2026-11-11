@@ -54,7 +54,7 @@ impl ToolDefinition {
     }
 }
 
-/// What the brain tells a tool about the call. None of it comes from the
+/// What the runtime tells a tool about the call. None of it comes from the
 /// model.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ToolContext {

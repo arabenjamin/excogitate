@@ -7,7 +7,7 @@ use serde_json::Value;
 
 use crate::{ChunkId, JobId, NoteId, TaskId};
 
-/// Where content came from. The brain sets all of it, never the model.
+/// Where content came from. The runtime sets all of it, never the model.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Provenance {
     /// Who may see it.

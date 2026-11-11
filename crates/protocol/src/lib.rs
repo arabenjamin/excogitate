@@ -18,7 +18,7 @@ pub enum DataClass {
 /// so the label still applies when retrieval brings it back into a prompt.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum Trust {
-    /// Written by the owner or by the brain's own configuration.
+    /// Written by the owner or by the runtime's own configuration.
     Trusted,
     /// Fetched from outside, or written by a model.
     Untrusted,

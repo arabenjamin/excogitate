@@ -249,7 +249,7 @@ async fn list_jobs(
         .map(|name| status_named(name))
         .transpose()?;
     let found = app
-        .brain
+        .runtime
         .workflows
         .store
         .list_jobs(status, page(&params)?)
@@ -266,7 +266,7 @@ async fn get_job(
     Path(id): Path<String>,
 ) -> Result<Json<JobView>, ApiError> {
     let id = Uuid::parse_str(&id).map_err(|_| ApiError::invalid("a job id is a UUID"))?;
-    app.brain
+    app.runtime
         .workflows
         .store
         .get_job(JobId::from_uuid(id))
@@ -284,7 +284,7 @@ async fn list_definitions(
     only(&params, &["limit", "offset"])?;
     let kind = kind_named(&kind)?;
     let found = app
-        .brain
+        .runtime
         .workflows
         .store
         .list_definitions(kind, page(&params)?)
@@ -304,7 +304,7 @@ async fn get_definition(
         kind: kind_named(&kind)?,
         name,
     };
-    app.brain
+    app.runtime
         .workflows
         .store
         .get_definition(&key)
@@ -332,7 +332,7 @@ async fn start_run(
         .run_request
         .parse(raw)
         .map_err(|refusal| ApiError::refused(&refusal))?;
-    app.brain
+    app.runtime
         .workflows
         .check_run(&workflow, &request.inputs)
         .await

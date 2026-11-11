@@ -47,7 +47,7 @@ impl AddressPolicy {
     }
 }
 
-/// A name resolved to an address the brain may not reach.
+/// A name resolved to an address the runtime may not reach.
 #[derive(Debug)]
 pub(super) struct BlockedAddress {
     pub(super) host: String,

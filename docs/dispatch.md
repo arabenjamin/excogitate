@@ -67,7 +67,7 @@ event sink, apart from the store, one typed step per event
 trajectories, and a person can read one over [REST](api.md#runs).
 
 - **A harness id** is a hash of what decides how a run behaves. For a chat,
-  that's the brain's prompt, tools, budget and recall settings. For an agent,
+  that's Excogitate's prompt, tools, budget and recall settings. For an agent,
   it's its instructions, tools and own limits. A client's own system message
   is input, so it's not part of the id. Two runs with the same id ran under the
   same harness.

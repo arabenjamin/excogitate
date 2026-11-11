@@ -1,4 +1,4 @@
-//! The one way the rest of the brain calls a model: route, reserve the money,
+//! The one way the rest of the runtime calls a model: route, reserve the money,
 //! call, settle, and move to the next model when that could help.
 
 use std::fmt;

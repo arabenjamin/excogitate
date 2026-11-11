@@ -33,7 +33,7 @@ pub struct PluginManifest {
     /// Its tools.
     #[schemars(length(max = 64))]
     pub tools: Vec<ToolManifest>,
-    /// What it needs from the brain.
+    /// What it needs from the runtime.
     #[serde(default)]
     #[schemars(length(max = 8))]
     pub capabilities: Vec<PluginCapability>,
@@ -83,9 +83,9 @@ impl ToolManifest {
 pub enum PluginCapability {
     /// Its own records in the store.
     Records,
-    /// HTTP through the brain.
+    /// HTTP through the runtime.
     Http,
-    /// Model calls through the brain.
+    /// Model calls through the runtime.
     Model,
 }
 

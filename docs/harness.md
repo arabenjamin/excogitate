@@ -73,7 +73,7 @@ garbage on any long prompt, another put placeholders where the instructions
 belong, and a cheap one found and fixed the defect three times out of three
 for well under a cent an attempt. In every run, nothing the judges got wrong
 was adopted. What the judges may spend is
-`harness.judge_usd_micros` in `brain.yaml`, 0 by default, and which reads a probe
+`harness.judge_usd_micros` in `config.yaml`, 0 by default, and which reads a probe
 really runs is `harness.probe_reads`, `[memory]` by default.
 
 `POST /api/v1/harness/attempts`
@@ -107,7 +107,7 @@ don't load, the old file goes back. The change is logged with its evidence,
 the judge model, and the whole file it replaced, so a revert restores the
 file exactly, comments and all. The server needs write access to the
 definitions directory; compose mounts it writable for the server only. Set
-`harness.adopt: false` in `brain.yaml` to keep supported edits without adopting
+`harness.adopt: false` in `config.yaml` to keep supported edits without adopting
 them.
 
 ### Being told, and having the last word

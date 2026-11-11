@@ -16,10 +16,12 @@ async fn main() -> ExitCode {
             println!("{}", banner());
             ExitCode::SUCCESS
         }
-        ["serve"] => exit_code(brain::run_stdio(env!("CARGO_BIN_NAME"), VERSION).await),
-        ["server"] => exit_code(brain::run_server(env!("CARGO_BIN_NAME"), VERSION).await),
-        ["connect"] => exit_code(brain::run_connect(env!("CARGO_BIN_NAME"), None).await),
-        ["connect", url] => exit_code(brain::run_connect(env!("CARGO_BIN_NAME"), Some(url)).await),
+        ["serve"] => exit_code(runtime::run_stdio(env!("CARGO_BIN_NAME"), VERSION).await),
+        ["server"] => exit_code(runtime::run_server(env!("CARGO_BIN_NAME"), VERSION).await),
+        ["connect"] => exit_code(runtime::run_connect(env!("CARGO_BIN_NAME"), None).await),
+        ["connect", url] => {
+            exit_code(runtime::run_connect(env!("CARGO_BIN_NAME"), Some(url)).await)
+        }
         _ => {
             eprintln!(
                 "usage: {} [serve | server | connect [url] | version]",
@@ -30,7 +32,7 @@ async fn main() -> ExitCode {
     }
 }
 
-fn exit_code(result: Result<(), brain::RunError>) -> ExitCode {
+fn exit_code(result: Result<(), runtime::RunError>) -> ExitCode {
     match result {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {

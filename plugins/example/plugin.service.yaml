@@ -1,5 +1,5 @@
 # The same plugin run as its own process. A separate process can't reach the
-# brain's capabilities, so this form has only the tool that needs none.
+# runtime's capabilities, so this form has only the tool that needs none.
 api_version: 1
 name: example
 version: 0.0.0

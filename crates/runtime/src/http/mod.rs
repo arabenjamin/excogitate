@@ -31,7 +31,7 @@ use subtle::ConstantTimeEq;
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 use work::{JobTransport, StoreTransport};
 
-use crate::Brain;
+use crate::Runtime;
 
 pub use harness::{AttemptList, AttemptView, ChangeList, ChangeView, HoldList, HoldRequest};
 pub use openai::OpenAiRequest;
@@ -175,7 +175,9 @@ impl IntoResponse for ApiError {
 /// What every request can reach.
 #[derive(Clone)]
 pub(super) struct App {
-    brain: Brain,
+    runtime: Runtime,
+    /// The one model the front door lists: the product's name.
+    model_id: Arc<str>,
     mcp: Arc<McpHandler>,
     transport: Arc<dyn JobTransport>,
     permits: Arc<Semaphore>,
@@ -293,7 +295,7 @@ fn validator<T: JsonSchema>() -> Result<Arc<Validator>, HttpError> {
         .map_err(|error| HttpError::Schema(error.to_string()))
 }
 
-impl Brain {
+impl Runtime {
     /// The HTTP server, ready to be served. Only `/health` works without the
     /// key.
     ///
@@ -310,7 +312,8 @@ impl Brain {
         let mcp = McpHandler::new(product, version, self.mcp_tools())
             .map_err(|error| HttpError::Schema(error.to_string()))?;
         let app = App {
-            brain: self.clone(),
+            runtime: self.clone(),
+            model_id: Arc::from(product),
             mcp: Arc::new(mcp),
             transport: Arc::new(StoreTransport(Arc::clone(&self.workflows.store))),
             permits: Arc::new(Semaphore::new(

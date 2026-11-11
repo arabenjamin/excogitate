@@ -15,7 +15,7 @@ done < scripts/name-allowlist
 if hits=$(git grep -n -i -I --cached -e "$name" -- . "${excludes[@]}"); then
   echo "The name \"$name\" appears outside scripts/name-allowlist:" >&2
   echo "$hits" >&2
-  echo "Use \"the brain\" or a crate path, or add the file to the allowlist if the name belongs there." >&2
+  echo "Use \"the runtime\" or a crate path, or add the file to the allowlist if the name belongs there." >&2
   exit 1
 fi
 echo "check_name: \"$name\" only where allowed"
