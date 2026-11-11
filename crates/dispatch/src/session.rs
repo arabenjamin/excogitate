@@ -52,7 +52,22 @@ pub struct SessionConfig {
     pub max_result_chars: usize,
     /// What's running and under which harness, for its trajectory.
     pub subject: RunSubject,
+    /// Set for a Harness² probe: a run with no side effects.
+    pub probe: Option<Probe>,
 }
+
+/// How a probe runs: every call is checked as usual, but writes never run, and
+/// reads run only if they're listed. A stubbed call still counts against the
+/// budgets, so a probe hits the same limits a real run would.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Probe {
+    /// The read tools that really run. Anything else is stubbed.
+    pub reads: BTreeSet<String>,
+}
+
+/// What a probed run is told in place of a result.
+const STUB_REPLY: &str = "This is a test run. The call passed its checks and would have run, \
+but nothing was done. Carry on as if it had worked.";
 
 /// A session could not be set up.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -479,8 +494,44 @@ impl Session {
             }
             self.totals.writes += 1;
         }
+        if let Some(probe) = &self.config.probe
+            && (effect == crate::Effect::Write || !probe.reads.contains(&name))
+        {
+            return self.stub(call, name, effect).await;
+        }
         self.run_tool(call, name, registered, effect, arguments)
             .await
+    }
+
+    /// A probe's call that doesn't run: it's recorded, and the model is told.
+    async fn stub(&mut self, call: &ToolCall, name: String, effect: crate::Effect) -> ToolReply {
+        let index = self.call_index();
+        self.tool_calls.push(ToolEntry {
+            tool: name.clone(),
+            status: CallStatus::Stubbed,
+            refusal: None,
+            effect: Some(effect),
+            truncated: false,
+            untrusted: false,
+            by_harness: self.by_harness,
+            duration_ms: 0,
+            cost_usd_micros: 0,
+            detail: None,
+        });
+        let content = json!({ "stubbed": true, "detail": STUB_REPLY }).to_string();
+        self.emit(Step::Tool {
+            index,
+            tool: name,
+            status: CallStatus::Stubbed,
+            refusal: None,
+            effect: Some(effect),
+            by_harness: self.by_harness,
+            arguments: event_text(&call.arguments),
+            reply: Some(content.clone()),
+            duration_ms: 0,
+        })
+        .await;
+        Self::reply(call, CallStatus::Stubbed, content)
     }
 
     fn check_call<'r>(

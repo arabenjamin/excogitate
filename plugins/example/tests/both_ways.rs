@@ -45,6 +45,7 @@ fn session(registry: ToolRegistry, offered: &[&str]) -> Session {
                 agent: "test".to_owned(),
                 harness: "test".to_owned(),
             },
+            probe: None,
         },
     )
     .unwrap()

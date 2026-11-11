@@ -92,7 +92,7 @@ agents, workflows and Harness² on top. `docs/` describes each one as it is
 built: so far, [the store port](docs/store.md), [the model
 port](docs/models.md), [memory and retrieval](docs/memory.md), [dispatch](docs/dispatch.md),
 [the bundled tools](docs/tools.md), [MCP](docs/mcp.md), [the API](docs/api.md), [work](docs/work.md),
-[workflows](docs/workflows.md),
+[workflows](docs/workflows.md), [Harness²](docs/harness.md),
 [plugins](docs/plugins.md) and [schemas](docs/schemas.md).
 
 ## Writing a plugin

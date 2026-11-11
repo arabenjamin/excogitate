@@ -13,9 +13,12 @@ In order, and the first failure ends it:
 3. **Size and form.** Arguments are capped, then parsed.
 4. **Schema.** They must meet the tool's input schema; unknown keys are refused.
 5. **Write budget**, if the tool writes.
-6. **Run**, in its own task, so a panic can't take the run with it, and
+6. **Probe.** In a [Harness² probe](harness.md#probes), a write, or a read
+   that isn't allowed, stops here as `stubbed`. The model is told it would
+   have run.
+7. **Run**, in its own task, so a panic can't take the run with it, and
    within the run's time limit.
-7. **Output.** The result must meet the tool's output schema. Then it's cut
+8. **Output.** The result must meet the tool's output schema. Then it's cut
    to `max_result_chars` if needed, and says so.
 
 The model always gets a JSON reply it can act on: the result, a refusal with
@@ -68,6 +71,8 @@ trajectories, and a person can read one over [REST](api.md#runs).
   it's its instructions, tools and own limits. A client's own system message
   is input, so it's not part of the id. Two runs with the same id ran under the
   same harness.
+- **What ran** is `chat`, `agent:<name>`, `tool:<name>`, or `probe:<name>` for
+  a Harness² probe of an agent, so probes are never mixed up with real runs.
 - **The calls line** sums a run up in one line, such as
   `memory ran (harness) → http_request refused → answered`. Read it first: it
   keeps runs from being confused with each other.

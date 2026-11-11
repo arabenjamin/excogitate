@@ -72,6 +72,7 @@ fn session_for(
             purpose: purpose.to_owned(),
             max_result_chars,
             subject,
+            probe: None,
         },
     )
     .map_err(|error| setup_failed(&error))
@@ -338,7 +339,8 @@ impl Tool for DispatchedTool {
         let reply = session.dispatch(&call).await;
         let claimed = match reply.status {
             CallStatus::Ran => Outcome::Direct,
-            CallStatus::Refused => Outcome::Refused,
+            // A client's direct call is never a probe.
+            CallStatus::Refused | CallStatus::Stubbed => Outcome::Refused,
             CallStatus::Failed | CallStatus::TimedOut => Outcome::ToolFailed,
         };
         let receipt = session.finish(claimed).await;

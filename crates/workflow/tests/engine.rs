@@ -519,3 +519,130 @@ async fn an_agent_removed_since_loading_fails_its_step() {
 
     assert!(run.failure.as_deref().unwrap().contains("no agent gone"));
 }
+
+// Probes.
+
+fn read_tool(name: &'static str, log: &Arc<Recorder>) -> Arc<Fake> {
+    Arc::new(Fake {
+        name,
+        effect: Effect::Read,
+        reply: Ok(json!({ "text": "seen" })),
+        cost: 0,
+        delay: Duration::ZERO,
+        log: Arc::clone(log),
+    })
+}
+
+fn candidate(tools: &[&str]) -> workflow::Agent {
+    workflow::Agent {
+        description: String::new(),
+        system_prompt: "You help, carefully.".to_owned(),
+        tools: tools.iter().map(|tool| (*tool).to_owned()).collect(),
+        budget: None,
+        max_output_tokens: None,
+    }
+}
+
+#[tokio::test]
+async fn a_probe_runs_only_the_reads_it_was_allowed() {
+    let log = Arc::new(Recorder::default());
+    let script = vec![
+        ChaosStep::ToolCalls(vec![
+            ("save".to_owned(), r#"{"text":"x"}"#.to_owned()),
+            ("look".to_owned(), "{}".to_owned()),
+            ("peek".to_owned(), "{}".to_owned()),
+        ]),
+        ChaosStep::Text("done".to_owned()),
+    ];
+    let tools = vec![
+        tool("save", Ok(json!({})), 0, &log),
+        read_tool("look", &log),
+        read_tool("peek", &log),
+    ];
+    let harness = harness(script, tools, Arc::clone(&log)).await;
+    let agent = candidate(&["save", "look", "peek"]);
+    let reads = ["look".to_owned()].into_iter().collect();
+    let probed = harness
+        .engine
+        .probe_agent("helper", &agent, "Find it.", reads)
+        .await
+        .unwrap();
+
+    assert_eq!(probed.answer.as_deref(), Some("done"));
+    // Only the allowed read reached a tool.
+    assert_eq!(log.calls.lock().unwrap().len(), 1);
+    let statuses: Vec<_> = probed
+        .receipt
+        .tool_calls
+        .iter()
+        .map(|call| (call.tool.as_str(), call.status))
+        .collect();
+    assert_eq!(
+        statuses,
+        [
+            ("save", dispatch::CallStatus::Stubbed),
+            ("look", dispatch::CallStatus::Ran),
+            ("peek", dispatch::CallStatus::Stubbed),
+        ]
+    );
+    // A stubbed write still counts, so a probe meets the limits a real run would.
+    assert_eq!(probed.receipt.totals.writes, 1);
+    assert_eq!(probed.harness, harness.engine.agent_harness(&agent));
+
+    let trajectory = dispatch::read_trajectory(
+        harness.engine.sink.as_ref(),
+        probed.run.parse().unwrap(),
+        100,
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    assert_eq!(trajectory.agent.as_deref(), Some("probe:helper"));
+    assert_eq!(
+        trajectory.calls,
+        "save stubbed → look ran → peek stubbed → answered"
+    );
+}
+
+#[tokio::test]
+async fn a_candidate_is_checked_before_it_runs() {
+    let log = Arc::new(Recorder::default());
+    let harness = harness(vec![], vec![], Arc::clone(&log)).await;
+    let unknown = harness
+        .engine
+        .probe_agent(
+            "helper",
+            &candidate(&["ghost"]),
+            "Go.",
+            std::collections::BTreeSet::new(),
+        )
+        .await
+        .unwrap_err();
+    assert!(unknown.contains("ghost"), "{unknown}");
+    let mut blank = candidate(&[]);
+    blank.system_prompt = String::new();
+    let refused = harness
+        .engine
+        .probe_agent("helper", &blank, "Go.", std::collections::BTreeSet::new())
+        .await
+        .unwrap_err();
+    assert!(refused.starts_with("the candidate:"), "{refused}");
+}
+
+#[tokio::test]
+async fn a_harness_id_follows_the_agent_not_the_run() {
+    let log = Arc::new(Recorder::default());
+    let harness = harness(vec![], vec![], log).await;
+    let engine = &harness.engine;
+    let base = candidate(&[]);
+    let mut reworded = base.clone();
+    reworded.system_prompt.push_str(" Cite sources.");
+    let mut described = base.clone();
+    described.description = "What it's for.".to_owned();
+    assert_ne!(engine.agent_harness(&base), engine.agent_harness(&reworded));
+    // A description is for people; it doesn't change how the agent behaves.
+    assert_eq!(
+        engine.agent_harness(&base),
+        engine.agent_harness(&described)
+    );
+}
