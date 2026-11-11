@@ -50,5 +50,37 @@ services:
       CHAOS_SEED: ${CHAOS_SEED:-7}
     healthcheck: *ready
 
+  harness_fixture:
+    image: excogitate-fixture:local
+    init: true
+    command: [harness]
+    environment:
+      PAGE_URL: http://harness_fixture:9001/page
+    healthcheck: *ready
+
+  # A server of its own for Harness², with its own store, and a writable copy
+  # of the definitions that scripts/done_test.sh makes.
+  harness_server:
+    image: excogitate:local
+    command: [server]
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    environment:
+      EXCOGITATE_OWNER_KEY: done-test-owner-key-of-sufficient-length
+      EXCOGITATE_BIND: 0.0.0.0:8080
+    ports:
+      - 127.0.0.1:${HARNESS_PORT:-18475}:8080
+    volumes:
+      - ./tests/done/models.harness.yaml:/config/models.yaml:ro
+      - ./tests/done/brain.harness.yaml:/config/brain.yaml:ro
+      - ${HARNESS_DEFINITIONS:-./definitions}:/config/definitions
+      - harness-data:/data
+
 volumes:
   chaos-data:
+  harness-data:

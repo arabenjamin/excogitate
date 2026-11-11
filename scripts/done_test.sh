@@ -2,8 +2,9 @@
 # The done-test: the README's quickstart, run for real, in Docker, with a
 # scripted model in place of a real one. It checks that the brain boots with
 # no plugins and no database server, that it can fetch a page, store it and
-# find it again in a new session, and that a hostile model can't crash it or
-# get it past its budgets.
+# find it again in a new session, that a hostile model can't crash it or get
+# it past its budgets, and that Harness² adopts only what the evidence supports
+# and can be reverted.
 #
 # Set DONE_TEST_NO_BUILD=1 if the images are already built.
 set -euo pipefail
@@ -168,6 +169,74 @@ check "the chat that stored the page left its trajectory" "$stored" \
 models="$work/models"
 api "$base/v1/models" >"$models"
 check "the front door lists its model" "$models" '.[0].data[0].id == "brain"'
+
+# Harness², on a server of its own: a regression is never adopted, a probe's
+# write never happens, a supported edit is adopted and logged, and a revert
+# puts the file back exactly.
+h2_defs="$work/h2-definitions"
+mkdir -p "$h2_defs/agents"
+helper='system_prompt: You answer questions about otters.
+tools: [memory]
+'
+printf '%s' "$helper" >"$h2_defs/agents/helper.yaml"
+# The container's user must be able to write here, whoever runs the test.
+chmod 711 "$work"
+chmod 777 "$h2_defs" "$h2_defs/agents"
+chmod 666 "$h2_defs/agents/helper.yaml"
+export HARNESS_DEFINITIONS="$h2_defs" HARNESS_PORT=18475
+h2="http://127.0.0.1:$HARNESS_PORT"
+compose up --detach --wait harness_fixture
+compose up --detach --no-deps harness_server
+for ((try = 1; try <= 60; try++)); do
+  curl --silent --fail "$h2/health" >/dev/null 2>&1 && break
+  [[ $try != 60 ]] || fail "the Harness² server never came up"
+  sleep 1
+done
+
+# attempt <file>: starts an attempt, waits for its job, and writes the job.
+attempt() {
+  local job
+  job=$(api "$h2/api/v1/harness/attempts" -d '{"agent":"helper","task":"What do sea otters do?"}' | jq -r .job_id)
+  for ((try = 1; try <= 120; try++)); do
+    api "$h2/api/v1/jobs/$job" >"$1"
+    jq -e '.status == "succeeded" or .status == "dead"' "$1" >/dev/null && return
+    sleep 0.5
+  done
+  fail "an attempt never finished" "$1"
+}
+
+regressed="$work/regressed"
+attempt "$regressed"
+check "a candidate whose run ends worse is a regression, whatever the judge says" "$regressed" \
+  '.[0].result.attempt | .status == "kept" and .verdicts[0].overridden == "regressed" and .adoption == null'
+cmp -s <(printf '%s' "$helper") "$h2_defs/agents/helper.yaml" || fail "a regressing candidate changed the agent"
+ok "and the agent's file is untouched"
+
+supported="$work/supported"
+attempt "$supported"
+check "a probe stubs a write, and it never happens" "$supported" \
+  '.[0].result.attempt.reference.calls | startswith("memory stubbed")'
+probe_note="$work/probe_note"
+api "$h2/mcp" -d "$(call 1 memory '{"operation":"search","query":"Written only in a probe"}')" >"$probe_note"
+check "nothing a probe stubbed was written" "$probe_note" \
+  '.[0].result.structuredContent.result.hits == []'
+check "a supported edit is adopted once the judge passes its known answers" "$supported" \
+  '.[0].result.attempt | .status == "supported" and .adoption.adopted == true'
+head -1 "$h2_defs/agents/helper.yaml" | grep -q '^# Changed by Harness²' || fail "the agent's file wasn't rewritten"
+grep -q 'Look in memory before you answer' "$h2_defs/agents/helper.yaml" || fail "the new instructions aren't in the file"
+ok "the agent's file is rewritten, and says how to undo it"
+
+changes="$work/changes"
+api "$h2/api/v1/harness/changes?status=live" >"$changes"
+jq -e --arg old "$helper" '.items | length == 1 and .[0].change.old_file == $old' "$changes" >/dev/null ||
+  fail "the change isn't logged with the file it replaced" "$changes"
+ok "the change is logged with the file it replaced"
+change=$(jq -r '.items[0].id' "$changes")
+reverted="$work/reverted"
+api -X POST "$h2/api/v1/harness/changes/$change/revert" >"$reverted"
+check "the owner can revert it" "$reverted" '.[0].change.status == "reverted"'
+cmp -s <(printf '%s' "$helper") "$h2_defs/agents/helper.yaml" || fail "the revert didn't put the file back exactly"
+ok "and the revert puts the file back exactly"
 
 passed=1
 echo "The done-test passed."
