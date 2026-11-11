@@ -1,0 +1,66 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "When to enqueue a job, and which.",
+  "properties": {
+    "catch_up_seconds": {
+      "default": 3600,
+      "description": "How late a run may start after the brain was down. An older run is\nskipped.",
+      "format": "uint32",
+      "maximum": 604800,
+      "minimum": 0,
+      "type": "integer"
+    },
+    "cron": {
+      "description": "A cron expression, with an optional seconds field first.",
+      "maxLength": 128,
+      "minLength": 1,
+      "type": "string"
+    },
+    "enabled": {
+      "default": true,
+      "description": "Whether it runs.",
+      "type": "boolean"
+    },
+    "kind": {
+      "description": "The kind of job.",
+      "maxLength": 64,
+      "minLength": 1,
+      "type": "string"
+    },
+    "max_attempts": {
+      "default": 1,
+      "description": "How many times it may be tried. One by default, because a retry can\nspend money or repeat what the first attempt did.",
+      "format": "uint32",
+      "maximum": 10,
+      "minimum": 1,
+      "type": "integer"
+    },
+    "payload": {
+      "description": "The job's input, checked against what that kind accepts.",
+      "x-extension": "checked against the job kind's payload schema"
+    },
+    "priority": {
+      "default": 0,
+      "description": "Higher runs first.",
+      "format": "int32",
+      "type": "integer"
+    },
+    "timezone": {
+      "description": "The IANA time zone it's written in, such as `America/Detroit`. UTC if\nleft out.",
+      "maxLength": 64,
+      "minLength": 1,
+      "type": [
+        "string",
+        "null"
+      ]
+    }
+  },
+  "required": [
+    "cron",
+    "kind",
+    "payload"
+  ],
+  "title": "Schedule",
+  "type": "object"
+}

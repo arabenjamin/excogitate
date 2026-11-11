@@ -8,6 +8,7 @@ use std::sync::{Mutex, MutexGuard, PoisonError};
 use async_trait::async_trait;
 use chrono::{DateTime, NaiveDate, Utc};
 use protocol::DataClass;
+use serde_json::Value;
 use store::{
     Chunk, ChunkHit, ChunkId, ClassFilter, Definition, DefinitionKey, DefinitionKind,
     DefinitionReader, Direction, Job, JobId, JobQueue, JobStatus, Lease, Note, NoteId, NoteReader,
@@ -440,6 +441,21 @@ impl JobQueue for MemoryStore {
         Ok(self.state().jobs.get(&id).cloned())
     }
 
+    async fn list_jobs(
+        &self,
+        status: Option<JobStatus>,
+        page: PageRequest,
+    ) -> Result<Page<Job>, StoreError> {
+        let state = self.state();
+        let mut jobs: Vec<&Job> = state
+            .jobs
+            .values()
+            .filter(|job| status.is_none_or(|wanted| job.status == wanted))
+            .collect();
+        jobs.sort_by_key(|job| (std::cmp::Reverse(job.run_at), job.id));
+        Ok(Page::from_sorted(jobs.into_iter().cloned(), page))
+    }
+
     async fn claim_job(
         &self,
         worker: &str,
@@ -468,10 +484,11 @@ impl JobQueue for MemoryStore {
         Ok(Some(job.clone()))
     }
 
-    async fn complete_job(&self, id: JobId, worker: &str) -> Result<(), StoreError> {
+    async fn complete_job(&self, id: JobId, worker: &str, result: Value) -> Result<(), StoreError> {
         let mut state = self.state();
         let job = state.held_job(id, worker)?;
         job.status = JobStatus::Succeeded;
+        job.result = Some(result);
         job.lease = None;
         Ok(())
     }

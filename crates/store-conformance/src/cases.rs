@@ -620,12 +620,19 @@ pub async fn completing_needs_the_lease(store: &dyn Store) {
         .await
         .unwrap()
         .unwrap();
-    is_conflict(store.complete_job(j.id, "other").await);
-    store.complete_job(j.id, "holder").await.unwrap();
+    is_conflict(store.complete_job(j.id, "other", json!(1)).await);
+    store
+        .complete_job(j.id, "holder", json!({ "answer": 42 }))
+        .await
+        .unwrap();
+    assert_eq!(
+        store.get_job(j.id).await.unwrap().unwrap().result,
+        Some(json!({ "answer": 42 }))
+    );
     let done = store.get_job(j.id).await.unwrap().unwrap();
     assert_eq!((done.status, done.lease), (JobStatus::Succeeded, None));
-    is_conflict(store.complete_job(j.id, "holder").await);
-    is_not_found(store.complete_job(job(0, 0).id, "holder").await);
+    is_conflict(store.complete_job(j.id, "holder", json!(1)).await);
+    is_not_found(store.complete_job(job(0, 0).id, "holder", json!(1)).await);
 }
 
 /// A failure retries at the time given, and the last one stays visible.
@@ -1057,4 +1064,30 @@ pub async fn huge_amounts_are_refused_not_wrapped(store: &dyn Store) {
 pub async fn settling_never_goes_below_zero(store: &dyn Store) {
     store.settle_spend("p", day(1), 100, 1).await.unwrap();
     assert_eq!(store.spent_on("p", day(1)).await.unwrap(), 1);
+}
+
+/// Jobs can be listed, so a failure can be found.
+pub async fn jobs_list_newest_first_and_by_status(store: &dyn Store) {
+    let (old, new, done) = (job(0, 1), job(0, 5), job(9, 3));
+    for queued in [&old, &new, &done] {
+        store
+            .apply(WriteOp::EnqueueJob(queued.clone()).into())
+            .await
+            .unwrap();
+    }
+    let claimed = store.claim_job("w", at(10), at(20)).await.unwrap().unwrap();
+    assert_eq!(claimed.id, done.id, "the highest priority");
+    store.complete_job(done.id, "w", json!(1)).await.unwrap();
+
+    let all = store.list_jobs(None, page(10)).await.unwrap();
+    let ids: Vec<_> = all.items.iter().map(|listed| listed.id).collect();
+    assert_eq!(ids, [new.id, done.id, old.id]);
+    let finished = store
+        .list_jobs(Some(JobStatus::Succeeded), page(10))
+        .await
+        .unwrap();
+    assert_eq!(finished.items.len(), 1);
+    assert_eq!(finished.items[0].id, done.id);
+    let one = store.list_jobs(None, page(1)).await.unwrap();
+    assert!(one.has_more);
 }

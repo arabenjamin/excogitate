@@ -7,18 +7,19 @@ use std::sync::{Arc, Mutex, PoisonError, RwLock};
 use async_trait::async_trait;
 use chrono::{DateTime, NaiveDate, Utc};
 use duckdb::{Connection, params};
+use serde_json::Value;
 use store::{
     Chunk, ChunkHit, ClassFilter, Definition, DefinitionKey, DefinitionKind, DefinitionReader,
-    Direction, Job, JobId, JobQueue, Note, NoteId, NoteReader, Page, PageRequest, Record,
-    RecordCatalog, RecordDecls, RecordId, RecordQuery, RecordReader, SpendLog, Store, StoreError,
-    Task, TaskId, TaskQuery, TaskReader, UnitOfWork, WorkingEntry,
+    Direction, Job, JobId, JobQueue, JobStatus, Note, NoteId, NoteReader, Page, PageRequest,
+    Record, RecordCatalog, RecordDecls, RecordId, RecordQuery, RecordReader, SpendLog, Store,
+    StoreError, Task, TaskId, TaskQuery, TaskReader, UnitOfWork, WorkingEntry,
 };
 use tokio::sync::{Semaphore, mpsc, oneshot};
 
 use crate::codec::{
     DEFINITION_COLUMNS, JOB_COLUMNS, NOTE_COLUMNS, TASK_COLUMNS, WORKING_COLUMNS, backend,
-    definition_at, definition_kind_name, job_at, note_at, task_at, task_status_name, vector_param,
-    working_at,
+    definition_at, definition_kind_name, job_at, job_status_name, note_at, task_at,
+    task_status_name, vector_param, working_at,
 };
 use crate::read::{self, optional, paged};
 use crate::schema_sql;
@@ -321,6 +322,23 @@ impl JobQueue for DuckDbStore {
         .await
     }
 
+    async fn list_jobs(
+        &self,
+        status: Option<JobStatus>,
+        page: PageRequest,
+    ) -> Result<Page<Job>, StoreError> {
+        self.read(move |connection| {
+            let status = status.map(job_status_name);
+            let sql = format!(
+                "SELECT {JOB_COLUMNS} FROM jobs
+                 WHERE (?::VARCHAR IS NULL OR status = ?)
+                 ORDER BY run_at DESC, id"
+            );
+            paged(connection, &sql, params![status, status], page, job_at)
+        })
+        .await
+    }
+
     async fn claim_job(
         &self,
         worker: &str,
@@ -337,10 +355,15 @@ impl JobQueue for DuckDbStore {
         .await
     }
 
-    async fn complete_job(&self, id: JobId, worker: &str) -> Result<(), StoreError> {
+    async fn complete_job(&self, id: JobId, worker: &str, result: Value) -> Result<(), StoreError> {
         let worker = worker.to_owned();
-        self.send(|reply| Command::Complete { id, worker, reply })
-            .await
+        self.send(|reply| Command::Complete {
+            id,
+            worker,
+            result,
+            reply,
+        })
+        .await
     }
 
     async fn fail_job(

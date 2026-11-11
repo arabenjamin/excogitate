@@ -67,7 +67,8 @@ text_enum!(JobStatus, job_status_name, job_status_at,
     JobStatus::Queued => "queued", JobStatus::Claimed => "claimed",
     JobStatus::Succeeded => "succeeded", JobStatus::Dead => "dead");
 text_enum!(DefinitionKind, definition_kind_name, definition_kind_at,
-    DefinitionKind::Agent => "agent", DefinitionKind::Workflow => "workflow");
+    DefinitionKind::Agent => "agent", DefinitionKind::Workflow => "workflow",
+    DefinitionKind::Schedule => "schedule");
 
 /// A vector as a bind parameter, for `?::FLOAT[n]`.
 pub(crate) fn vector_param(vector: &[f32]) -> Sql {
@@ -166,7 +167,21 @@ pub(crate) fn working_at(row: &Row<'_>) -> duckdb::Result<WorkingEntry> {
 }
 
 pub(crate) const JOB_COLUMNS: &str = "id, kind, payload, priority, status, requested_by, run_at, \
-     attempts, max_attempts, lease_worker, lease_until, last_error";
+     attempts, max_attempts, lease_worker, lease_until, last_error, result";
+
+fn optional_json_at(row: &Row<'_>, index: usize) -> duckdb::Result<Option<Value>> {
+    let text: Option<String> = row.get(index)?;
+    text.map(|text| {
+        serde_json::from_str(&text).map_err(|error| {
+            duckdb::Error::FromSqlConversionFailure(
+                index,
+                duckdb::types::Type::Text,
+                Box::new(error),
+            )
+        })
+    })
+    .transpose()
+}
 
 pub(crate) fn job_at(row: &Row<'_>) -> duckdb::Result<Job> {
     let worker: Option<String> = row.get(9)?;
@@ -185,6 +200,7 @@ pub(crate) fn job_at(row: &Row<'_>) -> duckdb::Result<Job> {
             .zip(until)
             .map(|(worker, until)| Lease { worker, until }),
         last_error: row.get(11)?,
+        result: optional_json_at(row, 12)?,
     })
 }
 

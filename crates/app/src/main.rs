@@ -23,8 +23,18 @@ async fn main() -> ExitCode {
                 ExitCode::FAILURE
             }
         },
+        ["worker"] => match brain::run_worker(env!("CARGO_BIN_NAME")).await {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(error) => {
+                eprintln!("error: {error}");
+                ExitCode::FAILURE
+            }
+        },
         _ => {
-            eprintln!("usage: {} [serve | version]", env!("CARGO_BIN_NAME"));
+            eprintln!(
+                "usage: {} [serve | worker | version]",
+                env!("CARGO_BIN_NAME")
+            );
             ExitCode::from(2)
         }
     }

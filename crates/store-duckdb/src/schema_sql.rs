@@ -44,10 +44,12 @@ CREATE TABLE records (
 CREATE TABLE links (relation VARCHAR NOT NULL, from_id VARCHAR NOT NULL, to_id VARCHAR NOT NULL);
 ";
 
-/// What each provider has spent per day. Created on every open, so a file
-/// from before this table existed gets it without a migration.
+/// What each provider has spent per day, and what each job produced. Run on
+/// every open, so a file from before these existed gets them without a
+/// migration.
 const SPEND_TABLE: &str = "CREATE TABLE IF NOT EXISTS spend (
-    provider VARCHAR NOT NULL, day DATE NOT NULL, usd_micros UBIGINT NOT NULL);";
+    provider VARCHAR NOT NULL, day DATE NOT NULL, usd_micros UBIGINT NOT NULL);
+    ALTER TABLE jobs ADD COLUMN IF NOT EXISTS result VARCHAR;";
 
 fn quoted(text: &str) -> String {
     text.replace('\'', "''")

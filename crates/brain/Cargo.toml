@@ -25,13 +25,14 @@ serde_json.workspace = true
 store = { path = "../store" }
 store-duckdb = { path = "../store-duckdb" }
 thiserror.workspace = true
+tokio = { workspace = true, features = ["signal"] }
 tools = { path = "../tools" }
+work = { path = "../work" }
 
 [dev-dependencies]
 axum.workspace = true
 chaos-model = { path = "../chaos-model" }
 store-memory = { path = "../store-memory" }
-tokio.workspace = true
 
 [lints]
 workspace = true

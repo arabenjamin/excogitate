@@ -2,7 +2,9 @@
 //! budget and receipt, through the same dispatch as a model's calls.
 
 use async_trait::async_trait;
-use dispatch::{CallStatus, Conversation, Outcome, Receipt, Session, SessionConfig, SessionError};
+use dispatch::{
+    CallStatus, ChatResult, Conversation, Outcome, Receipt, Session, SessionConfig, SessionError,
+};
 use model::{Message, ToolCall};
 use plugin_api::{Effect, Tool, ToolContext, ToolDefinition, ToolFailure, ToolOutput};
 use protocol::{DataClass, RunId, Trust};
@@ -131,6 +133,16 @@ pub struct ChatReply {
     pub receipt: Receipt,
 }
 
+impl From<ChatResult> for ChatReply {
+    fn from(result: ChatResult) -> Self {
+        Self {
+            answer: result.answer,
+            stopped_because: result.stopped_because,
+            receipt: result.receipt,
+        }
+    }
+}
+
 /// One conversation with the brain.
 #[derive(Debug)]
 pub(crate) struct ChatTool(Brain);
@@ -150,32 +162,9 @@ impl Tool for ChatTool {
     async fn run(&self, arguments: Value, _: ToolContext) -> Result<ToolOutput, ToolFailure> {
         let args: ChatArgs = serde_json::from_value(arguments)
             .map_err(|error| ToolFailure(schema::bounded(&error.to_string())))?;
-        let brain = &self.0;
-        let question = args.message;
-        let offered = brain
-            .registry
-            .definitions()
-            .into_iter()
-            .map(|definition| definition.name)
-            .collect();
-        let mut session = session_for(brain, offered, CHAT_PURPOSE, brain.config.max_result_chars)?;
-        let mut messages = vec![
-            Message::system(brain.config.system_prompt.clone()),
-            Message::user(question.clone()),
-        ];
-        recall(&brain.config, &mut session, &question, &mut messages).await;
-        let conversation = Conversation {
-            messages,
-            max_output_tokens: brain.config.max_output_tokens,
-            temperature: None,
-        };
-        let result = session.converse(&brain.gateway, conversation).await;
+        let result = self.0.chat(args.message, CHAT_PURPOSE).await?;
         let cost_usd_micros = result.receipt.totals.cost_usd_micros;
-        let reply = ChatReply {
-            answer: result.answer,
-            stopped_because: result.stopped_because,
-            receipt: result.receipt,
-        };
+        let reply = ChatReply::from(result);
         Ok(ToolOutput {
             value: serde_json::to_value(reply)
                 .map_err(|error| ToolFailure(schema::bounded(&error.to_string())))?,
@@ -183,6 +172,34 @@ impl Tool for ChatTool {
             trust: Trust::Untrusted,
             cost_usd_micros,
         })
+    }
+}
+
+impl Brain {
+    /// Runs one chat, as its own run, on behalf of `purpose`.
+    pub(crate) async fn chat(
+        &self,
+        question: String,
+        purpose: &str,
+    ) -> Result<ChatResult, ToolFailure> {
+        let offered = self
+            .registry
+            .definitions()
+            .into_iter()
+            .map(|definition| definition.name)
+            .collect();
+        let mut session = session_for(self, offered, purpose, self.config.max_result_chars)?;
+        let mut messages = vec![
+            Message::system(self.config.system_prompt.clone()),
+            Message::user(question.clone()),
+        ];
+        recall(&self.config, &mut session, &question, &mut messages).await;
+        let conversation = Conversation {
+            messages,
+            max_output_tokens: self.config.max_output_tokens,
+            temperature: None,
+        };
+        Ok(session.converse(&self.gateway, conversation).await)
     }
 }
 

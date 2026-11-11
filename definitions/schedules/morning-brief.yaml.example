@@ -1,0 +1,16 @@
+# Copy to a .yaml file in this directory to turn it on. The file's name is the
+# schedule's name. Each file is checked when the brain starts, and anything
+# wrong stops it there, naming the file.
+#
+# Cron has five fields, or six with seconds first.
+cron: "0 8 * * *"
+# An IANA zone. UTC if left out.
+timezone: America/Detroit
+kind: chat
+payload:
+  message: What have I stored recently that I should follow up on today?
+# How many times to try. One by default, since a retry can spend money or
+# repeat what the first attempt did.
+max_attempts: 1
+# How late a run may start after the brain was down.
+catch_up_seconds: 3600

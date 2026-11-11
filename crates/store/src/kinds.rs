@@ -182,6 +182,8 @@ pub struct Job {
     pub lease: Option<Lease>,
     /// Why the last attempt failed.
     pub last_error: Option<String>,
+    /// What it produced, once it succeeded.
+    pub result: Option<Value>,
 }
 
 /// What a definition defines.
@@ -191,6 +193,8 @@ pub enum DefinitionKind {
     Agent,
     /// A workflow.
     Workflow,
+    /// When to enqueue a job.
+    Schedule,
 }
 
 /// A definition's one home: there's one per kind and name.
