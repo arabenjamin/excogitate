@@ -763,6 +763,32 @@ async fn the_time_budget_stops_a_slow_model() {
 }
 
 #[tokio::test]
+async fn a_paid_call_the_time_budget_cuts_off_is_on_the_receipt() {
+    let client = Arc::new(Canned {
+        usage: USED,
+        delay: Duration::from_secs(60),
+        seen: Mutex::default(),
+        outputs: Mutex::default(),
+        fail: false,
+    });
+    let gateway = gateway(PRICED, client);
+    let mut limits = budget();
+    limits.max_duration_ms = 30;
+    limits.max_usd_micros = 1_000_000;
+    let mut session = session_with(&[], &[], limits);
+    let stop = session
+        .call_model(&gateway, &[], request())
+        .await
+        .unwrap_err();
+    assert_eq!(stop, ModelStop::Budget(BudgetKind::Time));
+    let receipt = session.finish(Outcome::Answered).await;
+    // The day's ledger charged the prompt; the run says so too.
+    let charged = receipt.model_calls[0].cost_usd_micros;
+    assert!(charged > 0, "{receipt:?}");
+    assert_eq!(receipt.totals.cost_usd_micros, charged);
+}
+
+#[tokio::test]
 async fn a_failed_model_is_recorded_and_cannot_be_claimed_as_answered() {
     let client = Arc::new(Canned {
         usage: USED,
