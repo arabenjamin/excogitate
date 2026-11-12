@@ -39,8 +39,9 @@ Plugins can offer memory sources, such as a data lake
 ([plugins.md](plugins.md#sources)). The `memory` tool's search reads them
 too: each source's hits are one more ranked list in the fusion, so an item
 competes with notes on rank alone, and a source's own scores are never
-compared with anything. Sources are searched at once, each within its own
-time limit, and a source that fails or is too slow is named in the result,
+compared with anything. Sources are searched one after another, each
+within its own time limit and with what the run has left after the ones
+before it, and a source that fails or is too slow is named in the result,
 not left to look like it found nothing.
 
 An item keeps the similarity its source reports only if the source was sent

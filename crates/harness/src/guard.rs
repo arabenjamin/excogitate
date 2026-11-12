@@ -55,6 +55,38 @@ pub(crate) fn leaks(what: &str, text: &str, task: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// The shortest input value an edit is checked for: one this long, pasted
+/// into a step, is the test case, not a coincidence.
+const MIN_VALUE_CHARS: usize = 12;
+
+/// Why `text` can't go into a workflow step, if it can't: it holds one of
+/// the values the workflow was tested on. `what` names it, with its verb.
+pub(crate) fn holds_a_value(
+    what: &str,
+    text: &str,
+    inputs: &serde_json::Value,
+) -> Result<(), String> {
+    let text = squeeze(text);
+    let mut values = Vec::new();
+    leaves(inputs, &mut values);
+    for value in values {
+        let value = squeeze(value);
+        if value.chars().count() >= MIN_VALUE_CHARS && text.contains(&value) {
+            return Err(format!("{what} an input it was tested on"));
+        }
+    }
+    Ok(())
+}
+
+fn leaves<'a>(value: &'a serde_json::Value, into: &mut Vec<&'a str>) {
+    match value {
+        serde_json::Value::String(text) => into.push(text),
+        serde_json::Value::Array(items) => items.iter().for_each(|item| leaves(item, into)),
+        serde_json::Value::Object(map) => map.values().for_each(|item| leaves(item, into)),
+        _ => {}
+    }
+}
+
 fn skill_chars(agent: &Agent) -> usize {
     agent
         .skills

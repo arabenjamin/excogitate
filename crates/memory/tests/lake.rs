@@ -10,10 +10,11 @@ use async_trait::async_trait;
 use chrono::Utc;
 use memory::{
     ChunkConfig, EmbedError, EmbedScope, Embedder, Embedding, Found, LakeSearch, LakeSource,
-    Memory, MemoryError, NewNote, NoteOrigin,
+    Memory, MemoryError, NewNote, NoteOrigin, SourceMeter,
 };
 use plugin_api::{
-    MAX_ITEM_TEXT, Source, SourceFound, SourceItem, SourceQuery, ToolContext, ToolFailure,
+    CapabilityUse, MAX_ITEM_TEXT, PluginCapability, Source, SourceFound, SourceItem, SourceQuery,
+    ToolContext, ToolFailure,
 };
 use protocol::{Actor, DataClass, RunId, Trust};
 use store::ClassFilter;
@@ -83,6 +84,7 @@ fn lake(source: &Arc<Lake>, public: bool) -> LakeSource {
         dimension: None,
         time_limit: Duration::from_secs(5),
         source: Arc::clone(source) as Arc<dyn Source>,
+        meter: None,
     }
 }
 
@@ -410,4 +412,105 @@ async fn sources_are_attached_once_with_ids_of_their_own() {
     memory.attach_sources(vec![lake(&one, false)]).unwrap();
     assert!(memory.attach_sources(Vec::new()).is_err());
     assert_eq!(memory.source_ids(), ["demo.one"]);
+}
+
+/// A plugin's meter, shared by its sources: what they spent and did.
+#[derive(Debug, Default)]
+struct Meter(Mutex<(u64, Vec<CapabilityUse>)>);
+
+impl SourceMeter for Meter {
+    fn take(&self, _: RunId) -> (u64, Vec<CapabilityUse>) {
+        std::mem::take(&mut *self.0.lock().unwrap())
+    }
+}
+
+/// A source whose plugin makes a model call costing `cost` for each search,
+/// recorded on the plugin's meter, not reported by the source.
+#[derive(Debug)]
+struct Spender {
+    name: &'static str,
+    cost: u64,
+    delay: Duration,
+    meter: Arc<Meter>,
+    saw: Mutex<Vec<(u64, u32, bool)>>,
+}
+
+#[async_trait]
+impl Source for Spender {
+    fn name(&self) -> &str {
+        self.name
+    }
+
+    async fn search(
+        &self,
+        _: SourceQuery,
+        context: ToolContext,
+    ) -> Result<SourceFound, ToolFailure> {
+        self.saw.lock().unwrap().push((
+            context.budget_usd_micros,
+            context.tool_calls_left,
+            context.reading,
+        ));
+        {
+            let mut tally = self.meter.0.lock().unwrap();
+            tally.0 += self.cost;
+            let used = CapabilityUse::new(PluginCapability::Model, "a call", true);
+            tally.1.push(used.with_cost(self.cost));
+        }
+        tokio::time::sleep(self.delay).await;
+        Ok(SourceFound::new(vec![item(self.name, "cats")]))
+    }
+
+    async fn get(&self, _: &str, _: ToolContext) -> Result<SourceFound, ToolFailure> {
+        Ok(SourceFound::default())
+    }
+}
+
+#[tokio::test]
+async fn sources_spend_in_turn_and_what_their_plugins_did_goes_on_the_search() {
+    let meter = Arc::new(Meter::default());
+    let spender = |name, cost, delay| {
+        Arc::new(Spender {
+            name,
+            cost,
+            delay,
+            meter: Arc::clone(&meter),
+            saw: Mutex::new(Vec::new()),
+        })
+    };
+    let (first, second) = (
+        spender("first", 100, Duration::ZERO),
+        spender("second", 30, Duration::ZERO),
+    );
+    let slow = spender("slow", 7, Duration::from_secs(5));
+    let lakes: Vec<LakeSource> = [&first, &second, &slow]
+        .into_iter()
+        .map(|source| LakeSource {
+            id: format!("demo.{}", source.name),
+            public: false,
+            words: true,
+            vectors_from: BTreeSet::new(),
+            dimension: None,
+            time_limit: Duration::from_millis(50),
+            source: Arc::clone(source) as Arc<dyn Source>,
+            meter: Some(Arc::clone(&meter) as Arc<dyn SourceMeter>),
+        })
+        .collect();
+    let memory = memory(lakes).await;
+    let lake = LakeSearch {
+        context: context(DataClass::Private).with_tool_calls_left(10),
+        chosen: None,
+    };
+
+    let found = search(&memory, DataClass::Private, lake).await;
+
+    // Each is told what's left after the embedding (2) and the ones before
+    // it, as a read.
+    assert_eq!(*first.saw.lock().unwrap(), [(998, 10, true)]);
+    assert_eq!(*second.saw.lock().unwrap(), [(898, 9, true)]);
+    assert_eq!(*slow.saw.lock().unwrap(), [(868, 8, true)]);
+    // The one cut off for time is still charged for what it did.
+    assert_eq!(found.cost_usd_micros, 2 + 100 + 30 + 7);
+    assert_eq!(found.uses.len(), 3);
+    assert_eq!(found.sources_skipped.len(), 1);
 }

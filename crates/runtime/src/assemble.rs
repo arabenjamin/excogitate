@@ -6,10 +6,14 @@ use std::time::Duration;
 
 use dispatch::{StopSignal, ToolRegistry};
 use events::EventSink;
-use memory::{ChunkConfig, Embedder, GatewayEmbedder, LakeSource, Memory, SourceChoices};
+use memory::{
+    ChunkConfig, Embedder, GatewayEmbedder, LakeSource, Memory, SourceChoices, SourceMeter,
+};
 use model::{Capability, Catalog, Gateway, OpenAiClient};
 use plugin_api::{Plugin, PluginManifest, Tool};
-use plugin_host::{HostError, PluginHost, PluginSource, PluginsConfig, ProcessConfig, ServiceSpec};
+use plugin_host::{
+    CapabilityMeter, HostError, PluginHost, PluginSource, PluginsConfig, ProcessConfig, ServiceSpec,
+};
 use store::Store;
 use tools::{HttpConfigError, HttpRequestTool, MemoryTool};
 use workflow::{DELEGATE_TOOL, Engine, EngineLimits};
@@ -124,6 +128,16 @@ fn embedders(catalog: &Catalog) -> Vec<(String, String, usize)> {
         .collect()
 }
 
+/// A plugin's meter, as memory takes from it after each call to a source.
+#[derive(Debug)]
+struct MeterOf(Arc<CapabilityMeter>);
+
+impl SourceMeter for MeterOf {
+    fn take(&self, run: protocol::RunId) -> (u64, Vec<plugin_api::CapabilityUse>) {
+        self.0.drain(run)
+    }
+}
+
 /// A plugin's source as memory reads it: the catalog models whose vectors it
 /// takes are those named as it names its model, at its width. A source that
 /// takes vectors no model here makes, and can't be searched by words, is
@@ -163,6 +177,9 @@ fn lake_source(
         dimension,
         time_limit: offered.time_limit,
         source: offered.source,
+        meter: offered
+            .meter
+            .map(|meter| Arc::new(MeterOf(meter)) as Arc<dyn SourceMeter>),
     })
 }
 

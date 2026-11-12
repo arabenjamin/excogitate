@@ -123,12 +123,22 @@ fn write_whole(path: &Path, body: &str) -> std::io::Result<()> {
     written
 }
 
-fn definition_file(root: &Path, target: Target, name: &str) -> PathBuf {
+/// The file `name` is defined in. A name that couldn't be a file's, such
+/// as one an import brought in, has none: it never reaches outside the
+/// definitions directory.
+fn definition_file(root: &Path, target: Target, name: &str) -> Result<PathBuf, ChangeError> {
+    if !work::is_definition_name(name) {
+        return Err(ChangeError::Conflict(format!(
+            "{name:?} isn't a name a definition file can have, so the {} isn't in a file to \
+             change",
+            target.word()
+        )));
+    }
     let directory = match target {
         Target::Agent => "agents",
         Target::Workflow => "workflows",
     };
-    root.join(directory).join(format!("{name}.yaml"))
+    Ok(root.join(directory).join(format!("{name}.yaml")))
 }
 
 impl Runtime {
@@ -466,7 +476,7 @@ impl Runtime {
         let root = root.to_path_buf();
         let Edited { body, to_harness } = edited;
         let change_id = RecordId::generate();
-        let path = definition_file(&root, target, name);
+        let path = definition_file(&root, target, name)?;
         let old_file = std::fs::read_to_string(&path)?;
         if old_file.chars().count() > MAX_FILE_CHARS {
             return Ok(not_adopted(format!(
@@ -672,7 +682,7 @@ impl Runtime {
                 change.target.word()
             )));
         }
-        let path = definition_file(&root, change.target, &change.agent);
+        let path = definition_file(&root, change.target, &change.agent)?;
         self.replace_file(&root, &path, &change.old_file, &change.new_file)
             .await?;
         let now = Utc::now();

@@ -114,6 +114,14 @@ impl ToolRegistry {
         Ok(())
     }
 
+    /// What calling tool `name` with `arguments` would do, if it's here.
+    #[must_use]
+    pub fn effect_of(&self, name: &str, arguments: &Value) -> Option<crate::Effect> {
+        self.tools
+            .get(name)
+            .map(|registered| registered.tool.effect_of(arguments))
+    }
+
     pub(crate) fn get(&self, name: &str) -> Option<&Registered> {
         self.tools.get(name)
     }

@@ -18,7 +18,7 @@ use plugin_api::{
     RunWorkflow, ToolContext,
 };
 use plugin_host::{CapabilityMeter, CapabilitySource};
-use protocol::{Actor, Trust};
+use protocol::{Actor, DataClass, Trust};
 use serde_json::json;
 use store::{Job, JobId, JobStatus, PageRequest, Store};
 use tools::HttpRequestTool;
@@ -68,6 +68,7 @@ impl CapabilitySource for RuntimeCapabilities {
             plugin: plugin.to_owned(),
             requested_by: Actor::new(purpose(plugin)),
             meter,
+            starting: tokio::sync::Mutex::new(()),
         })
     }
 }
@@ -107,6 +108,16 @@ impl HttpCapability for PluginHttp {
         context: ToolContext,
     ) -> Result<HttpResponse, CapabilityError> {
         check_calls_left(&self.meter, context)?;
+        // GET and HEAD only read; anything else changes the far end, which a
+        // source's read and a Harness² probe never may.
+        if !matches!(request.method.to_uppercase().as_str(), "GET" | "HEAD") {
+            context.check_may_write()?;
+            if context.probing {
+                return Err(CapabilityError::Refused(
+                    "a Harness² probe makes no request that writes".to_owned(),
+                ));
+            }
+        }
         let what = schema::bounded(&format!(
             "{} {}",
             request.method.to_uppercase(),
@@ -213,6 +224,7 @@ impl MemoryCapability for PluginMemory {
         // spend on embedding is known when it's checked.
         let _turn = self.meter.turn(context.run).await;
         check_calls_left(&self.meter, context)?;
+        context.check_may_write()?;
         note.check()?;
         // A Harness² probe has no side effects: the note passes its checks
         // and isn't kept, as a probe's other writes aren't.
@@ -282,6 +294,9 @@ struct PluginJobs {
     plugin: String,
     requested_by: Actor,
     meter: Arc<CapabilityMeter>,
+    /// Held from the count to the enqueue, so starts from several runs at
+    /// once can't all pass the count.
+    starting: tokio::sync::Mutex<()>,
 }
 
 fn failed(error: impl std::fmt::Display) -> CapabilityError {
@@ -355,6 +370,7 @@ impl PluginJobs {
         context: ToolContext,
     ) -> Result<JobStarted, CapabilityError> {
         Self::check(&run)?;
+        context.check_may_write()?;
         workflow::check_workflow_run(self.store.as_ref(), &run.workflow, &run.inputs)
             .await
             .map_err(|error| CapabilityError::Refused(schema::bounded(&error.to_string())))?;
@@ -367,6 +383,7 @@ impl PluginJobs {
         if self.store.get_job(id).await.map_err(failed)?.is_some() {
             return Ok(JobStarted::new(id.as_uuid(), true));
         }
+        let _starting = self.starting.lock().await;
         if self.outstanding().await? >= MAX_OUTSTANDING_JOBS {
             return Err(CapabilityError::Refused(format!(
                 "plugin {} has {MAX_OUTSTANDING_JOBS} jobs waiting or running already",
@@ -419,14 +436,28 @@ impl JobsCapability for PluginJobs {
         started
     }
 
-    async fn job(&self, job_id: Uuid, _: ToolContext) -> Result<Option<JobState>, CapabilityError> {
-        let found = self
-            .store
-            .get_job(JobId::from_uuid(job_id))
-            .await
-            .map_err(failed)?;
+    async fn job(
+        &self,
+        job_id: Uuid,
+        context: ToolContext,
+    ) -> Result<Option<JobState>, CapabilityError> {
+        // A look counts as a tool call, as every capability call does, so a
+        // plugin can't poll without end.
+        check_calls_left(&self.meter, context)?;
+        let begun = Instant::now();
+        let found = self.store.get_job(JobId::from_uuid(job_id)).await;
+        let used = CapabilityUse::new(
+            PluginCapability::Jobs,
+            format!("job {job_id}"),
+            found.is_ok(),
+        )
+        .with_duration_ms(millis(begun));
+        self.meter.record(context.run, used);
         // Another's job is as good as not there.
-        let Some(job) = found.filter(|job| job.requested_by == self.requested_by) else {
+        let Some(job) = found
+            .map_err(failed)?
+            .filter(|job| job.requested_by == self.requested_by)
+        else {
             return Ok(None);
         };
         let phase = match job.status {
@@ -435,6 +466,11 @@ impl JobsCapability for PluginJobs {
             JobStatus::Succeeded => JobPhase::Succeeded,
             JobStatus::Dead => JobPhase::Dead,
         };
+        // A workflow run is private, so what it found goes only to a run
+        // that may hold private data.
+        if context.data_class != DataClass::Private {
+            return Ok(Some(JobState::new(job_id, phase)));
+        }
         let last_error = job.last_error.map(|error| schema::bounded(&error));
         Ok(Some(
             JobState::new(job_id, phase).with_outcome(last_error, job.result),
@@ -559,6 +595,7 @@ mod tests {
             plugin: plugin.to_owned(),
             requested_by: Actor::new(purpose(plugin)),
             meter: Arc::new(CapabilityMeter::default()),
+            starting: tokio::sync::Mutex::new(()),
         }
     }
 
@@ -613,6 +650,58 @@ mod tests {
         // Another plugin can't see it.
         let other = jobs_for("other", &store);
         assert_eq!(other.job(started.job_id, here()).await.unwrap(), None);
+    }
+
+    #[tokio::test]
+    async fn a_jobs_result_goes_only_to_a_private_run_and_each_look_counts() {
+        let store = with_workflow().await;
+        let jobs = jobs_for("feeds", &store);
+        let run = RunWorkflow::new("learn", json!({ "url": "https://example.com/b" }));
+        let started = jobs.run_workflow(run, here()).await.unwrap();
+        let id = JobId::from_uuid(started.job_id);
+        let now = Utc::now();
+        let kinds = [WORKFLOW_KIND.to_owned()];
+        let claimed = store
+            .claim_job("w", &kinds, now, now + chrono::Duration::minutes(5))
+            .await
+            .unwrap();
+        assert_eq!(claimed.map(|job| job.id), Some(id));
+        store
+            .complete_job(id, "w", json!({ "found": "private things" }))
+            .await
+            .unwrap();
+        let private = here();
+        let seen = jobs.job(started.job_id, private).await.unwrap().unwrap();
+        assert!(seen.result.is_some(), "{seen:?}");
+        assert_eq!(
+            jobs.meter.calls(private.run),
+            1,
+            "a look is a capability call"
+        );
+        let public = ToolContext::new(RunId::generate(), DataClass::Public, 0);
+        let told = jobs.job(started.job_id, public).await.unwrap().unwrap();
+        assert_eq!(told.result, None, "{seen:?}");
+        assert_eq!(told.phase, seen.phase);
+    }
+
+    #[tokio::test]
+    async fn a_sources_read_writes_nothing() {
+        let store = with_workflow().await;
+        let reading = here().with_reading(true);
+        let run = RunWorkflow::new("learn", json!({ "url": "https://example.com/c" }));
+        let refused = jobs_for("feeds", &store).run_workflow(run, reading).await;
+        assert!(
+            matches!(refused, Err(CapabilityError::Refused(_))),
+            "{refused:?}"
+        );
+        let (capability, _, _) = plugin_memory();
+        let refused = capability
+            .store(NoteToStore::new("t", "a read keeps nothing"), reading)
+            .await;
+        assert!(
+            matches!(refused, Err(CapabilityError::Refused(_))),
+            "{refused:?}"
+        );
     }
 
     #[tokio::test]

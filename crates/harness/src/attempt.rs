@@ -12,7 +12,9 @@ use serde_json::Value;
 use workflow::{Agent, Engine, ProbeRun, Skill, Workflow};
 
 use crate::cite::Cite;
-use crate::flow::{StepEdit, Target, apply_edits, check_workflow_edit, merge_edits};
+use crate::flow::{
+    StepEdit, Target, apply_edits, check_edited_reads, check_workflow_edit, merge_edits,
+};
 use crate::guard::check_harness;
 use crate::lesson::lessons_for;
 use crate::render::Rendered;
@@ -586,7 +588,9 @@ impl Loop<'_> {
                     Ok(edited) => edited,
                     Err(why) => return Some(why),
                 };
-                if let Err(why) = check_workflow_edit(&edited, workflow, task) {
+                if let Err(why) = check_workflow_edit(&edited, workflow, task)
+                    .and_then(|()| check_edited_reads(&edited, workflow, &self.engine.registry))
+                {
                     return Some(why);
                 }
                 self.engine.check_workflow_candidate(&edited).await.err()

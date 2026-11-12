@@ -29,7 +29,9 @@ pub use change::{
     check_adoption,
 };
 pub use cite::Cite;
-pub use flow::{StepEdit, Target, apply_edits, check_workflow_edit, merge_edits, read_tools};
+pub use flow::{
+    StepEdit, Target, apply_edits, check_edited_reads, check_workflow_edit, merge_edits, read_tools,
+};
 pub use guard::{MAX_GROWTH_CHARS, MAX_SKILL_GROWTH_CHARS, check_harness, check_instructions};
 pub use lesson::{
     LESSON_TYPE, Lesson, LessonStatus, MAX_SHOWN, lesson_id, lessons_for, situation, status_filter,

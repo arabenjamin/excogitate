@@ -3,9 +3,11 @@
 //! or leave. An import goes only into an empty store, and checks the whole
 //! export before it writes anything.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashSet};
+use std::fmt::Display;
 use std::fs::File;
 use std::future::Future;
+use std::hash::Hash;
 use std::io::{BufRead, BufReader, BufWriter, Write};
 use std::marker::PhantomData;
 use std::path::{Path, PathBuf};
@@ -69,7 +71,7 @@ pub enum ArchiveError {
         /// How many writes went in.
         written: usize,
         /// Why it stopped.
-        error: StoreError,
+        error: Box<ArchiveError>,
     },
     /// The store failed.
     #[error(transparent)]
@@ -418,6 +420,22 @@ fn count<T: JsonSchema + DeserializeOwned>(
     }
 }
 
+/// Refuses a second line with the same key: an import would write over the
+/// first and still report both.
+fn once<K: Hash + Eq + Display>(
+    seen: &mut HashSet<K>,
+    file: &str,
+    key: K,
+) -> Result<(), ArchiveError> {
+    if seen.contains(&key) {
+        return Err(ArchiveError::Refused(format!(
+            "{file} has {key} twice; an export holds each once"
+        )));
+    }
+    seen.insert(key);
+    Ok(())
+}
+
 /// What the whole export needs of the store it goes into.
 #[derive(Debug, Default)]
 struct Needs {
@@ -434,13 +452,16 @@ fn check_export(
     dimension: usize,
 ) -> Result<Needs, ArchiveError> {
     let counts = manifest.counts;
-    let mut notes = Vec::new();
+    let (mut notes, mut seen) = (Vec::new(), HashSet::new());
     count::<NoteLine>(directory, "notes.jsonl", counts.notes, |note| {
+        once(&mut seen, "notes.jsonl", note.id)?;
         notes.push(note.id);
         Ok(())
     })?;
     let mut place = 0_usize;
+    let mut seen = HashSet::new();
     count::<ChunkLine>(directory, "chunks.jsonl", counts.chunks, |chunk| {
+        once(&mut seen, "chunks.jsonl", chunk.id)?;
         while notes.get(place).is_some_and(|id| *id != chunk.note_id) {
             place += 1;
         }
@@ -460,22 +481,72 @@ fn check_export(
             _ => Ok(()),
         }
     })?;
-    count::<TaskLine>(directory, "tasks.jsonl", counts.tasks, |_| Ok(()))?;
-    count::<WorkingLine>(directory, "working.jsonl", counts.working, |_| Ok(()))?;
-    count::<JobLine>(directory, "jobs.jsonl", counts.jobs, |_| Ok(()))?;
-    count::<DefinitionLine>(directory, "definitions.jsonl", counts.definitions, |_| {
-        Ok(())
+    let mut seen = HashSet::new();
+    count::<TaskLine>(directory, "tasks.jsonl", counts.tasks, |task| {
+        once(&mut seen, "tasks.jsonl", task.id)
     })?;
-    let mut needs = Needs::default();
+    let mut seen = HashSet::new();
+    count::<WorkingLine>(directory, "working.jsonl", counts.working, |entry| {
+        once(
+            &mut seen,
+            "working.jsonl",
+            format!("{}/{}", entry.scope, entry.key),
+        )
+    })?;
+    let mut seen = HashSet::new();
+    count::<JobLine>(directory, "jobs.jsonl", counts.jobs, |job| {
+        once(&mut seen, "jobs.jsonl", job.id)
+    })?;
+    let mut seen = HashSet::new();
+    count::<DefinitionLine>(
+        directory,
+        "definitions.jsonl",
+        counts.definitions,
+        |definition| {
+            // A name that couldn't be a file's would be the runtime's way out
+            // of its definitions directory.
+            if !work::is_definition_name(&definition.name) {
+                return Err(ArchiveError::Refused(format!(
+                    "definitions.jsonl names a definition {:?}; a name is 1 to 64 lowercase \
+                 letters, digits, _ and -",
+                    definition.name
+                )));
+            }
+            once(
+                &mut seen,
+                "definitions.jsonl",
+                format!("{:?} {}", definition.kind, definition.name),
+            )
+        },
+    )?;
+    let (mut needs, mut seen) = (Needs::default(), HashSet::new());
     count::<RecordLine>(directory, "records.jsonl", counts.records, |record| {
+        once(
+            &mut seen,
+            "records.jsonl",
+            format!("{} {}", record.record_type, record.id),
+        )?;
         needs.record_types.insert(record.record_type);
         Ok(())
     })?;
+    let mut seen = HashSet::new();
     count::<LinkLine>(directory, "links.jsonl", counts.links, |link| {
+        once(
+            &mut seen,
+            "links.jsonl",
+            format!("{} {} {}", link.relation, link.from, link.to),
+        )?;
         needs.relations.insert(link.relation);
         Ok(())
     })?;
-    count::<SpendLine>(directory, "spend.jsonl", counts.spend, |_| Ok(()))?;
+    let mut seen = HashSet::new();
+    count::<SpendLine>(directory, "spend.jsonl", counts.spend, |day| {
+        once(
+            &mut seen,
+            "spend.jsonl",
+            format!("{} {}", day.provider, day.day),
+        )
+    })?;
     Ok(needs)
 }
 
@@ -500,6 +571,18 @@ async fn check_empty(store: &dyn Store) -> Result<(), ArchiveError> {
     if !store.list_all_records(one).await?.items.is_empty() {
         held.push("records");
     }
+    if !store.list_links(one).await?.items.is_empty() {
+        held.push("links");
+    }
+    if !store.list_working(Utc::now(), one).await?.items.is_empty() {
+        held.push("working memory");
+    }
+    // Imported spend adds to a day's, and would trip the cap early.
+    if !store.list_spend(one).await?.items.is_empty() {
+        held.push("spend");
+    }
+    // Definitions aren't counted: a server loads them from its files at
+    // start, and an import replaces each by its name.
     if held.is_empty() {
         Ok(())
     } else {
@@ -566,7 +649,7 @@ impl Writer<'_> {
             .await
             .map_err(|error| ArchiveError::Partial {
                 written: self.written,
-                error,
+                error: Box::new(ArchiveError::Store(error)),
             })?;
         self.written += size;
         Ok(())
@@ -591,10 +674,27 @@ pub async fn import(store: &dyn Store, directory: &Path) -> Result<Counts, Archi
         pending: Vec::new(),
         written: 0,
     };
+    // Once anything is written, whatever stops the import leaves part of
+    // the export in the store, and says so.
+    match write_all(&mut writer, directory).await {
+        Ok(()) => Ok(manifest.counts),
+        Err(error @ ArchiveError::Partial { .. }) => Err(error),
+        Err(error) if writer.written > 0 => Err(ArchiveError::Partial {
+            written: writer.written,
+            error: Box::new(error),
+        }),
+        Err(error) => Err(error),
+    }
+}
+
+/// Writes every file of a checked export, in an order that puts each
+/// thing's parts after it.
+async fn write_all(writer: &mut Writer<'_>, directory: &Path) -> Result<(), ArchiveError> {
+    let store = writer.store;
     for line in Lines::<DefinitionLine>::open(directory, "definitions.jsonl")? {
         writer.push(WriteOp::PutDefinition(line?.into())).await?;
     }
-    import_notes(&mut writer, directory).await?;
+    import_notes(writer, directory).await?;
     for line in Lines::<TaskLine>::open(directory, "tasks.jsonl")? {
         writer.push(WriteOp::PutTask(line?.into())).await?;
     }
@@ -627,10 +727,10 @@ pub async fn import(store: &dyn Store, directory: &Path) -> Result<Counts, Archi
             .await
             .map_err(|error| ArchiveError::Partial {
                 written: writer.written,
-                error,
+                error: Box::new(ArchiveError::Store(error)),
             })?;
     }
-    Ok(manifest.counts)
+    Ok(())
 }
 
 /// Writes each note with its chunks, reading the two files side by side.
