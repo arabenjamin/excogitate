@@ -35,7 +35,7 @@ pub use manifest::{
 pub use process::{serve_plugin, serve_plugin_stdio};
 pub use source::{
     MAX_HIT_TEXT, MAX_ITEM_ID, MAX_ITEM_TEXT, MAX_ITEM_TITLE, MAX_ITEM_URL, MAX_SOURCE_HITS,
-    Source, SourceFound, SourceItem, SourceQuery,
+    Source, SourceFound, SourceGot, SourceItem, SourceQuery,
 };
 // The runtime's side of MCP. It isn't part of the plugin contract and can
 // change in any release.

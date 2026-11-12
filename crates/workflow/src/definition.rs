@@ -54,7 +54,7 @@ pub struct Agent {
 pub struct AgentMemory {
     /// The sources it searches, as `plugin.name`. Empty means none, so a
     /// narrow agent isn't flooded by a large lake.
-    #[schemars(length(max = 16), inner(length(min = 1, max = 64)))]
+    #[schemars(length(max = 16), inner(length(min = 1, max = 65)))]
     pub sources: Vec<String>,
 }
 

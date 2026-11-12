@@ -51,7 +51,9 @@ enum Operation {
 }
 
 /// The longest source name.
-const MAX_SOURCE: usize = 64;
+/// A source's id, `plugin.name`: a plugin's name and a source's are each
+/// up to 32 characters.
+const MAX_SOURCE: usize = 65;
 /// The most source items or skipped sources one result lists.
 const MAX_LISTED: usize = 50;
 
@@ -184,26 +186,24 @@ struct SourceHit {
     /// Its title.
     #[schemars(length(max = MAX_TITLE))]
     title: String,
-    /// The part that matched, or all of it when read with `open`.
+    /// The part that matched; `open` reads all of it.
     #[schemars(length(max = MAX_TEXT))]
     text: String,
-    /// Read with `open`: true if the item is longer than `text`. A search
-    /// hit's text is only the part that matched.
-    truncated: bool,
     /// The URL it came from.
     #[schemars(length(max = MAX_URL))]
     source_url: Option<String>,
     /// When it last changed, if the source knows.
     updated_at: Option<DateTime<Utc>>,
-    /// Its score, comparable with the notes' within this search. None when
-    /// read with `open`.
-    score: Option<f32>,
+    /// Its score, comparable with the notes' within this search.
+    score: f32,
     /// How close it is in meaning to the query, if the source searched
     /// with the query's vector.
     similarity: Option<f32>,
 }
 
-/// A source that was searched and gave nothing.
+/// A source left out of the search, and why: it failed, ran out of time,
+/// or couldn't be searched by this query. One that found nothing isn't
+/// listed.
 #[derive(Debug, Serialize, JsonSchema)]
 #[schemars(deny_unknown_fields)]
 struct SkippedSource {
@@ -245,10 +245,11 @@ enum MemoryResult {
         #[serde(default)]
         not_close_enough: u32,
         /// Items in plugins' sources, ranked with the notes: compare
-        /// `score`. `open` lists the one item read here.
+        /// `score`.
         #[schemars(length(max = MAX_LISTED))]
         sources: Vec<SourceHit>,
-        /// Sources searched that gave nothing, and why.
+        /// Sources left out of the search, because they failed, ran out of
+        /// time or couldn't be searched by this query, and why.
         #[schemars(length(max = MAX_LISTED))]
         sources_skipped: Vec<SkippedSource>,
     },
@@ -272,6 +273,28 @@ enum MemoryResult {
         source_url: Option<String>,
         /// Whether it may be treated as instructions.
         trust: TrustLabel,
+    },
+    /// One item of a source, read whole with `open`. Always untrusted.
+    Item {
+        /// The source, as `plugin.name`.
+        #[schemars(length(max = MAX_SOURCE))]
+        source: String,
+        /// The item's id within it.
+        #[schemars(length(max = plugin_api::MAX_ITEM_ID))]
+        id: String,
+        /// Its title.
+        #[schemars(length(max = MAX_TITLE))]
+        title: String,
+        /// Its text.
+        #[schemars(length(max = MAX_TEXT))]
+        text: String,
+        /// True if the item is longer than `text`.
+        truncated: bool,
+        /// The URL it came from.
+        #[schemars(length(max = MAX_URL))]
+        source_url: Option<String>,
+        /// When it last changed, if the source knows.
+        updated_at: Option<DateTime<Utc>>,
     },
     /// The note is gone.
     Deleted {
@@ -306,10 +329,9 @@ fn item_hit(found: ItemHit) -> SourceHit {
         id: found.id,
         title: clamped(found.title, MAX_TITLE),
         text: clamped(found.text, MAX_TEXT),
-        truncated: false,
         source_url: found.source_url.map(|url| clamped(url, MAX_URL)),
         updated_at: found.updated_at,
-        score: Some(found.score),
+        score: found.score,
         similarity: found.similarity,
     }
 }
@@ -577,25 +599,15 @@ impl MemoryTool {
             .with_cost(opened.cost_usd_micros)
             .with_uses(opened.uses));
         };
-        let whole = SourceHit {
-            source: clamped(source, MAX_SOURCE),
-            id: found.id,
-            title: clamped(found.title, MAX_TITLE),
-            text: clamped(found.text, MAX_TEXT),
-            truncated: opened.truncated,
-            source_url: found.source_url.map(|url| clamped(url, MAX_URL)),
-            updated_at: found.updated_at,
-            score: None,
-            similarity: None,
-        };
         Ok((
-            MemoryResult::Found {
-                hits: Vec::new(),
-                keyword_only_because: None,
-                has_more: false,
-                not_close_enough: 0,
-                sources: vec![whole],
-                sources_skipped: Vec::new(),
+            MemoryResult::Item {
+                source: clamped(source, MAX_SOURCE),
+                id: found.id,
+                title: clamped(found.title, MAX_TITLE),
+                text: clamped(found.text, MAX_TEXT),
+                truncated: opened.truncated,
+                source_url: found.source_url.map(|url| clamped(url, MAX_URL)),
+                updated_at: found.updated_at,
             },
             Trust::Untrusted,
             opened.cost_usd_micros,

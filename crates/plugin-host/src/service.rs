@@ -15,12 +15,12 @@ use plugin_api::rpc::{self, INVALID_PARAMS, METHOD_NOT_FOUND, Peer, RpcError, fa
 use plugin_api::wire::{
     CAPABILITY_METHOD, CONTEXT_META, CapabilityCall, CapabilityRequest, SOURCE_GET_METHOD,
     SOURCE_SEARCH_METHOD, WireContext, WireHttpResponse, WireModelReply, WireSourceFound,
-    WireSourceGet, WireSourceSearch, error_code, error_message, page_of, query_of, wire_page,
-    wire_record,
+    WireSourceGet, WireSourceGot, WireSourceSearch, error_code, error_message, page_of, query_of,
+    wire_page, wire_record,
 };
 use plugin_api::{
     Capabilities, CapabilityError, HttpRequest, MCP_VERSION, PluginManifest, Source, SourceFound,
-    SourceItem, SourceQuery,
+    SourceGot, SourceItem, SourceQuery,
 };
 use protocol::{DataClass, Trust};
 use schema::{Validator, bounded};
@@ -589,12 +589,12 @@ struct ServiceSource {
 impl ServiceSource {
     /// Sends `params` with the call's context, as a tool call does, so the
     /// process may use its capabilities for it while it runs.
-    async fn ask(
+    async fn ask<T: serde::de::DeserializeOwned>(
         &self,
         method: &str,
         mut params: Value,
         context: ToolContext,
-    ) -> Result<SourceFound, ToolFailure> {
+    ) -> Result<T, ToolFailure> {
         let serving = self.connection.host.begin(context);
         let sent = WireContext {
             run: context.run.as_uuid(),
@@ -608,12 +608,8 @@ impl ServiceSource {
         let reply = self.connection.request(method, params).await;
         drop(serving);
         let reply = reply.map_err(|error| ToolFailure::new(bounded(&error.to_string())))?;
-        let found: WireSourceFound = serde_json::from_value(reply)
-            .map_err(|error| ToolFailure::new(bounded(&format!("the source's answer: {error}"))))?;
-        Ok(
-            SourceFound::new(found.hits.into_iter().map(SourceItem::from).collect())
-                .with_cost(found.cost_usd_micros),
-        )
+        serde_json::from_value(reply)
+            .map_err(|error| ToolFailure::new(bounded(&format!("the source's answer: {error}"))))
     }
 }
 
@@ -633,18 +629,25 @@ impl Source for ServiceSource {
             text: query.text,
             vector: query.vector,
             limit: query.limit,
+            meta: None,
         };
         let params = serde_json::to_value(asked).map_err(|error| error.to_string())?;
-        self.ask(SOURCE_SEARCH_METHOD, params, context).await
+        let found: WireSourceFound = self.ask(SOURCE_SEARCH_METHOD, params, context).await?;
+        Ok(
+            SourceFound::new(found.hits.into_iter().map(SourceItem::from).collect())
+                .with_cost(found.cost_usd_micros),
+        )
     }
 
-    async fn get(&self, id: &str, context: ToolContext) -> Result<SourceFound, ToolFailure> {
+    async fn get(&self, id: &str, context: ToolContext) -> Result<SourceGot, ToolFailure> {
         let asked = WireSourceGet {
             source: self.name.clone(),
             id: id.to_owned(),
+            meta: None,
         };
         let params = serde_json::to_value(asked).map_err(|error| error.to_string())?;
-        self.ask(SOURCE_GET_METHOD, params, context).await
+        let got: WireSourceGot = self.ask(SOURCE_GET_METHOD, params, context).await?;
+        Ok(SourceGot::new(got.item.map(SourceItem::from)).with_cost(got.cost_usd_micros))
     }
 }
 

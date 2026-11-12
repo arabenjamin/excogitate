@@ -1,28 +1,5 @@
 {
   "$defs": {
-    "Action": {
-      "additionalProperties": false,
-      "description": "The calls a guardrail is about, by what one of their arguments says.",
-      "properties": {
-        "argument": {
-          "description": "The argument, as a dotted path such as `operation`.",
-          "maxLength": 128,
-          "minLength": 1,
-          "type": "string"
-        },
-        "matches": {
-          "description": "A pattern that ignores case, matched as `deny` matches. Only a call\nwhose argument matches counts, and a call without it doesn't.",
-          "maxLength": 256,
-          "minLength": 1,
-          "type": "string"
-        }
-      },
-      "required": [
-        "argument",
-        "matches"
-      ],
-      "type": "object"
-    },
     "AgentMemory": {
       "additionalProperties": false,
       "description": "What an agent's memory reads, beside the store.",
@@ -30,7 +7,7 @@
         "sources": {
           "description": "The sources it searches, as `plugin.name`. Empty means none, so a\nnarrow agent isn't flooded by a large lake.",
           "items": {
-            "maxLength": 64,
+            "maxLength": 65,
             "minLength": 1,
             "type": "string"
           },
@@ -40,6 +17,29 @@
       },
       "required": [
         "sources"
+      ],
+      "type": "object"
+    },
+    "ArgumentMatch": {
+      "additionalProperties": false,
+      "description": "What one of a call's arguments says, as a guardrail's `deny` refuses it\nor its `action` picks the calls it's about.",
+      "properties": {
+        "argument": {
+          "description": "The argument, as a dotted path such as `operation` or `filter.kind`.",
+          "maxLength": 128,
+          "minLength": 1,
+          "type": "string"
+        },
+        "matches": {
+          "description": "A pattern that ignores case. A string is matched as it is, anything\nelse as JSON. A call without the argument doesn't match.",
+          "maxLength": 256,
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "argument",
+        "matches"
       ],
       "type": "object"
     },
@@ -104,29 +104,6 @@
       ],
       "type": "object"
     },
-    "Deny": {
-      "additionalProperties": false,
-      "description": "A call refused for what one of its arguments says.",
-      "properties": {
-        "argument": {
-          "description": "The argument, as a dotted path such as `operation` or `filter.kind`.",
-          "maxLength": 128,
-          "minLength": 1,
-          "type": "string"
-        },
-        "matches": {
-          "description": "A pattern that ignores case. A call whose argument matches is\nrefused. A string is matched as it is, anything else as JSON, and a\ncall without the argument is let through.",
-          "maxLength": 256,
-          "minLength": 1,
-          "type": "string"
-        }
-      },
-      "required": [
-        "argument",
-        "matches"
-      ],
-      "type": "object"
-    },
     "Guardrail": {
       "additionalProperties": false,
       "description": "A rule on one of the agent's tools.",
@@ -134,7 +111,7 @@
         "action": {
           "anyOf": [
             {
-              "$ref": "#/$defs/Action"
+              "$ref": "#/$defs/ArgumentMatch"
             },
             {
               "type": "null"
@@ -160,7 +137,7 @@
         "deny": {
           "anyOf": [
             {
-              "$ref": "#/$defs/Deny"
+              "$ref": "#/$defs/ArgumentMatch"
             },
             {
               "type": "null"

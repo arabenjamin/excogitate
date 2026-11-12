@@ -396,8 +396,8 @@ impl plugin_api::Source for OneItem {
         Ok(plugin_api::SourceFound::new(vec![item]))
     }
 
-    async fn get(&self, _: &str, _: ToolContext) -> Result<plugin_api::SourceFound, ToolFailure> {
-        Ok(plugin_api::SourceFound::default())
+    async fn get(&self, _: &str, _: ToolContext) -> Result<plugin_api::SourceGot, ToolFailure> {
+        Ok(plugin_api::SourceGot::default())
     }
 }
 

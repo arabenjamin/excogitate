@@ -7,8 +7,8 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use plugin_api::{
     Capabilities, DataClass, Plugin, PluginError, PluginManifest, RecordsCapability, Source,
-    SourceFound, SourceItem, SourceQuery, Tool, ToolContext, ToolDefinition, ToolFailure,
-    ToolOutput, Trust,
+    SourceFound, SourceGot, SourceItem, SourceQuery, Tool, ToolContext, ToolDefinition,
+    ToolFailure, ToolOutput, Trust,
 };
 
 use serde_json::{Value, json};
@@ -150,9 +150,9 @@ impl Source for Glossary {
         ))
     }
 
-    async fn get(&self, id: &str, _: ToolContext) -> Result<SourceFound, ToolFailure> {
+    async fn get(&self, id: &str, _: ToolContext) -> Result<SourceGot, ToolFailure> {
         let found = GLOSSARY.into_iter().find(|(own, ..)| *own == id);
-        Ok(SourceFound::new(found.map(entry).into_iter().collect()))
+        Ok(SourceGot::new(found.map(entry)))
     }
 }
 

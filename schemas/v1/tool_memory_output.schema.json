@@ -66,11 +66,11 @@
     },
     "SkippedSource": {
       "additionalProperties": false,
-      "description": "A source that was searched and gave nothing.",
+      "description": "A source left out of the search, and why: it failed, ran out of time,\nor couldn't be searched by this query. One that found nothing isn't\nlisted.",
       "properties": {
         "source": {
           "description": "The source, as `plugin.name`.",
-          "maxLength": 64,
+          "maxLength": 65,
           "type": "string"
         },
         "why": {
@@ -95,12 +95,9 @@
           "type": "string"
         },
         "score": {
-          "description": "Its score, comparable with the notes' within this search. None when\nread with `open`.",
+          "description": "Its score, comparable with the notes' within this search.",
           "format": "float",
-          "type": [
-            "number",
-            "null"
-          ]
+          "type": "number"
         },
         "similarity": {
           "description": "How close it is in meaning to the query, if the source searched\nwith the query's vector.",
@@ -112,7 +109,7 @@
         },
         "source": {
           "description": "The source, as `plugin.name`.",
-          "maxLength": 64,
+          "maxLength": 65,
           "type": "string"
         },
         "source_url": {
@@ -124,7 +121,7 @@
           ]
         },
         "text": {
-          "description": "The part that matched, or all of it when read with `open`.",
+          "description": "The part that matched; `open` reads all of it.",
           "maxLength": 100000,
           "type": "string"
         },
@@ -132,10 +129,6 @@
           "description": "Its title.",
           "maxLength": 256,
           "type": "string"
-        },
-        "truncated": {
-          "description": "Read with `open`: true if the item is longer than `text`. A search\nhit's text is only the part that matched.",
-          "type": "boolean"
         },
         "updated_at": {
           "description": "When it last changed, if the source knows.",
@@ -151,7 +144,7 @@
         "id",
         "title",
         "text",
-        "truncated"
+        "score"
       ],
       "type": "object"
     },
@@ -242,7 +235,7 @@
           "type": "string"
         },
         "sources": {
-          "description": "Items in plugins' sources, ranked with the notes: compare\n`score`. `open` lists the one item read here.",
+          "description": "Items in plugins' sources, ranked with the notes: compare\n`score`.",
           "items": {
             "$ref": "#/$defs/SourceHit"
           },
@@ -250,7 +243,7 @@
           "type": "array"
         },
         "sources_skipped": {
-          "description": "Sources searched that gave nothing, and why.",
+          "description": "Sources left out of the search, because they failed, ran out of\ntime or couldn't be searched by this query, and why.",
           "items": {
             "$ref": "#/$defs/SkippedSource"
           },
@@ -324,6 +317,65 @@
         "truncated",
         "tags",
         "trust"
+      ],
+      "type": "object"
+    },
+    {
+      "additionalProperties": false,
+      "description": "One item of a source, read whole with `open`. Always untrusted.",
+      "properties": {
+        "id": {
+          "description": "The item's id within it.",
+          "maxLength": 256,
+          "type": "string"
+        },
+        "result": {
+          "const": "item",
+          "type": "string"
+        },
+        "source": {
+          "description": "The source, as `plugin.name`.",
+          "maxLength": 65,
+          "type": "string"
+        },
+        "source_url": {
+          "description": "The URL it came from.",
+          "maxLength": 2048,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "text": {
+          "description": "Its text.",
+          "maxLength": 100000,
+          "type": "string"
+        },
+        "title": {
+          "description": "Its title.",
+          "maxLength": 256,
+          "type": "string"
+        },
+        "truncated": {
+          "description": "True if the item is longer than `text`.",
+          "type": "boolean"
+        },
+        "updated_at": {
+          "description": "When it last changed, if the source knows.",
+          "format": "date-time",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "result",
+        "source",
+        "id",
+        "title",
+        "text",
+        "truncated"
       ],
       "type": "object"
     },

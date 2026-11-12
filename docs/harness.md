@@ -150,17 +150,18 @@ them.
   file has been edited since, so it never undoes the owner's own edit.
 - **Hold and release:** `PUT /api/v1/harness/holds/{agent}` with `{"reason"}`
   holds an agent, `DELETE` releases it, and `GET /api/v1/harness/holds` lists
-  them. For a workflow, add `"target": "workflow"` to the body, or
-  `?target=workflow` to the `DELETE`. Releasing what nothing holds is a 404.
+  them. For a workflow, add `?target=workflow` to the `PUT` or the
+  `DELETE`. Releasing what nothing holds is a 404.
 - **Override:** edit the agent's file. The edit stands, and the agent is held
   the next time the system looks at changing it.
 
 ## Workflows
 
 A workflow is improved the same way. Start an attempt with
-`{"agent": "<workflow>", "target": "workflow", "task": "<inputs>"}`, where
-the task is the inputs to run it on, as a JSON object in a string, such as
-`"{\"topic\": \"otters\"}"`.
+`{"agent": "<workflow>", "target": "workflow", "inputs": {...}}`, where
+`inputs` is what to run it on, such as `{"topic": "otters"}`, checked
+against the workflow's inputs schema. An agent's attempt takes a `task`
+instead; a request with both, or with the wrong one, is refused.
 
 - **An edit can change what a workflow asks, never what it does.** A
   candidate is a list of step edits: a new `message` or `context` for an

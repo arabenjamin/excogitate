@@ -1,28 +1,13 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "additionalProperties": false,
-  "description": "Holds an agent, or a workflow.",
+  "description": "Holds an agent, or a workflow with `?target=workflow`, as a release\nsays it.",
   "properties": {
     "reason": {
       "description": "Why, for whoever reads the hold later.",
       "maxLength": 2048,
       "minLength": 1,
       "type": "string"
-    },
-    "target": {
-      "description": "What's held: an agent unless it says `workflow`.",
-      "oneOf": [
-        {
-          "const": "agent",
-          "description": "An agent.",
-          "type": "string"
-        },
-        {
-          "const": "workflow",
-          "description": "A workflow.",
-          "type": "string"
-        }
-      ]
     }
   },
   "required": [

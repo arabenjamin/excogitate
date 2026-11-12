@@ -34,8 +34,10 @@
       "description": "What it defines."
     },
     "name": {
-      "description": "Its name.",
-      "maxLength": 256,
+      "description": "Its name, which is also its file's.",
+      "maxLength": 64,
+      "minLength": 1,
+      "pattern": "^[a-z0-9_-]{1,64}$",
       "type": "string"
     },
     "source": {

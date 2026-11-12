@@ -25,17 +25,25 @@ pub(crate) const MAX_STEPS: usize = 512;
 /// The most problems an attempt keeps.
 const MAX_PROBLEMS: usize = 32;
 
+/// The longest task an agent is improved on.
+const MAX_TASK_CHARS: usize = 8000;
+
 /// What to improve.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct Request {
     /// The agent, or the workflow when `target` is `workflow`.
-    #[schemars(length(min = 1, max = 64))]
+    #[schemars(length(min = 1, max = 64), regex(pattern = r"^[a-z0-9_-]{1,64}$"))]
     pub agent: String,
-    /// A task to run it on, such as one a real run got wrong. For a
-    /// workflow, the inputs to run it on, as a JSON object.
-    #[schemars(length(min = 1, max = 8000))]
+    /// For an agent: a task to run it on, such as one a real run got wrong.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    #[schemars(length(max = 8000))]
     pub task: String,
+    /// For a workflow: the inputs to run it on, checked against its inputs
+    /// schema.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(extend("x-extension" = "checked against the workflow's inputs schema"))]
+    pub inputs: Option<serde_json::Map<String, Value>>,
     /// What to improve: an agent unless it says otherwise.
     #[serde(default, skip_serializing_if = "Target::is_agent")]
     pub target: Target,
@@ -43,6 +51,57 @@ pub struct Request {
     /// What went wrong, if someone said.
     #[schemars(length(max = 2000))]
     pub why: Option<String>,
+}
+
+impl Request {
+    /// Why it can't be run, if it can't: an agent needs a task and a
+    /// workflow its inputs, never the other.
+    ///
+    /// # Errors
+    ///
+    /// What's wrong, in a sentence.
+    pub fn check(&self) -> Result<(), String> {
+        match self.target {
+            Target::Agent if self.inputs.is_some() => {
+                Err("an agent is improved on a task; inputs are for a workflow".to_owned())
+            }
+            Target::Agent if self.task.trim().is_empty() => {
+                Err("an agent is improved on a task: give one".to_owned())
+            }
+            Target::Agent if self.task.chars().count() > MAX_TASK_CHARS => {
+                Err(format!("a task is at most {MAX_TASK_CHARS} characters"))
+            }
+            Target::Workflow if !self.task.is_empty() => {
+                Err("a workflow is improved on its inputs; a task is for an agent".to_owned())
+            }
+            Target::Workflow if self.inputs.is_none() => {
+                Err("a workflow is improved on inputs to run it on: give them".to_owned())
+            }
+            _ => Ok(()),
+        }
+    }
+
+    /// What it's tested on, as the judges and the leak checks read it: the
+    /// task, or a workflow's inputs as JSON.
+    #[must_use]
+    pub fn task_text(&self) -> String {
+        self.inputs.as_ref().map_or_else(
+            || self.task.clone(),
+            |inputs| Value::Object(inputs.clone()).to_string(),
+        )
+    }
+
+    /// A workflow's inputs. A request recorded before `inputs` existed held
+    /// them in `task`, as JSON.
+    #[must_use]
+    pub fn workflow_inputs(&self) -> Option<Value> {
+        match &self.inputs {
+            Some(inputs) => Some(Value::Object(inputs.clone())),
+            None => serde_json::from_str::<Value>(&self.task)
+                .ok()
+                .filter(Value::is_object),
+        }
+    }
 }
 
 /// How the loop runs.
@@ -503,7 +562,7 @@ impl Loop<'_> {
             self.engine.store.as_ref(),
             request.target,
             &request.agent,
-            &request.task,
+            &request.task_text(),
             request.why.as_deref(),
         )
         .await;
@@ -521,7 +580,7 @@ impl Loop<'_> {
         reference: Rendered,
     ) -> Vec<Rendered> {
         let mut runs = vec![reference.clone()];
-        let task = attempt.request.task.clone();
+        let task = attempt.request.task_text();
         for mut candidate in candidates {
             candidate.refused = self.refusal(&mut candidate, base, &task, &reference).await;
             if candidate.refused.is_none()
@@ -754,7 +813,7 @@ impl Loop<'_> {
                 _ => {}
             }
         }
-        let task = attempt.request.task.clone();
+        let task = attempt.request.task_text();
         candidate.refused = self.unusable(base, &candidate, &task).await;
         if candidate.refused.is_some() {
             attempt.candidates.push(candidate);

@@ -11,13 +11,10 @@ use serde_json::{Value, json};
 use crate::rpc::{self, INVALID_PARAMS, failure, success};
 use crate::serve::context_of;
 use crate::wire::{
-    SOURCE_GET_METHOD, SOURCE_SEARCH_METHOD, WireSourceFound, WireSourceGet, WireSourceItem,
-    WireSourceSearch,
+    SOURCE_FAILED_CODE, SOURCE_GET_METHOD, SOURCE_SEARCH_METHOD, WireSourceFound, WireSourceGet,
+    WireSourceGot, WireSourceItem, WireSourceSearch,
 };
 use crate::{McpHandler, Source, SourceQuery, ToolFailure};
-
-/// The JSON-RPC error code for a source that couldn't do what was asked.
-pub const SOURCE_FAILED_CODE: i64 = -32010;
 
 /// MCP, and the plugin's sources by name.
 pub(crate) struct PluginHandler {
@@ -76,11 +73,11 @@ impl PluginHandler {
         };
         let context = context_of(message.get("params").unwrap_or(&Value::Null));
         match source.get(&asked.id, context).await {
-            Ok(found) => success(
+            Ok(got) => success(
                 id,
-                &json!(WireSourceFound {
-                    hits: found.hits.into_iter().map(WireSourceItem::from).collect(),
-                    cost_usd_micros: found.cost_usd_micros,
+                &json!(WireSourceGot {
+                    item: got.item.map(WireSourceItem::from),
+                    cost_usd_micros: got.cost_usd_micros,
                 }),
             ),
             Err(error) => failed(id, &error),

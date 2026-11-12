@@ -1,0 +1,81 @@
+{
+  "$defs": {
+    "WireSourceItem": {
+      "additionalProperties": false,
+      "description": "One item of a source, on the wire. The bounds are what the host keeps:\na longer title or text is cut, and a longer id or URL is left out.",
+      "properties": {
+        "id": {
+          "maxLength": 256,
+          "minLength": 1,
+          "type": "string"
+        },
+        "public": {
+          "default": false,
+          "description": "True if the source says the item is public.",
+          "type": "boolean"
+        },
+        "similarity": {
+          "format": "float",
+          "maximum": 1.0,
+          "minimum": -1.0,
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "source_url": {
+          "maxLength": 2048,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "text": {
+          "maxLength": 100000,
+          "type": "string"
+        },
+        "title": {
+          "maxLength": 256,
+          "type": "string"
+        },
+        "updated_at": {
+          "format": "date-time",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "title",
+        "text"
+      ],
+      "type": "object"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "The one item read, or none, on the wire.",
+  "properties": {
+    "cost_usd_micros": {
+      "default": 0,
+      "format": "uint64",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "item": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/WireSourceItem"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    }
+  },
+  "title": "WireSourceGot",
+  "type": "object"
+}

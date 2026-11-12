@@ -42,6 +42,19 @@ fn fixed() -> BTreeMap<&'static str, Value> {
             schema_of::<wire::WireModelReply>(),
         ),
         ("tool_call_context", schema_of::<wire::WireContext>()),
+        (
+            "capability_job_started",
+            schema_of::<wire::WireJobStarted>(),
+        ),
+        ("capability_job_state", schema_of::<wire::WireJobState>()),
+        (
+            "capability_note_stored",
+            schema_of::<wire::WireNoteStored>(),
+        ),
+        ("source_search", schema_of::<wire::WireSourceSearch>()),
+        ("source_get", schema_of::<wire::WireSourceGet>()),
+        ("source_found", schema_of::<wire::WireSourceFound>()),
+        ("source_got", schema_of::<wire::WireSourceGot>()),
         ("config", schema_of::<runtime::Config>()),
         ("budget", schema_of::<dispatch::Budget>()),
         ("change_list", schema_of::<runtime::ChangeList>()),
@@ -114,12 +127,17 @@ fn role(stem: &str) -> Option<Role> {
         | "record_decls"
         | "run_request"
         | "schedule"
+        | "source_found"
+        | "source_got"
         | "workflow" => Some(Role::Input),
         "api_error"
         | "attempt_list"
         | "attempt_view"
         | "capability_http_response"
+        | "capability_job_started"
+        | "capability_job_state"
         | "capability_model_reply"
+        | "capability_note_stored"
         | "capability_page"
         | "capability_record"
         | "change_list"
@@ -133,6 +151,8 @@ fn role(stem: &str) -> Option<Role> {
         | "receipt"
         | "run_list"
         | "run_started"
+        | "source_get"
+        | "source_search"
         | "tool_call_context"
         | "trajectory"
         | "workflow_run" => Some(Role::Output),

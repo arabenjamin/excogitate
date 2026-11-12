@@ -21,6 +21,12 @@ Telemetry and trajectories don't go here. They go to the append-only
 
 ## Writing a store
 
+Stores are crates in the runtime, chosen by a build feature, not plugins:
+a deployment's own store is a change to the runtime. So the store port and
+the event sink (`crates/events`) are internal before 1.0, and a release may
+change them, saying so in its changelog. The plugin contract (`plugin-api`)
+and the published schemas are what's held stable.
+
 1. Implement `NoteReader`, `TaskReader`, `JobQueue`, `DefinitionReader`,
    `RecordReader`, `SpendLog` and `Store`.
 2. Hold a `RecordCatalog` and call it to check records and filters, so what

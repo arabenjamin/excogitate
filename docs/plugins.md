@@ -105,9 +105,12 @@ sources:
 
 The plugin builds each one in `Plugin::sources`, implementing `Source`:
 `search(query, context)` returns hits best first, and `get(id, context)`
-returns one item whole. A plugin run as a process answers `sources/search`
-and `sources/get` over the same connection as its tools, and
-`serve_plugin_stdio` does that for it.
+returns one item whole, or none, as a `SourceGot`. A plugin run as a process
+answers `sources/search` and `sources/get` over the same connection as its
+tools, and `serve_plugin_stdio` does that for it. Their parameters and
+answers are published as `source_search`, `source_get`, `source_found` and
+`source_got` ([schemas.md](schemas.md)); a source that can't answer replies
+with error code -32010.
 
 - **Privacy is checked twice.** The source gets the run's class in its
   `ToolContext`, and memory then drops any item the run may not see. An

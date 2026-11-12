@@ -220,7 +220,7 @@
     },
     "source": {
       "description": "For `open`: the source the item is in, as a search named it.",
-      "maxLength": 64,
+      "maxLength": 65,
       "minLength": 1,
       "type": [
         "string",

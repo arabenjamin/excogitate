@@ -1482,7 +1482,7 @@ async fn a_workflow_is_improved_adopted_and_reverted_like_an_agent() {
     running.define("workflows/ask.yaml", ASK_FILE).await;
     let request = json!({
         "agent": "ask", "target": "workflow",
-        "task": json!({ "question": "What is six times seven?" }).to_string()
+        "inputs": { "question": "What is six times seven?" }
     });
     let started = body_of(running.post("/api/v1/harness/attempts", &request).await).await;
     let job = started["job_id"]
@@ -1554,24 +1554,34 @@ async fn a_workflow_is_improved_adopted_and_reverted_like_an_agent() {
 }
 
 #[tokio::test]
-async fn a_workflow_attempt_needs_a_workflow_and_its_inputs_as_an_object() {
+async fn a_workflow_attempt_needs_a_workflow_and_its_inputs() {
     let running = adopting("flow-inputs", vec![]).await;
     running.define("workflows/ask.yaml", ASK_FILE).await;
-    for (task, status) in [
-        ("not json", StatusCode::BAD_REQUEST),
-        ("[1]", StatusCode::BAD_REQUEST),
+    for (request, says) in [
+        (
+            json!({ "agent": "ask", "target": "workflow" }),
+            "inputs to run it on",
+        ),
+        (
+            json!({ "agent": "ask", "target": "workflow", "task": "{}", "inputs": {} }),
+            "a task is for an agent",
+        ),
+        (
+            json!({ "agent": "ask", "inputs": { "question": "x" } }),
+            "inputs are for a workflow",
+        ),
     ] {
-        let request = json!({ "agent": "ask", "target": "workflow", "task": task });
         let refused = running.post("/api/v1/harness/attempts", &request).await;
-        assert_eq!(refused.status(), status, "{task}");
-        assert!(
-            body_of(refused).await["message"]
-                .as_str()
-                .unwrap()
-                .contains("inputs to run it on")
-        );
+        assert_eq!(refused.status(), StatusCode::BAD_REQUEST, "{request}");
+        let message = body_of(refused).await["message"].clone();
+        assert!(message.as_str().unwrap().contains(says), "{message}");
     }
-    let request = json!({ "agent": "helper", "target": "workflow", "task": "{}" });
+    let not_an_object = json!({ "agent": "ask", "target": "workflow", "inputs": [1] });
+    let refused = running
+        .post("/api/v1/harness/attempts", &not_an_object)
+        .await;
+    assert!(!refused.status().is_success());
+    let request = json!({ "agent": "helper", "target": "workflow", "inputs": {} });
     let missing = running.post("/api/v1/harness/attempts", &request).await;
     assert_eq!(missing.status(), StatusCode::NOT_FOUND);
     assert!(

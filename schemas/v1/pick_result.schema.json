@@ -42,7 +42,17 @@
           "description": "The agent, or the workflow when `target` is `workflow`.",
           "maxLength": 64,
           "minLength": 1,
+          "pattern": "^[a-z0-9_-]{1,64}$",
           "type": "string"
+        },
+        "inputs": {
+          "additionalProperties": true,
+          "description": "For a workflow: the inputs to run it on, checked against its inputs\nschema.",
+          "type": [
+            "object",
+            "null"
+          ],
+          "x-extension": "checked against the workflow's inputs schema"
         },
         "target": {
           "description": "What to improve: an agent unless it says otherwise.",
@@ -60,9 +70,8 @@
           ]
         },
         "task": {
-          "description": "A task to run it on, such as one a real run got wrong. For a\nworkflow, the inputs to run it on, as a JSON object.",
+          "description": "For an agent: a task to run it on, such as one a real run got wrong.",
           "maxLength": 8000,
-          "minLength": 1,
           "type": "string"
         },
         "why": {
@@ -75,8 +84,7 @@
         }
       },
       "required": [
-        "agent",
-        "task"
+        "agent"
       ],
       "type": "object"
     }
