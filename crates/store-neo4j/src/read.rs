@@ -14,10 +14,25 @@ use crate::codec::{
     self, CHUNK, DEFINITION, HIT_PROVENANCE, TASK, WORKING, at, data_class_name,
     definition_kind_name, get, task_status_name,
 };
+use crate::setup::VECTOR_INDEX;
 use crate::{Neo4jStore, page_clause, page_of};
 
 /// Lucene refuses a query of more clauses than this, its default limit.
 const MAX_TERMS: usize = 1024;
+
+/// The fewest nearest chunks asked of the vector index. A database with
+/// fewer chunks than this is scanned, so a small one is ranked exactly.
+/// Measured (`vector_search_at_size`): at 50,000 random chunks 1,024 wide,
+/// asking for 1,000 found 296 of the scan's top 30 in 300, at 89 ms against
+/// the scan's 2.2 s; asking for 124 found 199.
+const MIN_NEIGHBORS: u64 = 1000;
+/// The most asked for one page. A page deeper than this is found by scanning.
+const MAX_NEIGHBORS: u64 = 4000;
+/// How many times the page's depth is asked for, past the minimum.
+const OVERSAMPLE: u64 = 10;
+/// How far the index's own score, kept in 32-bit floats, may be from the
+/// exact one.
+const INDEX_ROUNDING: f64 = 1e-5;
 
 /// The condition a search's class filter adds, for a note bound to `n`.
 const fn class_condition(classes: ClassFilter) -> &'static str {
@@ -145,9 +160,97 @@ impl NoteReader for Neo4jStore {
         }
         let values: Vec<f64> = vector.iter().copied().map(f64::from).collect();
         let zero = values.iter().all(|value| *value == 0.0);
-        // An exact scan, as in the default store. Neo4j's cosine is scaled to
-        // 0..1 and refuses a zero vector, so it's mapped back to -1..1 and a
-        // zero vector on either side scores 0: no direction, no similarity.
+        if !zero && let Some(found) = self.search_vector_index(&values, classes, page).await? {
+            return Ok(found);
+        }
+        self.search_vector_scan(&values, zero, classes, page).await
+    }
+}
+
+impl Neo4jStore {
+    /// The page from the vector index, if it can give the page the scan
+    /// would: it holds every hit on it, no chunk it didn't return could tie
+    /// with the last or rank above it, and the last scores above zero (a
+    /// chunk whose embedding is all zeros isn't in the index, and the scan
+    /// scores it 0). Otherwise `None`, and the caller scans.
+    pub(crate) async fn search_vector_index(
+        &self,
+        values: &[f64],
+        classes: ClassFilter,
+        page: PageRequest,
+    ) -> Result<Option<Page<ChunkHit>>, StoreError> {
+        let offset = usize::try_from(page.offset()).unwrap_or(usize::MAX);
+        let need = offset
+            .saturating_add(page.limit() as usize)
+            .saturating_add(1);
+        let mut asked = u64::try_from(need)
+            .unwrap_or(u64::MAX)
+            .saturating_mul(OVERSAMPLE)
+            .max(MIN_NEIGHBORS);
+        while asked <= MAX_NEIGHBORS {
+            let rows = self
+                .rows(
+                    query(&format!(
+                        "CALL db.index.vector.queryNodes('{VECTOR_INDEX}', $asked, $vector) \
+                         YIELD node AS c, score AS near \
+                         MATCH (n:Note)-[:HAS_CHUNK]->(c) \
+                         RETURN {CHUNK}, {HIT_PROVENANCE}, 2.0 * near - 1.0 AS near, \
+                           2.0 * vector.similarity.cosine(c.embedding, $vector) - 1.0 AS score, \
+                           {} AS visible \
+                         ORDER BY score DESC, c.id",
+                        class_condition(classes)
+                    ))
+                    .param("asked", i64::try_from(asked).unwrap_or(i64::MAX))
+                    .param("vector", values.to_vec()),
+                )
+                .await?;
+            let returned = rows.len();
+            // Fewer than asked for: the index holds them all, and a small
+            // database is scanned instead.
+            if u64::try_from(returned).unwrap_or(u64::MAX) < asked {
+                return Ok(None);
+            }
+            // The index picks the chunks; each is scored as the scan scores
+            // it, so the two rank alike. The index's lowest says what a
+            // chunk it didn't return could score at most.
+            let score = |row: &neo4rs::Row| get::<f64>(row, "score");
+            let mut lowest = f64::MAX;
+            for row in &rows {
+                lowest = lowest.min(get::<f64>(row, "near")?);
+            }
+            let mut visible = Vec::with_capacity(need);
+            for row in rows {
+                if get::<bool>(&row, "visible")? {
+                    visible.push(row);
+                    if visible.len() == need {
+                        break;
+                    }
+                }
+            }
+            if let Some(last) = visible.get(need - 1) {
+                let last = score(last)?;
+                if last > lowest + INDEX_ROUNDING && last > 0.0 {
+                    return page_of(visible.get(offset..).unwrap_or_default(), page, hit).map(Some);
+                }
+                if last <= 0.0 {
+                    return Ok(None);
+                }
+            }
+            asked = asked.saturating_mul(4);
+        }
+        Ok(None)
+    }
+
+    /// Every chunk, scored. Neo4j's cosine is scaled to 0..1 and refuses a
+    /// zero vector, so it's mapped back to -1..1 and a zero vector on either
+    /// side scores 0: no direction, no similarity.
+    pub(crate) async fn search_vector_scan(
+        &self,
+        values: &[f64],
+        zero: bool,
+        classes: ClassFilter,
+        page: PageRequest,
+    ) -> Result<Page<ChunkHit>, StoreError> {
         let rows = self
             .rows(
                 query(&format!(
@@ -159,7 +262,7 @@ impl NoteReader for Neo4jStore {
                     class_condition(classes),
                     page_clause(page)
                 ))
-                .param("vector", values)
+                .param("vector", values.to_vec())
                 .param("zero", zero),
             )
             .await?;

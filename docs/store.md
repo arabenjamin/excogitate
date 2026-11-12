@@ -95,9 +95,19 @@ newer store, or holding another width, is refused.
 
 **Search.** Full-text search uses a Lucene index over each chunk's words,
 normalized the same way as in the other stores (lowercase letters and
-digits), with no stop words. Vector search is an exact scan with
-`vector.similarity.cosine`, as the default store's is. A zero vector scores
-0.
+digits), with no stop words. Vector search asks Neo4j's vector index
+(`chunk_embedding`, cosine) for the nearest chunks: at least 1,000, and ten
+times the page's depth past that. It then scores each with
+`vector.similarity.cosine`, exactly as a scan would, and ranks them. When the
+index can't give the page a scan would, the store scans every chunk instead:
+fewer chunks than it asked for, a page deeper than 4,000, a hit at the edge
+of the page the index may not have returned, or a score at or below zero (a
+chunk whose embedding is all zeros isn't in the index, and scores 0). A zero
+query vector scores every chunk 0. The index is approximate: measured on
+50,000 random chunks 1,024 wide, it found 296 of the scan's top 30 in 300
+searches, at 89 ms a search against the scan's 2.2 s; real embeddings,
+which cluster, are kinder to it. `vector_search_at_size`, an ignored test,
+measures it again against a database of its own.
 
 **Concurrency.** Every unit of work is one transaction. The job queue takes
 a lock node before any claim, completion or failure, and a spend
