@@ -62,6 +62,33 @@ pub struct CapabilityRequest {
     pub call: CapabilityCall,
 }
 
+/// One record of a batch.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct WireRecordWrite {
+    /// The type.
+    #[schemars(length(min = 1, max = NAME))]
+    pub record_type: String,
+    /// The id to replace, or none for a new record.
+    pub id: Option<Uuid>,
+    /// Its data.
+    #[schemars(extend("x-extension" = "checked against the record type's own schema"))]
+    pub data: Value,
+}
+
+/// One link of a batch.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct WireLink {
+    /// The relation.
+    #[schemars(length(min = 1, max = NAME))]
+    pub relation: String,
+    /// The record it links from.
+    pub from: Uuid,
+    /// The record it links to.
+    pub to: Uuid,
+}
+
 /// What a plugin asks, by operation.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "op", rename_all = "snake_case", deny_unknown_fields)]
@@ -115,6 +142,18 @@ pub enum CapabilityCall {
         from: Uuid,
         /// The record it links to.
         to: Uuid,
+    },
+    /// `RecordsCapability::put_many`: written as one unit.
+    RecordsPutMany {
+        /// The records, in order.
+        #[schemars(length(max = crate::MAX_BATCH))]
+        records: Vec<WireRecordWrite>,
+    },
+    /// `RecordsCapability::link_many`: made as one unit.
+    RecordsLinkMany {
+        /// The links.
+        #[schemars(length(max = crate::MAX_BATCH))]
+        links: Vec<WireLink>,
     },
     /// `RecordsCapability::neighbors`.
     RecordsNeighbors {

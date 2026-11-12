@@ -132,6 +132,45 @@ impl RecordsCapability for RemoteRecords {
         self.0.call(context, call).await
     }
 
+    async fn put_many(
+        &self,
+        records: Vec<crate::RecordWrite>,
+        context: ToolContext,
+    ) -> Result<Vec<RecordId>, CapabilityError> {
+        crate::check_batch(records.len())?;
+        let call = CapabilityCall::RecordsPutMany {
+            records: records
+                .into_iter()
+                .map(|write| crate::wire::WireRecordWrite {
+                    record_type: write.record_type,
+                    id: write.id.map(|id| id.as_uuid()),
+                    data: write.data,
+                })
+                .collect(),
+        };
+        let ids: Vec<uuid::Uuid> = self.0.call(context, call).await?;
+        Ok(ids.into_iter().map(RecordId::from_uuid).collect())
+    }
+
+    async fn link_many(
+        &self,
+        links: Vec<crate::RecordLink>,
+        context: ToolContext,
+    ) -> Result<(), CapabilityError> {
+        crate::check_batch(links.len())?;
+        let call = CapabilityCall::RecordsLinkMany {
+            links: links
+                .into_iter()
+                .map(|link| crate::wire::WireLink {
+                    relation: link.relation,
+                    from: link.from.as_uuid(),
+                    to: link.to.as_uuid(),
+                })
+                .collect(),
+        };
+        self.0.call(context, call).await
+    }
+
     async fn neighbors(
         &self,
         relation: &str,

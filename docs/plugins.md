@@ -29,9 +29,18 @@ nothing.
 
 | Capability | What it gives |
 |---|---|
-| `records` | The plugin's own records in the store, and no one else's. |
+| `records` | The plugin's own records in the store, and no one else's. `put_many` and `link_many` write up to 500 at once as one unit: all of a batch, or none of it if any part is refused. |
 | `http` | HTTP through `http_request` itself, in raw mode: the same address guard, redirect checks, credentials and size limits a model's call gets, and the same argument schema. |
 | `model` | One-shot model calls through the gateway, under the calling run's privacy class and within what's left of its budget. |
+
+**Loading a lot.** A plugin bringing in data in bulk, such as rows from a
+lake, writes them in batches: `put_many` returns the ids in order, then
+`link_many` links them. Every name in a batch is checked against the
+plugin's prefix, and every record against its type's schema, before
+anything is written. A batch must also fit in one message to the runtime,
+8 MiB for a plugin run as a process, so very large records take smaller
+batches. Records calls don't count against a run's tool calls; `http` and
+`model` calls do.
 
 **What the host enforces for `http` and `model`.** A plugin holding either
 can bring in text from outside or from a model, so everything its tools
