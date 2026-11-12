@@ -5,7 +5,7 @@
       "description": "One change the system made to an agent's file.",
       "properties": {
         "agent": {
-          "description": "The agent.",
+          "description": "The agent, or the workflow.",
           "maxLength": 64,
           "type": "string"
         },
@@ -94,6 +94,21 @@
           "description": "What changed, as the editor put it.",
           "maxLength": 1000,
           "type": "string"
+        },
+        "target": {
+          "description": "What it is: an agent unless it says otherwise.",
+          "oneOf": [
+            {
+              "const": "agent",
+              "description": "An agent.",
+              "type": "string"
+            },
+            {
+              "const": "workflow",
+              "description": "A workflow.",
+              "type": "string"
+            }
+          ]
         },
         "to_harness": {
           "description": "The harness it put in place.",

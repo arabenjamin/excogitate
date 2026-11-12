@@ -11,6 +11,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::attempt::{Attempt, Status};
 use crate::cite::Cite;
+use crate::flow::Target;
 
 /// The shortest time between two changes to one agent.
 pub const MIN_HOURS_BETWEEN_CHANGES: i64 = 24;
@@ -42,9 +43,13 @@ pub enum ChangeStatus {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct Change {
-    /// The agent.
+    /// The agent, or the workflow.
     #[schemars(length(max = 64))]
     pub agent: String,
+    /// What it is: an agent unless it says otherwise.
+    #[serde(default, skip_serializing_if = "Target::is_agent")]
+    pub target: Target,
+
     /// The attempt whose evidence supports it.
     #[schemars(length(max = 36))]
     pub attempt_id: String,
@@ -96,9 +101,13 @@ impl Change {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct Hold {
-    /// The agent.
+    /// The agent, or the workflow.
     #[schemars(length(min = 1, max = 64))]
     pub agent: String,
+    /// What it is: an agent unless it says otherwise.
+    #[serde(default, skip_serializing_if = "Target::is_agent")]
+    pub target: Target,
+
     /// Since when.
     pub since: DateTime<Utc>,
     /// Why.

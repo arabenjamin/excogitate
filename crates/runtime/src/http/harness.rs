@@ -60,17 +60,32 @@ async fn start(
         .improve_request
         .parse(raw)
         .map_err(|refusal| ApiError::refused(&refusal))?;
-    let known = app
-        .runtime
-        .workflows
-        .agent(&request.agent)
-        .await
-        .map_err(|error| ApiError::internal(&error))?;
-    if known.is_none() {
+    let engine = &app.runtime.workflows;
+    let known = match request.target {
+        harness::Target::Agent => engine
+            .agent(&request.agent)
+            .await
+            .map(|found| found.is_some()),
+        harness::Target::Workflow => engine
+            .workflow(&request.agent)
+            .await
+            .map(|found| found.is_some()),
+    }
+    .map_err(|error| ApiError::internal(&error))?;
+    if !known {
         return Err(ApiError::not_found(&format!(
-            "there is no agent {}",
+            "there is no {} {}",
+            request.target.word(),
             request.agent
         )));
+    }
+    if request.target == harness::Target::Workflow
+        && !serde_json::from_str::<serde_json::Value>(&request.task)
+            .is_ok_and(|inputs| inputs.is_object())
+    {
+        return Err(ApiError::invalid(
+            "a workflow's task is the inputs to run it on, as a JSON object",
+        ));
     }
     let id = JobId::generate();
     let job = Job {
@@ -188,13 +203,27 @@ pub struct HoldList {
     pub has_more: bool,
 }
 
-/// Holds an agent.
+/// Holds an agent, or a workflow.
 #[derive(Debug, Clone, serde::Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct HoldRequest {
     /// Why, for whoever reads the hold later.
     #[schemars(length(min = 1, max = 2048))]
     pub reason: String,
+    /// What's held: an agent unless it says `workflow`.
+    #[serde(default, skip_serializing_if = "harness::Target::is_agent")]
+    pub target: harness::Target,
+}
+
+/// The `target` query parameter: an agent unless it says `workflow`.
+fn target_of(
+    params: &std::collections::BTreeMap<String, String>,
+) -> Result<harness::Target, ApiError> {
+    match params.get("target").map(String::as_str) {
+        None | Some("agent") => Ok(harness::Target::Agent),
+        Some("workflow") => Ok(harness::Target::Workflow),
+        Some(_) => Err(ApiError::invalid("target is agent or workflow")),
+    }
 }
 
 impl From<ChangeError> for ApiError {
@@ -349,7 +378,10 @@ async fn hold(
         .hold_request
         .parse(raw)
         .map_err(|refusal| ApiError::refused(&refusal))?;
-    let held = app.runtime.set_hold(agent, Some(request.reason)).await?;
+    let held = app
+        .runtime
+        .set_hold(agent, request.target, Some(request.reason))
+        .await?;
     held.map(Json)
         .ok_or_else(|| ApiError::internal(&"the hold wasn't kept"))
 }
@@ -357,9 +389,13 @@ async fn hold(
 async fn release(
     State(app): State<App>,
     Path(agent): Path<String>,
+    Query(params): Params,
 ) -> Result<StatusCode, ApiError> {
+    only(&params, &["target"])?;
     let agent = agent_name(&agent)?;
-    app.runtime.set_hold(agent, None).await?;
+    app.runtime
+        .set_hold(agent, target_of(&params)?, None)
+        .await?;
     Ok(StatusCode::NO_CONTENT)
 }
 

@@ -367,6 +367,20 @@ mod tests {
         assert_eq!(fixture.load().await.unwrap(), 3);
     }
 
+    #[test]
+    fn the_front_door_example_meets_the_agent_schema_and_its_guardrails_hold() {
+        let text = include_str!("../../../definitions/agents/front-door.yaml.example");
+        let raw: serde_json::Value = serde_saphyr::from_str(text).unwrap();
+        schema::Validator::for_type::<Agent>()
+            .unwrap()
+            .check(&raw)
+            .unwrap();
+        let agent: Agent = serde_json::from_value(raw).unwrap();
+        workflow::check_skills(&agent.skills).unwrap();
+        dispatch::check_guardrails(&agent.guardrails, &agent.tools).unwrap();
+        assert_eq!(agent.guardrails.len(), 1);
+    }
+
     #[tokio::test]
     async fn a_job_runs_a_workflow_and_keeps_its_result() {
         let fixture = Fixture::new("job");

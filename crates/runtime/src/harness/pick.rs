@@ -96,7 +96,7 @@ impl Runtime {
         tried: &BTreeSet<String>,
     ) -> Result<Option<String>, String> {
         if let Some(hold) = self
-            .hold_on(agent)
+            .hold_on(agent, harness::Target::Agent)
             .await
             .map_err(super::ChangeError::message)?
         {
@@ -109,7 +109,7 @@ impl Runtime {
         }
         let since = Utc::now() - Span::hours(REST_HOURS);
         let changes = self
-            .changes_to(agent)
+            .changes_to(agent, harness::Target::Agent)
             .await
             .map_err(super::ChangeError::message)?;
         if changes.iter().any(|(_, change)| change.at >= since) {

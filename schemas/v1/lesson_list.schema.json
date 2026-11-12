@@ -36,7 +36,7 @@
       "description": "What one adopted change taught.",
       "properties": {
         "agent": {
-          "description": "The agent that was changed.",
+          "description": "The agent that was changed, or the workflow.",
           "maxLength": 64,
           "type": "string"
         },
@@ -71,6 +71,21 @@
         "status": {
           "$ref": "#/$defs/LessonStatus",
           "description": "Whether it still counts."
+        },
+        "target": {
+          "description": "What it is: an agent unless it says otherwise.",
+          "oneOf": [
+            {
+              "const": "agent",
+              "description": "An agent.",
+              "type": "string"
+            },
+            {
+              "const": "workflow",
+              "description": "A workflow.",
+              "type": "string"
+            }
+          ]
         }
       },
       "required": [

@@ -963,3 +963,89 @@ async fn an_agent_gets_each_item_as_context() {
     assert_eq!(harness.server.served().len(), 2);
     assert_eq!(run.output, Some(json!(["first", "second"])));
 }
+
+// Probes of a whole workflow.
+
+#[tokio::test]
+async fn a_workflow_probe_stubs_writes_runs_allowed_reads_and_probes_its_agents() {
+    let log = Arc::new(Recorder::default());
+    let script = vec![ChaosStep::Text("summed".to_owned())];
+    let tools = vec![
+        read_tool("look", &log),
+        tool("save", Ok(json!({})), 0, &log),
+    ];
+    let harness = harness(script, tools, Arc::clone(&log)).await;
+    // `define` stores the agent the steps use.
+    define(&harness, json!([agent_step()]), json!({})).await;
+    let candidate: workflow::Workflow = serde_json::from_value(json!({
+        "inputs": { "type": "object", "additionalProperties": false, "properties": {} },
+        "steps": [
+            tool_step("find", "look", &json!({})),
+            tool_step("keep", "save", &json!({ "text": "x" })),
+            { "type": "agent", "id": "sum", "agent": "helper", "message": "Sum it up.",
+              "context": "{{steps.keep.result}}" }
+        ],
+        "output": "{{steps.sum.answer}}"
+    }))
+    .unwrap();
+    let reads = ["look".to_owned()].into_iter().collect();
+    let probed = harness
+        .engine
+        .probe_workflow("flow", &candidate, &json!({}), reads)
+        .await
+        .unwrap();
+
+    let run = &probed.run;
+    assert_eq!(run.outcome, RunOutcome::Completed, "{run:?}");
+    assert_eq!(run.output, Some(json!("summed")));
+    // Only the allowed read reached a tool; the write was stubbed, and its
+    // output is the stub.
+    assert_eq!(log.calls.lock().unwrap().len(), 1);
+    let keep = run.steps[1].receipt.as_ref().unwrap();
+    assert_eq!(keep.tool_calls[0].status, dispatch::CallStatus::Stubbed);
+    assert_eq!(probed.harness, harness.engine.workflow_harness(&candidate));
+    let mut subjects = Vec::new();
+    for step in &run.steps {
+        let receipt = step.receipt.as_ref().unwrap();
+        let trajectory = dispatch::read_trajectory(
+            harness.engine.sink.as_ref(),
+            receipt.run.parse().unwrap(),
+            100,
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        subjects.push(trajectory.agent.unwrap());
+    }
+    assert_eq!(
+        subjects,
+        ["probe:tool:look", "probe:tool:save", "probe:helper"]
+    );
+}
+
+#[tokio::test]
+async fn a_workflow_probe_checks_the_candidate_and_its_inputs() {
+    let log = Arc::new(Recorder::default());
+    let harness = harness(vec![], vec![], log).await;
+    define(&harness, json!([agent_step()]), json!({})).await;
+    let asking = |agent: &str| -> workflow::Workflow {
+        serde_json::from_value(json!({
+            "inputs": { "type": "object", "additionalProperties": false, "properties": {} },
+            "steps": [{ "type": "agent", "id": "a", "agent": agent, "message": "Hi." }]
+        }))
+        .unwrap()
+    };
+    let none = std::collections::BTreeSet::new();
+    let unknown = harness
+        .engine
+        .probe_workflow("flow", &asking("nobody"), &json!({}), none.clone())
+        .await
+        .unwrap_err();
+    assert!(unknown.contains("nobody"), "{unknown}");
+    let wrong = harness
+        .engine
+        .probe_workflow("flow", &asking("helper"), &json!({ "extra": 1 }), none)
+        .await
+        .unwrap_err();
+    assert!(wrong.starts_with("the inputs"), "{wrong}");
+}

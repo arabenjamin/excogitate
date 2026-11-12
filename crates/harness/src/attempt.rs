@@ -8,16 +8,18 @@ use chrono::{DateTime, Utc};
 use dispatch::{Guardrail, Trajectory, read_trajectory};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use workflow::{Agent, Engine, ProbeRun, Skill};
+use serde_json::Value;
+use workflow::{Agent, Engine, ProbeRun, Skill, Workflow};
 
 use crate::cite::Cite;
+use crate::flow::{StepEdit, Target, apply_edits, check_workflow_edit, merge_edits};
 use crate::guard::check_harness;
 use crate::lesson::lessons_for;
 use crate::render::Rendered;
 use crate::roles::{Brief, ComposerReply, Decision, Draft, Effect, Judges, Verdict, listed};
 
 /// How many steps of a probe are read back for the judges.
-const MAX_STEPS: usize = 512;
+pub(crate) const MAX_STEPS: usize = 512;
 /// The most problems an attempt keeps.
 const MAX_PROBLEMS: usize = 32;
 
@@ -25,12 +27,17 @@ const MAX_PROBLEMS: usize = 32;
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct Request {
-    /// The agent.
+    /// The agent, or the workflow when `target` is `workflow`.
     #[schemars(length(min = 1, max = 64))]
     pub agent: String,
-    /// A task to run it on, such as one a real run got wrong.
+    /// A task to run it on, such as one a real run got wrong. For a
+    /// workflow, the inputs to run it on, as a JSON object.
     #[schemars(length(min = 1, max = 8000))]
     pub task: String,
+    /// What to improve: an agent unless it says otherwise.
+    #[serde(default, skip_serializing_if = "Target::is_agent")]
+    pub target: Target,
+
     /// What went wrong, if someone said.
     #[schemars(length(max = 2000))]
     pub why: Option<String>,
@@ -61,9 +68,13 @@ pub enum Kind {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct Probed {
-    /// The run.
+    /// The run. For a workflow, its first step's.
     #[schemars(length(max = 36))]
     pub run: String,
+    /// For a workflow, each step's run, in order.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[schemars(length(max = 64), inner(length(max = 36)))]
+    pub runs: Vec<String>,
     /// The harness it ran under.
     #[schemars(length(max = 64))]
     pub harness: String,
@@ -95,6 +106,10 @@ pub struct Candidate {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     #[schemars(length(max = 16))]
     pub guardrails: Vec<Guardrail>,
+    /// For a workflow, its step edits. Its instructions are empty.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[schemars(length(max = 32))]
+    pub steps: Vec<StepEdit>,
     /// What changed, as the editor put it.
     #[schemars(length(max = 1000))]
     pub change: String,
@@ -207,13 +222,24 @@ pub struct Adoption {
 impl Candidate {
     fn drafted(label: &str, kind: Kind, draft: Draft, agent: &Agent) -> Self {
         Self {
-            label: label.to_owned(),
-            kind,
             system_prompt: draft.system_prompt,
             skills: draft.skills.unwrap_or_else(|| agent.skills.clone()),
             guardrails: draft.guardrails.unwrap_or_else(|| agent.guardrails.clone()),
-            change: draft.change,
-            cites: draft.cites,
+            ..Self::empty(label, kind, draft.change, draft.cites)
+        }
+    }
+
+    /// A candidate with nothing in it yet.
+    pub(crate) fn empty(label: &str, kind: Kind, change: String, cites: Vec<Cite>) -> Self {
+        Self {
+            label: label.to_owned(),
+            kind,
+            system_prompt: String::new(),
+            skills: Vec::new(),
+            guardrails: Vec::new(),
+            steps: Vec::new(),
+            change,
+            cites,
             dropped: Vec::new(),
             refused: None,
             probe: None,
@@ -231,15 +257,34 @@ impl Candidate {
         }
     }
 
-    /// Whether it's the agent as it is.
-    fn changes_nothing(&self, agent: &Agent) -> bool {
-        self.system_prompt.trim() == agent.system_prompt.trim()
-            && self.skills == agent.skills
-            && self.guardrails == agent.guardrails
+    /// The workflow as this candidate would have it.
+    ///
+    /// # Errors
+    ///
+    /// Why one of its edits can't be made, as [`apply_edits`] says.
+    pub fn workflow(&self, base: &Workflow, reads: &BTreeSet<String>) -> Result<Workflow, String> {
+        apply_edits(base, &self.steps, reads)
+    }
+
+    /// Whether it's the agent or workflow as it is.
+    fn changes_nothing(&self, base: &Base) -> bool {
+        match base {
+            Base::Agent(agent) => {
+                self.system_prompt.trim() == agent.system_prompt.trim()
+                    && self.skills == agent.skills
+                    && self.guardrails == agent.guardrails
+            }
+            Base::Workflow {
+                workflow, reads, ..
+            } => self.steps.is_empty() || self.workflow(workflow, reads).as_ref() == Ok(workflow),
+        }
     }
 
     /// The candidate as a judge reads it.
     fn shown(&self) -> String {
+        if !self.steps.is_empty() {
+            return format!("STEP EDITS:\n{}", listed(&self.steps));
+        }
         format!(
             "INSTRUCTIONS:\n{}\nSKILLS:\n{}\nGUARDRAILS:\n{}",
             self.system_prompt,
@@ -260,6 +305,19 @@ fn union<T: Clone>(first: &[T], second: &[T], name: impl Fn(&T) -> &str) -> Vec<
     all
 }
 
+/// What an attempt improves, as it was when the attempt began.
+#[derive(Debug, Clone)]
+pub(crate) enum Base {
+    /// An agent.
+    Agent(Agent),
+    /// A workflow, the inputs it's tried on, and the tools that only read.
+    Workflow {
+        workflow: Workflow,
+        inputs: Value,
+        reads: BTreeSet<String>,
+    },
+}
+
 impl Attempt {
     /// An attempt stopped before it could finish, such as by its time
     /// limit, so that it's kept all the same.
@@ -271,7 +329,7 @@ impl Attempt {
         attempt.end(Status::Failed)
     }
 
-    fn begun(request: Request) -> Self {
+    pub(crate) fn begun(request: Request) -> Self {
         Self {
             request,
             started_at: Utc::now(),
@@ -301,17 +359,17 @@ impl Attempt {
             .flatten()
     }
 
-    fn problem(&mut self, text: impl Into<String>) {
+    pub(crate) fn problem(&mut self, text: impl Into<String>) {
         if self.problems.len() < MAX_PROBLEMS {
             self.problems.push(schema::bounded(&text.into()));
         }
     }
 
-    fn spend(&mut self, cost: u64) {
+    pub(crate) fn spend(&mut self, cost: u64) {
         self.cost_usd_micros = self.cost_usd_micros.saturating_add(cost);
     }
 
-    fn end(mut self, status: Status) -> Self {
+    pub(crate) fn end(mut self, status: Status) -> Self {
         self.status = status;
         self.finished_at = Utc::now();
         self
@@ -330,7 +388,7 @@ pub struct Loop<'a> {
 }
 
 fn rank(outcome: Option<&str>) -> u8 {
-    u8::from(outcome == Some("answered"))
+    u8::from(matches!(outcome, Some("answered" | "completed")))
 }
 
 impl Loop<'_> {
@@ -363,7 +421,7 @@ impl Loop<'_> {
         None
     }
 
-    fn judge_money(&self, attempt: &Attempt) -> u64 {
+    pub(crate) fn judge_money(&self, attempt: &Attempt) -> u64 {
         self.settings
             .judge_usd_micros
             .saturating_sub(attempt.cost_usd_micros)
@@ -371,6 +429,13 @@ impl Loop<'_> {
 
     /// Runs one attempt. It always returns one, and a failure says why.
     pub async fn improve(&self, request: Request) -> Attempt {
+        match request.target {
+            Target::Agent => self.improve_agent(request).await,
+            Target::Workflow => self.improve_workflow(request).await,
+        }
+    }
+
+    async fn improve_agent(&self, request: Request) -> Attempt {
         let mut attempt = Attempt::begun(request.clone());
         let agent = match self.engine.agent(&request.agent).await {
             Ok(Some(agent)) => agent,
@@ -392,17 +457,9 @@ impl Loop<'_> {
         };
         let reference = Rendered::new("R", &trajectory);
         attempt.reference = Some(summary(&probed, &reference));
-        // Looked up for this task, never carried over from the last.
-        let found = lessons_for(
-            self.engine.store.as_ref(),
-            &request.agent,
-            &request.task,
-            request.why.as_deref(),
-        )
-        .await;
-        attempt.lessons_shown = found.iter().map(|(change, _)| change.clone()).collect();
-        let lessons: Vec<String> = found.into_iter().map(|(_, text)| text).collect();
+        let lessons = self.lessons(&mut attempt).await;
         let brief = Brief {
+            target: Target::Agent,
             instructions: &agent.system_prompt,
             tools: &agent.tools,
             skills: &agent.skills,
@@ -421,55 +478,135 @@ impl Loop<'_> {
             }
         };
         attempt.spend(edited.cost_usd_micros);
-
-        let mut runs = vec![reference.clone()];
-        for (label, kind, draft) in [
-            ("A", Kind::Invariant, edited.value.invariant),
-            ("B", Kind::Domain, edited.value.domain),
-        ] {
-            let mut candidate = Candidate::drafted(label, kind, draft, &agent);
-            candidate.refused = self.refusal(&mut candidate, &agent, &request.task, &reference);
-            if candidate.refused.is_none() {
-                let edit = candidate.agent(&agent);
-                if let Some((probed, trajectory)) = self
-                    .probe(&request.agent, &edit, &request.task, &mut attempt)
-                    .await
-                {
-                    let rendered = Rendered::new(label, &trajectory);
-                    candidate.probe = Some(summary(&probed, &rendered));
-                    runs.push(rendered);
-                }
-            }
-            attempt.candidates.push(candidate);
-        }
+        let base = Base::Agent(agent.clone());
+        let candidates = [
+            Candidate::drafted("A", Kind::Invariant, edited.value.invariant, &agent),
+            Candidate::drafted("B", Kind::Domain, edited.value.domain, &agent),
+        ];
+        let runs = self
+            .try_all(&mut attempt, &base, candidates, reference)
+            .await;
         if runs.len() == 1 {
             attempt.problem("no candidate could be tried");
             return attempt.end(Status::Kept);
         }
-        self.decide(attempt, &agent, &brief, runs).await
+        self.decide(attempt, &base, &brief, runs).await
     }
 
-    /// Why a candidate agent can't be run, if it can't: it breaks a rule on
-    /// what an edit may do, or wouldn't pass the checks an agent does.
-    fn unusable(&self, edit: &Agent, agent: &Agent, task: &str) -> Option<String> {
-        check_harness(edit, agent, task)
-            .and_then(|()| self.engine.check_candidate(edit))
-            .err()
+    /// The lessons that fit the attempt, as text, with which were shown
+    /// kept on it. Looked up for this task, never carried over.
+    pub(crate) async fn lessons(&self, attempt: &mut Attempt) -> Vec<String> {
+        let request = &attempt.request;
+        let found = lessons_for(
+            self.engine.store.as_ref(),
+            request.target,
+            &request.agent,
+            &request.task,
+            request.why.as_deref(),
+        )
+        .await;
+        attempt.lessons_shown = found.iter().map(|(change, _)| change.clone()).collect();
+        found.into_iter().map(|(_, text)| text).collect()
+    }
+
+    /// Checks and probes each candidate, keeping them on the attempt.
+    /// Returns the runs to compare, the reference first.
+    pub(crate) async fn try_all(
+        &self,
+        attempt: &mut Attempt,
+        base: &Base,
+        candidates: [Candidate; 2],
+        reference: Rendered,
+    ) -> Vec<Rendered> {
+        let mut runs = vec![reference.clone()];
+        let task = attempt.request.task.clone();
+        for mut candidate in candidates {
+            candidate.refused = self.refusal(&mut candidate, base, &task, &reference).await;
+            if candidate.refused.is_none()
+                && let Some((probed, rendered)) =
+                    self.try_candidate(base, &candidate, attempt).await
+            {
+                candidate.probe = Some(probed);
+                runs.push(rendered);
+            }
+            attempt.candidates.push(candidate);
+        }
+        runs
+    }
+
+    /// Probes a candidate that passed its checks.
+    async fn try_candidate(
+        &self,
+        base: &Base,
+        candidate: &Candidate,
+        attempt: &mut Attempt,
+    ) -> Option<(Probed, Rendered)> {
+        let Request {
+            agent: name, task, ..
+        } = attempt.request.clone();
+        match base {
+            Base::Agent(agent) => {
+                let edit = candidate.agent(agent);
+                let (probed, trajectory) = self.probe(&name, &edit, &task, attempt).await?;
+                let rendered = Rendered::new(&candidate.label, &trajectory);
+                Some((summary(&probed, &rendered), rendered))
+            }
+            Base::Workflow {
+                workflow,
+                inputs,
+                reads,
+            } => {
+                let edited = match candidate.workflow(workflow, reads) {
+                    Ok(edited) => edited,
+                    Err(why) => {
+                        attempt.problem(why);
+                        return None;
+                    }
+                };
+                self.probe_flow(&name, &edited, inputs, &candidate.label, attempt)
+                    .await
+            }
+        }
+    }
+
+    /// Why a candidate can't be run, if it can't: it breaks a rule on what
+    /// an edit may do, or wouldn't pass the checks a definition does.
+    async fn unusable(&self, base: &Base, candidate: &Candidate, task: &str) -> Option<String> {
+        match base {
+            Base::Agent(agent) => {
+                let edit = candidate.agent(agent);
+                check_harness(&edit, agent, task)
+                    .and_then(|()| self.engine.check_candidate(&edit))
+                    .err()
+            }
+            Base::Workflow {
+                workflow, reads, ..
+            } => {
+                let edited = match candidate.workflow(workflow, reads) {
+                    Ok(edited) => edited,
+                    Err(why) => return Some(why),
+                };
+                if let Err(why) = check_workflow_edit(&edited, workflow, task) {
+                    return Some(why);
+                }
+                self.engine.check_workflow_candidate(&edited).await.err()
+            }
+        }
     }
 
     /// Why a candidate can't be tried, if it can't. Citations that don't hold
     /// are dropped, and recorded as dropped.
-    fn refusal(
+    async fn refusal(
         &self,
         candidate: &mut Candidate,
-        agent: &Agent,
+        base: &Base,
         task: &str,
         reference: &Rendered,
     ) -> Option<String> {
-        if candidate.changes_nothing(agent) {
+        if candidate.changes_nothing(base) {
             return Some("it changes nothing".to_owned());
         }
-        if let Some(why) = self.unusable(&candidate.agent(agent), agent, task) {
+        if let Some(why) = self.unusable(base, candidate, task).await {
             return Some(why);
         }
         // Every edit traces to a moment in the reference run.
@@ -492,10 +629,10 @@ impl Loop<'_> {
         })
     }
 
-    async fn decide(
+    pub(crate) async fn decide(
         &self,
         mut attempt: Attempt,
-        agent: &Agent,
+        base: &Base,
         brief: &Brief<'_>,
         runs: Vec<Rendered>,
     ) -> Attempt {
@@ -524,7 +661,7 @@ impl Loop<'_> {
                     attempt.end(Status::Kept)
                 }
             }
-            Decision::Merge => self.merge(attempt, agent, brief, &runs, reply).await,
+            Decision::Merge => self.merge(attempt, base, brief, &runs, reply).await,
         }
     }
 
@@ -576,7 +713,7 @@ impl Loop<'_> {
     async fn merge(
         &self,
         mut attempt: Attempt,
-        agent: &Agent,
+        base: &Base,
         brief: &Brief<'_>,
         runs: &[Rendered],
         reply: ComposerReply,
@@ -591,47 +728,40 @@ impl Loop<'_> {
             attempt.problem("a merge needs two candidates that each mitigated something");
             return attempt.end(Status::Kept);
         }
-        let merged = reply.merged.unwrap_or_default();
-        // The merge keeps both candidates' skills and guardrails.
-        let pair: Vec<&Candidate> = attempt
-            .candidates
-            .iter()
-            .filter(|c| c.probe.is_some())
-            .collect();
-        let (skills, guardrails) = match pair.as_slice() {
-            [first, second] => (
-                union(&first.skills, &second.skills, |skill| &skill.name),
-                union(&first.guardrails, &second.guardrails, |rule| &rule.name),
-            ),
-            _ => (agent.skills.clone(), agent.guardrails.clone()),
-        };
-        let mut candidate = Candidate {
-            label: "M".to_owned(),
-            kind: Kind::Merged,
-            system_prompt: merged,
-            skills,
-            guardrails,
-            change: reply.reason,
-            cites: Vec::new(),
-            dropped: Vec::new(),
-            refused: None,
-            probe: None,
-        };
-        let edit = candidate.agent(agent);
-        candidate.refused = self.unusable(&edit, agent, &attempt.request.task);
+        let mut candidate = Candidate::empty("M", Kind::Merged, reply.reason, Vec::new());
+        {
+            let pair: Vec<&Candidate> = attempt
+                .candidates
+                .iter()
+                .filter(|c| c.probe.is_some())
+                .collect();
+            match (base, pair.as_slice()) {
+                // The merge keeps both candidates' skills and guardrails.
+                (Base::Agent(_), [first, second]) => {
+                    candidate.system_prompt = reply.merged.unwrap_or_default();
+                    candidate.skills = union(&first.skills, &second.skills, |skill| &skill.name);
+                    candidate.guardrails =
+                        union(&first.guardrails, &second.guardrails, |rule| &rule.name);
+                }
+                // A workflow's merge is made in code, not by the composer.
+                (Base::Workflow { .. }, [first, second]) => {
+                    candidate.steps = merge_edits(&first.steps, &second.steps);
+                }
+                _ => {}
+            }
+        }
+        let task = attempt.request.task.clone();
+        candidate.refused = self.unusable(base, &candidate, &task).await;
         if candidate.refused.is_some() {
             attempt.candidates.push(candidate);
             return attempt.end(Status::Kept);
         }
-        let Request {
-            agent: name, task, ..
-        } = attempt.request.clone();
-        let Some((probed, trajectory)) = self.probe(&name, &edit, &task, &mut attempt).await else {
+        let Some((probed, rendered)) = self.try_candidate(base, &candidate, &mut attempt).await
+        else {
             attempt.candidates.push(candidate);
             return attempt.end(Status::Failed);
         };
-        let rendered = Rendered::new("M", &trajectory);
-        candidate.probe = Some(summary(&probed, &rendered));
+        candidate.probe = Some(probed);
         let shown = candidate.shown();
         attempt.candidates.push(candidate);
         // The merge is judged on its own run, against the reference.
@@ -669,6 +799,7 @@ fn mitigated(attempt: &Attempt, label: &str) -> bool {
 fn summary(probed: &ProbeRun, rendered: &Rendered) -> Probed {
     Probed {
         run: probed.run.clone(),
+        runs: Vec::new(),
         harness: probed.harness.clone(),
         outcome: rendered.outcome.clone(),
         calls: rendered.calls.clone(),

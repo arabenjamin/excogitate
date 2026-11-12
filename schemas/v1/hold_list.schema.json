@@ -5,7 +5,7 @@
       "description": "An agent the system leaves alone until the owner releases it.",
       "properties": {
         "agent": {
-          "description": "The agent.",
+          "description": "The agent, or the workflow.",
           "maxLength": 64,
           "minLength": 1,
           "type": "string"
@@ -19,6 +19,21 @@
           "description": "Since when.",
           "format": "date-time",
           "type": "string"
+        },
+        "target": {
+          "description": "What it is: an agent unless it says otherwise.",
+          "oneOf": [
+            {
+              "const": "agent",
+              "description": "An agent.",
+              "type": "string"
+            },
+            {
+              "const": "workflow",
+              "description": "A workflow.",
+              "type": "string"
+            }
+          ]
         }
       },
       "required": [

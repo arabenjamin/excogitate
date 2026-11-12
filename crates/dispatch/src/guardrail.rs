@@ -41,6 +41,19 @@ pub struct Deny {
     pub matches: String,
 }
 
+/// The calls a guardrail is about, by what one of their arguments says.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct Action {
+    /// The argument, as a dotted path such as `operation`.
+    #[schemars(length(min = 1, max = 128))]
+    pub argument: String,
+    /// A pattern that ignores case, matched as `deny` matches. Only a call
+    /// whose argument matches counts, and a call without it doesn't.
+    #[schemars(length(min = 1, max = 256))]
+    pub matches: String,
+}
+
 /// A rule on one of the agent's tools.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -54,6 +67,9 @@ pub struct Guardrail {
     /// Why, as the model is told when the rule stops it.
     #[schemars(length(min = 1, max = 500))]
     pub because: String,
+    /// The calls of the tool its rules are about. Left out, all of them.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub action: Option<Action>,
     /// Refuses a call whose argument matches.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub deny: Option<Deny>,
@@ -64,6 +80,12 @@ pub struct Guardrail {
     /// The agent must call the tool, and see it run, before it answers.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub required: bool,
+    /// The same as `required`, but only for an answer this pattern matches,
+    /// ignoring case: what the answer says the tool did, such as
+    /// `\b(saved|stored)\b`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(length(min = 1, max = 256))]
+    pub claimed: Option<String>,
 }
 
 impl Guardrail {
@@ -73,14 +95,30 @@ impl Guardrail {
     ///
     /// What's wrong, in a sentence.
     pub fn check(&self) -> Result<(), String> {
-        if self.deny.is_none() && self.max_calls.is_none() && !self.required {
-            return Err(format!(
-                "the guardrail {} has no rule: give it deny, max_calls or required",
-                self.name
+        let named = |why: String| format!("the guardrail {}: {why}", self.name);
+        let rules = [
+            self.deny.is_some(),
+            self.max_calls.is_some(),
+            self.required,
+            self.claimed.is_some(),
+        ];
+        if !rules.contains(&true) {
+            return Err(named(
+                "it has no rule: give it deny, max_calls, required or claimed".to_owned(),
             ));
         }
-        if let Some(deny) = &self.deny {
-            pattern(&deny.matches).map_err(|why| format!("the guardrail {}: {why}", self.name))?;
+        if self.required && self.claimed.is_some() {
+            return Err(named(
+                "required and claimed both say when the tool must have run; give one".to_owned(),
+            ));
+        }
+        let patterns = [
+            self.deny.as_ref().map(|deny| &deny.matches),
+            self.action.as_ref().map(|action| &action.matches),
+            self.claimed.as_ref(),
+        ];
+        for text in patterns.into_iter().flatten() {
+            pattern(text).map_err(named)?;
         }
         Ok(())
     }
@@ -115,14 +153,29 @@ pub fn check_guardrails(guardrails: &[Guardrail], tools: &[String]) -> Result<()
     Ok(())
 }
 
+/// The text of the argument at a dotted `path`: a string as it is,
+/// anything else as JSON. `None` if there's no such argument.
+fn argument_text(arguments: &Value, path: &str) -> Option<String> {
+    let found = path
+        .split('.')
+        .try_fold(arguments, |value, key| value.get(key))?;
+    Some(
+        found
+            .as_str()
+            .map_or_else(|| found.to_string(), str::to_owned),
+    )
+}
+
 /// A guardrail, ready to enforce.
 #[derive(Debug, Clone)]
 pub(crate) struct Enforced {
     pub(crate) rule: Guardrail,
     deny: Option<Regex>,
-    /// The agent's calls to the tool that passed their checks.
+    action: Option<Regex>,
+    claimed: Option<Regex>,
+    /// The agent's calls it's about that passed their checks.
     pub(crate) calls: u32,
-    /// Whether the tool has run for the agent.
+    /// Whether such a call has run for the agent.
     pub(crate) ran: bool,
     /// Whether the agent was reminded of it.
     pub(crate) reminded: bool,
@@ -132,23 +185,41 @@ impl Enforced {
     /// Ready to enforce, or why it can't be.
     pub(crate) fn new(rule: Guardrail) -> Result<Self, String> {
         rule.check()?;
-        let deny = rule
-            .deny
-            .as_ref()
-            .map(|deny| pattern(&deny.matches))
-            .transpose()?;
+        let compiled = |text: Option<&String>| text.map(|text| pattern(text)).transpose();
         Ok(Self {
+            deny: compiled(rule.deny.as_ref().map(|deny| &deny.matches))?,
+            action: compiled(rule.action.as_ref().map(|action| &action.matches))?,
+            claimed: compiled(rule.claimed.as_ref())?,
             rule,
-            deny,
             calls: 0,
             ran: false,
             reminded: false,
         })
     }
 
+    /// Whether a call to its tool with these arguments is one it's about.
+    pub(crate) fn about(&self, arguments: &Value) -> bool {
+        let Some((action, regex)) = self.rule.action.as_ref().zip(self.action.as_ref()) else {
+            return true;
+        };
+        argument_text(arguments, &action.argument).is_some_and(|text| regex.is_match(&text))
+    }
+
+    /// Whether `answer` needs a call it's about to have run first.
+    pub(crate) fn needs_call(&self, answer: &str) -> bool {
+        self.rule.required
+            || self
+                .claimed
+                .as_ref()
+                .is_some_and(|regex| regex.is_match(answer))
+    }
+
     /// Why this call breaks the rule, if it does, and whether it's the
     /// call limit it broke.
     pub(crate) fn breaks(&self, arguments: &Value) -> Option<(String, bool)> {
+        if !self.about(arguments) {
+            return None;
+        }
         if let Some(max) = self.rule.max_calls
             && self.calls >= max
         {
@@ -161,13 +232,7 @@ impl Enforced {
             ));
         }
         let (deny, regex) = self.rule.deny.as_ref().zip(self.deny.as_ref())?;
-        let found = deny
-            .argument
-            .split('.')
-            .try_fold(arguments, |value, key| value.get(key))?;
-        let text = found
-            .as_str()
-            .map_or_else(|| found.to_string(), str::to_owned);
+        let text = argument_text(arguments, &deny.argument)?;
         regex.is_match(&text).then(|| {
             (
                 format!(
@@ -179,14 +244,24 @@ impl Enforced {
         })
     }
 
-    /// The reminder an agent gets for answering before the tool ran.
+    /// The reminder an agent gets for an answer that needed the call first.
     pub(crate) fn reminder(&self) -> String {
-        format!(
-            "[guardrail {name}] Before you answer, call {tool}. {because}",
-            name = self.rule.name,
-            tool = self.rule.tool,
-            because = self.rule.because
-        )
+        let call = match &self.rule.action {
+            Some(action) => format!(
+                "{} with {} matching {:?}",
+                self.rule.tool, action.argument, action.matches
+            ),
+            None => self.rule.tool.clone(),
+        };
+        let (name, because) = (&self.rule.name, &self.rule.because);
+        if self.rule.claimed.is_some() {
+            format!(
+                "[guardrail {name}] Your answer says what {call} would have done, and it \
+                 hasn't run. Call it, or answer without saying so. {because}"
+            )
+        } else {
+            format!("[guardrail {name}] Before you answer, call {call}. {because}")
+        }
     }
 }
 
@@ -200,6 +275,10 @@ mod tests {
 
     fn rail(value: &Value) -> Guardrail {
         serde_json::from_value(value.clone()).unwrap()
+    }
+
+    fn refusal(rules: &[Guardrail], tools: &[String]) -> String {
+        check_guardrails(rules, tools).unwrap_err()
     }
 
     #[test]
@@ -244,36 +323,56 @@ mod tests {
     }
 
     #[test]
+    fn an_action_narrows_the_calls_a_rule_is_about() {
+        let mut rule = Enforced::new(rail(&json!({
+            "name": "one_store", "tool": "memory", "because": "Once.", "max_calls": 1,
+            "action": { "argument": "operation", "matches": "^store$" }
+        })))
+        .unwrap();
+        assert!(rule.about(&json!({ "operation": "STORE" })));
+        assert!(!rule.about(&json!({ "operation": "get" })));
+        assert!(!rule.about(&json!({})));
+        rule.calls = 1;
+        assert!(rule.breaks(&json!({ "operation": "store" })).is_some());
+        assert!(rule.breaks(&json!({ "operation": "search" })).is_none());
+    }
+
+    #[test]
+    fn a_claim_needs_the_call_only_when_the_answer_makes_it() {
+        let rule = Enforced::new(rail(&json!({
+            "name": "saved", "tool": "memory", "because": "Say so only if it ran.",
+            "claimed": r"\b(saved|stored)\b"
+        })))
+        .unwrap();
+        assert!(rule.needs_call("I SAVED it."));
+        assert!(!rule.needs_call("Here is what I found."));
+        assert!(rule.reminder().contains("answer without saying so"));
+    }
+
+    #[test]
     fn a_list_is_checked_whole() {
         let tools = vec!["memory".to_owned()];
         let required = json!({ "name": "a", "tool": "memory", "because": "b", "required": true });
         assert_eq!(check_guardrails(&[rail(&required)], &tools), Ok(()));
         let none = rail(&json!({ "name": "a", "tool": "memory", "because": "b" }));
-        assert!(
-            check_guardrails(&[none], &tools)
-                .unwrap_err()
-                .contains("no rule")
-        );
+        assert!(refusal(&[none], &tools).contains("no rule"));
         let other = rail(&json!({ "name": "a", "tool": "nope", "because": "b", "required": true }));
-        assert!(
-            check_guardrails(&[other], &tools)
-                .unwrap_err()
-                .contains("doesn't have")
-        );
+        assert!(refusal(&[other], &tools).contains("doesn't have"));
         let twice = [rail(&required), rail(&required)];
-        assert!(
-            check_guardrails(&twice, &tools)
-                .unwrap_err()
-                .contains("two")
-        );
+        assert!(refusal(&twice, &tools).contains("two"));
         let bad = rail(&json!({
             "name": "a", "tool": "memory", "because": "b",
             "deny": { "argument": "x", "matches": "(" }
         }));
-        assert!(
-            check_guardrails(&[bad], &tools)
-                .unwrap_err()
-                .contains("pattern")
-        );
+        assert!(refusal(&[bad], &tools).contains("pattern"));
+        let both = rail(&json!({
+            "name": "a", "tool": "memory", "because": "b", "required": true, "claimed": "x"
+        }));
+        assert!(refusal(&[both], &tools).contains("give one"));
+        let bare_action = rail(&json!({
+            "name": "a", "tool": "memory", "because": "b",
+            "action": { "argument": "operation", "matches": "store" }
+        }));
+        assert!(refusal(&[bare_action], &tools).contains("no rule"));
     }
 }

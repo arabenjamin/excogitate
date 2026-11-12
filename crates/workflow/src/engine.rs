@@ -316,7 +316,7 @@ pub async fn check_workflow_run(
 }
 
 impl Engine {
-    async fn definition<T: serde::de::DeserializeOwned>(
+    pub(crate) async fn definition<T: serde::de::DeserializeOwned>(
         &self,
         kind: DefinitionKind,
         name: &str,
@@ -370,7 +370,7 @@ impl Engine {
     /// don't fit.
     pub async fn run(&self, name: &str, inputs: Value) -> Result<WorkflowRun, WorkflowError> {
         let workflow = self.checked(name, &inputs).await?;
-        Ok(self.run_steps(name, &workflow, inputs).await)
+        Ok(self.run_steps(name, &workflow, inputs, None).await)
     }
 
     /// The workflow, if it exists and `inputs` fit it.
@@ -387,7 +387,15 @@ impl Engine {
         self.checked(name, inputs).await.map(|_| ())
     }
 
-    async fn run_steps(&self, name: &str, workflow: &Workflow, inputs: Value) -> WorkflowRun {
+    /// Runs `workflow`'s steps on `inputs`, each as a probe if `probe` is
+    /// given.
+    pub(crate) async fn run_steps(
+        &self,
+        name: &str,
+        workflow: &Workflow,
+        inputs: Value,
+        probe: Option<&Probe>,
+    ) -> WorkflowRun {
         let started = Instant::now();
         let mut context = json!({ "inputs": inputs, "steps": {} });
         let mut steps = Vec::with_capacity(workflow.steps.len());
@@ -410,8 +418,8 @@ impl Engine {
                 time: self.limits.time_limit.saturating_sub(started.elapsed()),
             };
             let ran = match step.for_each() {
-                None => self.run_once(step, &context, left).await,
-                Some(each) => self.fan_out(step, each, &context, left).await,
+                None => self.run_once(step, &context, left, probe).await,
+                Some(each) => self.fan_out(step, each, &context, left, probe).await,
             };
             if let Some(output) = ran.output.clone()
                 && let Some(earlier) = context.get_mut("steps").and_then(Value::as_object_mut)
@@ -460,8 +468,14 @@ impl Engine {
     }
 
     /// A step that runs once.
-    async fn run_once(&self, step: &Step, context: &Value, left: Left) -> Ran {
-        match self.run_step(step, context, left).await {
+    async fn run_once(
+        &self,
+        step: &Step,
+        context: &Value,
+        left: Left,
+        probe: Option<&Probe>,
+    ) -> Ran {
+        match self.run_step(step, context, left, probe).await {
             Ok(done) => Ran {
                 status: StepStatus::Ran,
                 detail: None,
@@ -479,7 +493,14 @@ impl Engine {
     /// A step run once per item, one after another, each held to what the
     /// step has left. Its output is the items' outputs in a list, with a
     /// `fan_out` summary saying how many there were and how many ran.
-    async fn fan_out(&self, step: &Step, each: &ForEach, context: &Value, left: Left) -> Ran {
+    async fn fan_out(
+        &self,
+        step: &Step,
+        each: &ForEach,
+        context: &Value,
+        left: Left,
+        probe: Option<&Probe>,
+    ) -> Ran {
         let list = match render_value(&Value::String(each.items.clone()), context) {
             Ok(Value::Array(list)) => list,
             Ok(other) => {
@@ -508,7 +529,7 @@ impl Engine {
                 time: left.time.saturating_sub(started.elapsed()),
             };
             let index_of = u32::try_from(index).unwrap_or(u32::MAX);
-            match self.run_step(step, &scoped, item_left).await {
+            match self.run_step(step, &scoped, item_left, probe).await {
                 Ok(done) => {
                     spent = spent.saturating_add(cost_of(Some(&done.receipt)));
                     untrusted |= done.output.get("untrusted") == Some(&Value::Bool(true));
@@ -561,6 +582,7 @@ impl Engine {
         step: &Step,
         context: &Value,
         left: Left,
+        probe: Option<&Probe>,
     ) -> Result<StepDone, StepFailure> {
         match step {
             Step::Tool {
@@ -571,7 +593,7 @@ impl Engine {
             } => {
                 let rendered =
                     render_value(arguments, context).map_err(|error| error.to_string())?;
-                self.run_tool(id, tool, &rendered, left).await
+                self.run_tool(id, tool, &rendered, left, probe).await
             }
             Step::Agent {
                 agent,
@@ -588,7 +610,7 @@ impl Engine {
                     }
                     None => asked,
                 };
-                self.run_agent(agent, question, left).await
+                self.run_agent(agent, question, left, probe).await
             }
         }
     }
@@ -599,6 +621,7 @@ impl Engine {
         tool: &str,
         arguments: &Value,
         left: Left,
+        probe: Option<&Probe>,
     ) -> Result<StepDone, StepFailure> {
         // One call, made by the harness. No model runs, so the model limits
         // are as low as a budget can go.
@@ -611,8 +634,10 @@ impl Engine {
             max_request_bytes: 1,
             max_duration_ms: left.millis(),
         };
+        // A probe's runs are kept apart from real ones.
+        let prefix = if probe.is_some() { "probe:" } else { "" };
         let subject = RunSubject {
-            agent: format!("tool:{tool}"),
+            agent: format!("{prefix}tool:{tool}"),
             harness: harness_id(&json!({ "tool": tool, "result_chars": STEP_RESULT_CHARS })),
         };
         let mut session = self.session(
@@ -620,7 +645,7 @@ impl Engine {
             budget,
             STEP_RESULT_CHARS,
             subject,
-            None,
+            probe.cloned(),
         )?;
         let call = ToolCall {
             id: id.to_owned(),
@@ -628,17 +653,30 @@ impl Engine {
             arguments: arguments.to_string(),
         };
         let reply = session.dispatch_for_harness(&call).await;
-        let ran = reply
-            .as_ref()
-            .is_some_and(|got| got.status == CallStatus::Ran);
+        // In a probe, a stubbed call stands for one that ran, and its output
+        // is the stub.
+        let ran = reply.as_ref().is_some_and(|got| {
+            got.status == CallStatus::Ran || (probe.is_some() && got.status == CallStatus::Stubbed)
+        });
         let claimed = if ran {
             Outcome::Direct
         } else {
             Outcome::ToolFailed
         };
         let receipt = session.finish(claimed).await;
+        let stubbed = reply
+            .as_ref()
+            .is_some_and(|got| got.status == CallStatus::Stubbed);
         let content = reply.map(|got| got.content).unwrap_or_default();
-        let parsed = serde_json::from_str::<Value>(&content);
+        // A stub is shaped like a result, so a later step that reads the
+        // result whole still runs; one that reads into it fails, as it must.
+        let parsed = serde_json::from_str::<Value>(&content).map(|stub| {
+            if stubbed {
+                json!({ "result": stub })
+            } else {
+                stub
+            }
+        });
         let problem = match &parsed {
             _ if !ran => Some(content.clone()),
             Err(error) => Some(error.to_string()),
@@ -801,6 +839,7 @@ impl Engine {
         name: &str,
         question: String,
         left: Left,
+        probe: Option<&Probe>,
     ) -> Result<StepDone, StepFailure> {
         let agent: Agent = self
             .definition(DefinitionKind::Agent, name)
@@ -808,7 +847,19 @@ impl Engine {
             .map_err(|error| error.to_string())?
             .ok_or_else(|| format!("there is no agent {name}"))?;
         let result = self
-            .converse_as(name, &format!("agent:{name}"), &agent, question, left, None)
+            .converse_as(
+                name,
+                // As a probe of an agent is named everywhere.
+                &if probe.is_some() {
+                    format!("probe:{name}")
+                } else {
+                    format!("agent:{name}")
+                },
+                &agent,
+                question,
+                left,
+                probe.cloned(),
+            )
             .await?;
         let problem = if result.receipt.outcome != Outcome::Answered {
             Some(

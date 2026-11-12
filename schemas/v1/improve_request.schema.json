@@ -4,13 +4,28 @@
   "description": "What to improve.",
   "properties": {
     "agent": {
-      "description": "The agent.",
+      "description": "The agent, or the workflow when `target` is `workflow`.",
       "maxLength": 64,
       "minLength": 1,
       "type": "string"
     },
+    "target": {
+      "description": "What to improve: an agent unless it says otherwise.",
+      "oneOf": [
+        {
+          "const": "agent",
+          "description": "An agent.",
+          "type": "string"
+        },
+        {
+          "const": "workflow",
+          "description": "A workflow.",
+          "type": "string"
+        }
+      ]
+    },
     "task": {
-      "description": "A task to run it on, such as one a real run got wrong.",
+      "description": "A task to run it on, such as one a real run got wrong. For a\nworkflow, the inputs to run it on, as a JSON object.",
       "maxLength": 8000,
       "minLength": 1,
       "type": "string"

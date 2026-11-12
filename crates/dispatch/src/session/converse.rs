@@ -93,7 +93,7 @@ impl Session {
             if response.tool_calls.is_empty() {
                 // An answer before a required tool ran goes back once.
                 if !response.content.trim().is_empty()
-                    && let Some(reminder) = self.reminder()
+                    && let Some(reminder) = self.reminder(&response.content)
                 {
                     messages.push(Message::assistant(response.content));
                     self.emit(Step::Message {
@@ -155,6 +155,7 @@ impl Session {
             return Ending::stopped(Outcome::ModelFailed, why);
         }
         self.answer_cut_off = finish == FinishReason::Length;
+        self.answered(&content);
         Ending {
             claimed: Outcome::Answered,
             answer: Some(content),

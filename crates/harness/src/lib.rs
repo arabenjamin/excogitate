@@ -12,6 +12,7 @@ mod attempt;
 mod calibrate;
 mod change;
 mod cite;
+mod flow;
 mod guard;
 mod lesson;
 mod pick;
@@ -28,6 +29,7 @@ pub use change::{
     check_adoption,
 };
 pub use cite::Cite;
+pub use flow::{StepEdit, Target, apply_edits, check_workflow_edit, merge_edits, read_tools};
 pub use guard::{MAX_GROWTH_CHARS, MAX_SKILL_GROWTH_CHARS, check_harness, check_instructions};
 pub use lesson::{
     LESSON_TYPE, Lesson, LessonStatus, MAX_SHOWN, lesson_id, lessons_for, situation, status_filter,
@@ -40,4 +42,5 @@ pub use records::{
 pub use render::Rendered;
 pub use roles::{
     Brief, ComposerReply, Decision, Draft, EditorReply, Effect, Judged, Judges, PURPOSE, Verdict,
+    WorkflowDraft, WorkflowEditorReply,
 };
