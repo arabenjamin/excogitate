@@ -114,6 +114,55 @@ impl HostCalls {
             .map(|call| (call.context, call.ended.clone()))
     }
 
+    async fn put_many(
+        &self,
+        records: Vec<plugin_api::wire::WireRecordWrite>,
+        context: ToolContext,
+    ) -> Result<Value, CapabilityError> {
+        let writes = records
+            .into_iter()
+            .map(|write| {
+                let record = plugin_api::RecordWrite::new(write.record_type, write.data);
+                match write.id {
+                    Some(id) => record.with_id(RecordId::from_uuid(id)),
+                    None => record,
+                }
+            })
+            .collect();
+        let ids = self
+            .capabilities
+            .records()?
+            .put_many(writes, context)
+            .await?;
+        Ok(Value::Array(
+            ids.into_iter()
+                .map(|id| Value::String(id.to_string()))
+                .collect(),
+        ))
+    }
+
+    async fn link_many(
+        &self,
+        links: Vec<plugin_api::wire::WireLink>,
+        context: ToolContext,
+    ) -> Result<Value, CapabilityError> {
+        let links = links
+            .into_iter()
+            .map(|link| {
+                plugin_api::RecordLink::new(
+                    link.relation,
+                    RecordId::from_uuid(link.from),
+                    RecordId::from_uuid(link.to),
+                )
+            })
+            .collect();
+        self.capabilities
+            .records()?
+            .link_many(links, context)
+            .await?;
+        Ok(Value::Null)
+    }
+
     async fn answer(
         &self,
         call: CapabilityCall,
@@ -171,6 +220,8 @@ impl HostCalls {
                     .await?;
                 Ok(Value::Null)
             }
+            CapabilityCall::RecordsPutMany { records } => self.put_many(records, context).await,
+            CapabilityCall::RecordsLinkMany { links } => self.link_many(links, context).await,
             CapabilityCall::RecordsNeighbors {
                 relation,
                 id,
@@ -758,5 +809,55 @@ mod tests {
             .reply_to(&json!({ "jsonrpc": "2.0", "id": 1, "method": CAPABILITY_METHOD, "params": { "token": "x" } }))
             .await;
         assert_eq!(garbled["error"]["code"], INVALID_PARAMS, "{garbled}");
+    }
+
+    #[tokio::test]
+    async fn a_batch_from_a_process_is_written_as_one() {
+        use plugin_api::wire::{CapabilityCall, WireRecordWrite};
+        let store = Arc::new(store_memory::MemoryStore::new(3));
+        let decls: store::RecordDecls = serde_json::from_value(json!({
+            "types": [{ "name": "demo.a", "filterable": [],
+                        "schema": { "type": "object", "additionalProperties": false,
+                                    "properties": { "a": { "type": "integer" } } } }],
+            "relations": []
+        }))
+        .unwrap();
+        store::RecordReader::register_records(store.as_ref(), &decls)
+            .await
+            .unwrap();
+        let records =
+            crate::ScopedRecords::new(Arc::clone(&store) as Arc<dyn store::Store>, "demo");
+        let host = HostCalls {
+            capabilities: Capabilities::default()
+                .with_records(Arc::new(records) as Arc<dyn plugin_api::RecordsCapability>),
+            serving: Mutex::default(),
+        };
+        let serving = host.begin(context(RunId::generate()));
+        // What the process side sends for put_many.
+        let call = serde_json::to_value(CapabilityCall::RecordsPutMany {
+            records: (1..=2)
+                .map(|n| WireRecordWrite {
+                    record_type: "demo.a".to_owned(),
+                    id: None,
+                    data: json!({ "a": n }),
+                })
+                .collect(),
+        })
+        .unwrap();
+        let reply = host
+            .reply_to(&capability_request(serving.token(), &call))
+            .await;
+        let ids = reply["result"]
+            .as_array()
+            .unwrap_or_else(|| panic!("{reply}"));
+        assert_eq!(ids.len(), 2);
+        let page = store::PageRequest::new(10, 0).unwrap();
+        let stored = store::RecordReader::query_records(
+            store.as_ref(),
+            store::RecordQuery::new("demo.a".to_owned(), page),
+        )
+        .await
+        .unwrap();
+        assert_eq!(stored.items.len(), 2);
     }
 }

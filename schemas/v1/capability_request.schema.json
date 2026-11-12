@@ -170,6 +170,52 @@
         },
         {
           "additionalProperties": false,
+          "description": "`RecordsCapability::put_many`: written as one unit.",
+          "properties": {
+            "op": {
+              "const": "records_put_many",
+              "type": "string"
+            },
+            "records": {
+              "description": "The records, in order.",
+              "items": {
+                "$ref": "#/$defs/WireRecordWrite"
+              },
+              "maxItems": 500,
+              "type": "array"
+            }
+          },
+          "required": [
+            "op",
+            "records"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "`RecordsCapability::link_many`: made as one unit.",
+          "properties": {
+            "links": {
+              "description": "The links.",
+              "items": {
+                "$ref": "#/$defs/WireLink"
+              },
+              "maxItems": 500,
+              "type": "array"
+            },
+            "op": {
+              "const": "records_link_many",
+              "type": "string"
+            }
+          },
+          "required": [
+            "op",
+            "links"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
           "description": "`RecordsCapability::neighbors`.",
           "properties": {
             "direction": {
@@ -338,6 +384,34 @@
       ],
       "type": "object"
     },
+    "WireLink": {
+      "additionalProperties": false,
+      "description": "One link of a batch.",
+      "properties": {
+        "from": {
+          "description": "The record it links from.",
+          "format": "uuid",
+          "type": "string"
+        },
+        "relation": {
+          "description": "The relation.",
+          "maxLength": 128,
+          "minLength": 1,
+          "type": "string"
+        },
+        "to": {
+          "description": "The record it links to.",
+          "format": "uuid",
+          "type": "string"
+        }
+      },
+      "required": [
+        "relation",
+        "from",
+        "to"
+      ],
+      "type": "object"
+    },
     "WireOp": {
       "description": "A comparison on the wire.",
       "enum": [
@@ -348,6 +422,35 @@
         "gte"
       ],
       "type": "string"
+    },
+    "WireRecordWrite": {
+      "additionalProperties": false,
+      "description": "One record of a batch.",
+      "properties": {
+        "data": {
+          "description": "Its data.",
+          "x-extension": "checked against the record type's own schema"
+        },
+        "id": {
+          "description": "The id to replace, or none for a new record.",
+          "format": "uuid",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "record_type": {
+          "description": "The type.",
+          "maxLength": 128,
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "record_type",
+        "data"
+      ],
+      "type": "object"
     },
     "WireValue": {
       "description": "A value on the wire, tagged with its type.",

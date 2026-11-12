@@ -20,8 +20,8 @@ mod tool;
 pub mod wire;
 
 pub use capability::{
-    Capabilities, CapabilityError, HttpCapability, HttpRequest, HttpResponse, ModelCapability,
-    ModelReply, RecordsCapability,
+    Capabilities, CapabilityError, HttpCapability, HttpRequest, HttpResponse, MAX_BATCH,
+    ModelCapability, ModelReply, RecordLink, RecordWrite, RecordsCapability, check_batch,
 };
 pub use manifest::{
     API_VERSION, ManifestError, PluginCapability, PluginManifest, RESERVED_NAMES, ToolManifest,

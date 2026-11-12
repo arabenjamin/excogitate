@@ -321,7 +321,7 @@ mod tests {
     use plugin_api::{CapabilityError, RecordsCapability};
     use protocol::{DataClass, RunId, Trust};
     use serde_json::{Value, json};
-    use store::RecordReader;
+    use store::{RecordId, RecordReader};
     use store_memory::MemoryStore;
 
     const SCHEMA: &str =
@@ -583,6 +583,126 @@ mod tests {
             .await
             .unwrap_err();
         assert!(matches!(error, CapabilityError::Refused(_)));
+    }
+
+    fn with_linked_records() -> String {
+        manifest_text(&format!(
+            "capabilities: [records]\nrecords:\n  types:\n    - name: demo.a\n      schema: {SCHEMA}\n      filterable: []\n  relations:\n    - {{name: demo.next, from: demo.a, to: demo.a}}\n"
+        ))
+    }
+
+    async fn count(store: &MemoryStore) -> usize {
+        let page = store::PageRequest::new(1000, 0).unwrap();
+        store
+            .query_records(store::RecordQuery::new("demo.a".to_owned(), page))
+            .await
+            .unwrap()
+            .items
+            .len()
+    }
+
+    #[tokio::test]
+    async fn a_batch_is_written_whole_or_not_at_all() {
+        use plugin_api::{MAX_BATCH, RecordWrite};
+        let (mut host, store) = host("records");
+        host.install_compiled(&Demo::new(with_records()))
+            .await
+            .unwrap();
+        let scoped = ScopedRecords::new(Arc::clone(&store) as Arc<dyn Store>, "demo");
+        let good = |n: i64| RecordWrite::new("demo.a", json!({ "a": n }));
+
+        // One record failing its schema keeps the rest out too.
+        let refused = scoped
+            .put_many(
+                vec![good(1), RecordWrite::new("demo.a", json!({ "a": "x" }))],
+                context(),
+            )
+            .await;
+        assert!(
+            matches!(refused, Err(CapabilityError::Refused(_))),
+            "{refused:?}"
+        );
+        assert_eq!(count(&store).await, 0);
+        // Another plugin's type is refused before anything is written.
+        let foreign = scoped
+            .put_many(
+                vec![good(1), RecordWrite::new("other.a", json!({ "a": 1 }))],
+                context(),
+            )
+            .await;
+        assert!(matches!(&foreign, Err(CapabilityError::Refused(m)) if m.contains("belong")));
+        assert_eq!(count(&store).await, 0);
+        // Too many is refused whole.
+        let too_many = scoped
+            .put_many(
+                (0..=i64::try_from(MAX_BATCH).unwrap()).map(good).collect(),
+                context(),
+            )
+            .await;
+        assert!(matches!(&too_many, Err(CapabilityError::Refused(m)) if m.contains("at most")));
+
+        let ids = scoped
+            .put_many((1..=3).map(good).collect(), context())
+            .await
+            .unwrap();
+        assert_eq!(ids.len(), 3);
+        assert_eq!(count(&store).await, 3);
+        let second = scoped
+            .get("demo.a", ids[1], context())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(second.data, json!({ "a": 2 }), "ids come back in order");
+        assert_eq!(second.provenance.trust, Trust::Untrusted);
+        assert_eq!(scoped.put_many(Vec::new(), context()).await.unwrap(), []);
+    }
+
+    #[tokio::test]
+    async fn links_in_a_batch_are_made_whole_or_not_at_all() {
+        use plugin_api::{RecordLink, RecordWrite};
+        let (mut host, store) = host("records");
+        host.install_compiled(&Demo::new(with_linked_records()))
+            .await
+            .unwrap();
+        let scoped = ScopedRecords::new(Arc::clone(&store) as Arc<dyn Store>, "demo");
+        let ids = scoped
+            .put_many(
+                (1..=3)
+                    .map(|n| RecordWrite::new("demo.a", json!({ "a": n })))
+                    .collect(),
+                context(),
+            )
+            .await
+            .unwrap();
+        let next = |from: usize, to: RecordId| RecordLink::new("demo.next", ids[from], to);
+        // A link to a record that doesn't exist keeps the other out.
+        let broken = scoped
+            .link_many(
+                vec![next(0, ids[1]), next(1, RecordId::generate())],
+                context(),
+            )
+            .await;
+        assert!(broken.is_err(), "{broken:?}");
+        let page = store::PageRequest::new(10, 0).unwrap();
+        let from_first = |page| {
+            scoped.neighbors(
+                "demo.next",
+                ids[0],
+                store::Direction::Outgoing,
+                page,
+                context(),
+            )
+        };
+        assert_eq!(from_first(page).await.unwrap().items.len(), 0);
+        scoped
+            .link_many(vec![next(0, ids[1]), next(1, ids[2])], context())
+            .await
+            .unwrap();
+        let linked = from_first(page).await.unwrap();
+        assert_eq!(
+            linked.items.iter().map(|r| r.id).collect::<Vec<_>>(),
+            [ids[1]]
+        );
     }
 
     #[test]

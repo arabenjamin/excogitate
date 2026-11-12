@@ -24,6 +24,79 @@ pub enum CapabilityError {
     Failed(String),
 }
 
+/// The most records or links one batch may carry. A batch also has to fit
+/// in one message to the runtime (8 MiB, for a plugin run as a process).
+pub const MAX_BATCH: usize = 500;
+
+/// One record to add or replace, in a batch.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct RecordWrite {
+    /// Its type.
+    pub record_type: String,
+    /// The id to replace, or none for a new record.
+    pub id: Option<RecordId>,
+    /// Its data.
+    pub data: Value,
+}
+
+impl RecordWrite {
+    /// A new record of this type.
+    #[must_use]
+    pub fn new(record_type: impl Into<String>, data: Value) -> Self {
+        Self {
+            record_type: record_type.into(),
+            id: None,
+            data,
+        }
+    }
+
+    /// The same write, replacing the record with this id.
+    #[must_use]
+    pub const fn with_id(mut self, id: RecordId) -> Self {
+        self.id = Some(id);
+        self
+    }
+}
+
+/// One link to make, in a batch.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct RecordLink {
+    /// The declared relation.
+    pub relation: String,
+    /// The record it links from.
+    pub from: RecordId,
+    /// The record it links to.
+    pub to: RecordId,
+}
+
+impl RecordLink {
+    /// A link by `relation` from one record to another.
+    #[must_use]
+    pub fn new(relation: impl Into<String>, from: RecordId, to: RecordId) -> Self {
+        Self {
+            relation: relation.into(),
+            from,
+            to,
+        }
+    }
+}
+
+/// Refuses a batch over [`MAX_BATCH`].
+///
+/// # Errors
+///
+/// [`CapabilityError::Refused`] if it's too big.
+pub fn check_batch(len: usize) -> Result<(), CapabilityError> {
+    if len > MAX_BATCH {
+        return Err(CapabilityError::Refused(format!(
+            "a batch holds at most {MAX_BATCH}, not {len}"
+        )));
+    }
+    Ok(())
+}
+
 /// The plugin's own records, and only its own: every type and relation name
 /// must carry the plugin's prefix. The runtime sets each record's provenance.
 #[async_trait]
@@ -102,6 +175,52 @@ pub trait RecordsCapability: Send + Sync + std::fmt::Debug {
         page: PageRequest,
         context: ToolContext,
     ) -> Result<Page<Record>, CapabilityError>;
+
+    /// Adds or replaces up to [`MAX_BATCH`] records, returning their ids in
+    /// order. The runtime writes a batch as one unit: all of it, or none if
+    /// any record is refused. This default, for a plugin's own test
+    /// doubles, puts them one at a time.
+    ///
+    /// # Errors
+    ///
+    /// [`CapabilityError`] if the batch, or any record in it, is refused or
+    /// fails.
+    async fn put_many(
+        &self,
+        records: Vec<RecordWrite>,
+        context: ToolContext,
+    ) -> Result<Vec<RecordId>, CapabilityError> {
+        check_batch(records.len())?;
+        let mut ids = Vec::with_capacity(records.len());
+        for write in records {
+            ids.push(
+                self.put(&write.record_type, write.id, write.data, context)
+                    .await?,
+            );
+        }
+        Ok(ids)
+    }
+
+    /// Makes up to [`MAX_BATCH`] links. The runtime makes a batch as one
+    /// unit: all of it, or none if any link is refused. This default, for
+    /// a plugin's own test doubles, links them one at a time.
+    ///
+    /// # Errors
+    ///
+    /// [`CapabilityError`] if the batch, or any link in it, is refused or
+    /// fails.
+    async fn link_many(
+        &self,
+        links: Vec<RecordLink>,
+        context: ToolContext,
+    ) -> Result<(), CapabilityError> {
+        check_batch(links.len())?;
+        for link in links {
+            self.link(&link.relation, link.from, link.to, context)
+                .await?;
+        }
+        Ok(())
+    }
 }
 
 /// An HTTP request, which the runtime makes under its own network rules.
