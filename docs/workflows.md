@@ -87,7 +87,7 @@ A tool or agent step with `for_each` runs once for each item of a list:
     arguments: {url: "{{item.url}}"}
     for_each:
       items: "{{steps.find.result.links}}"   # one reference, to a list
-      max_items: 20                          # 1 to 50; a longer list is cut
+      max_items: 20                          # required, 1 to 50; a longer list is cut
       continue_on_failure: false             # the default
 ```
 
@@ -194,7 +194,7 @@ guardrails:
   - name: saved_means_stored
     tool: memory
     action: {argument: operation, matches: '^store$'}
-    claimed: '\bI(.ve| have)? (saved|stored|noted)\b'
+    claimed: '\bI(.ve| have)? (saved|stored)\b'
     because: Say you saved something only after memory's store has run.
 ```
 

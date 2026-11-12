@@ -240,10 +240,16 @@ impl PluginHost {
             }
             match capability {
                 PluginCapability::Records => {
-                    capabilities.records = Some(Arc::new(ScopedRecords::new(
-                        Arc::clone(&self.store),
-                        &manifest.name,
-                    )));
+                    let mut scoped = ScopedRecords::new(Arc::clone(&self.store), &manifest.name);
+                    if let Some(decls) = &manifest.records {
+                        scoped = scoped
+                            .with_decls(decls)
+                            .map_err(|source| HostError::Records {
+                                plugin: manifest.name.clone(),
+                                source,
+                            })?;
+                    }
+                    capabilities.records = Some(Arc::new(scoped));
                 }
                 PluginCapability::Http => {
                     let source = self
@@ -812,12 +818,30 @@ mod tests {
         host.install_compiled(&Demo::new(with_records()))
             .await
             .unwrap();
-        let scoped = ScopedRecords::new(Arc::clone(&store) as Arc<dyn Store>, "demo");
+        let manifest = PluginManifest::from_yaml(&with_records()).unwrap();
+        let scoped = ScopedRecords::new(Arc::clone(&store) as Arc<dyn Store>, "demo")
+            .with_decls(manifest.records.as_ref().unwrap())
+            .unwrap();
         let probing = context().with_probing(true);
         scoped
             .put("demo.a", None, json!({ "a": 1 }), probing)
             .await
             .unwrap();
+        // What the store would refuse, a probe refuses too.
+        let unfit = scoped
+            .put("demo.a", None, json!({ "a": "not a number" }), probing)
+            .await;
+        assert!(
+            matches!(unfit, Err(CapabilityError::Refused(_))),
+            "{unfit:?}"
+        );
+        let unfit = scoped
+            .put_many(vec![RecordWrite::new("demo.a", json!({ "b": 1 }))], probing)
+            .await;
+        assert!(
+            matches!(unfit, Err(CapabilityError::Refused(_))),
+            "{unfit:?}"
+        );
         scoped
             .put_many(vec![RecordWrite::new("demo.a", json!({ "a": 2 }))], probing)
             .await

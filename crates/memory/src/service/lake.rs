@@ -166,6 +166,9 @@ pub struct LakeResults {
     pub cost_usd_micros: u64,
     /// The sources left out of the search, and why.
     pub sources_skipped: Vec<SkippedSource>,
+    /// The sources some of whose hits were left out, and why: more than
+    /// were asked for, or an id empty, too long or given twice.
+    pub sources_cut: Vec<SkippedSource>,
     /// The capability calls the sources' plugins made for the search.
     pub uses: Vec<CapabilityUse>,
 }
@@ -190,6 +193,8 @@ struct Searched {
     asked: u32,
     cost: u64,
     skipped: Option<String>,
+    /// Why some of its hits were left out, if any were.
+    cut: Option<String>,
     uses: Vec<CapabilityUse>,
 }
 
@@ -284,6 +289,7 @@ impl LakeSource {
             asked,
             cost,
             skipped: Some(bounded(&why)),
+            cut: None,
             uses,
         };
         if sent.is_none() && !self.words {
@@ -310,12 +316,19 @@ impl LakeSource {
             Ok(Ok(found)) => found,
         };
         let (cost, uses) = self.drained(context.run, found.cost_usd_micros);
+        let wanted = usize::try_from(asked).unwrap_or(usize::MAX);
+        let taken = found.hits.len().min(wanted);
+        let extra = found.hits.len() - taken;
         let mut seen = HashSet::new();
-        let items = found
+        let usable: Vec<SourceItem> = found
             .hits
             .into_iter()
-            .take(usize::try_from(asked).unwrap_or(usize::MAX))
+            .take(wanted)
             .filter(|item| usable_id(&item.id) && seen.insert(item.id.clone()))
+            .collect();
+        let bad = taken - usable.len();
+        let items = usable
+            .into_iter()
             .map(|item| kept(self, item, MAX_HIT_TEXT, sent.is_some()).0)
             .filter(|item| visible_to(classes, item.data_class))
             .collect();
@@ -324,9 +337,24 @@ impl LakeSource {
             asked,
             cost,
             skipped: None,
+            cut: cut_reason(extra, bad, asked),
             uses,
         }
     }
+}
+
+/// Why some of a source's hits were left out, if any were.
+fn cut_reason(extra: usize, bad: usize, asked: u32) -> Option<String> {
+    let mut why = Vec::new();
+    if extra > 0 {
+        why.push(format!("{extra} past the {asked} asked for"));
+    }
+    if bad > 0 {
+        why.push(format!(
+            "{bad} with an id empty, over {MAX_ITEM_ID} characters or given twice"
+        ));
+    }
+    (!why.is_empty()).then(|| why.join("; "))
 }
 
 /// The context a source is called with: the call's, marked as a read, less
@@ -469,7 +497,7 @@ impl Memory {
                 .collect(),
         ];
         let mut items: HashMap<Key, &SourceItem> = HashMap::new();
-        let (mut cost, mut skipped) = (stored.cost, Vec::new());
+        let (mut cost, mut skipped, mut cut) = (stored.cost, Vec::new(), Vec::new());
         let uses: Vec<CapabilityUse> = searched
             .iter()
             .flat_map(|found| found.uses.iter().cloned())
@@ -479,6 +507,12 @@ impl Memory {
             cost = cost.saturating_add(found.cost);
             if let Some(why) = &found.skipped {
                 skipped.push(SkippedSource {
+                    source: source.id.clone(),
+                    why: why.clone(),
+                });
+            }
+            if let Some(why) = &found.cut {
+                cut.push(SkippedSource {
                     source: source.id.clone(),
                     why: why.clone(),
                 });
@@ -533,6 +567,7 @@ impl Memory {
             not_close_enough,
             cost_usd_micros: cost,
             sources_skipped: skipped,
+            sources_cut: cut,
             uses,
         })
     }

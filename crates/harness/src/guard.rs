@@ -87,6 +87,10 @@ fn leaves<'a>(value: &'a serde_json::Value, into: &mut Vec<&'a str>) {
     }
 }
 
+fn pattern(found: Option<&dispatch::ArgumentMatch>) -> &str {
+    found.map_or("", |matched| matched.matches.as_str())
+}
+
 fn skill_chars(agent: &Agent) -> usize {
     agent
         .skills
@@ -135,8 +139,14 @@ pub fn check_harness(candidate: &Agent, current: &Agent, task: &str) -> Result<(
         .iter()
         .filter(|rule| !current.guardrails.contains(rule))
     {
-        let pattern = added.deny.as_ref().map_or("", |deny| deny.matches.as_str());
-        let text = format!("{}\n{pattern}", added.because);
+        // Everything of it the model may be shown: why, and its patterns.
+        let text = format!(
+            "{}\n{}\n{}\n{}",
+            added.because,
+            pattern(added.deny.as_ref()),
+            pattern(added.action.as_ref()),
+            added.claimed.as_deref().unwrap_or("")
+        );
         leaks(
             &format!("the guardrail {} contains", added.name),
             &text,
@@ -220,6 +230,21 @@ mod tests {
         loosened.guardrails[0].required = false;
         loosened.guardrails[0].max_calls = Some(1000);
         assert!(check_harness(&loosened, &current(), TASK).is_err());
+    }
+
+    #[test]
+    fn an_added_guardrails_patterns_may_not_hold_the_task() {
+        for rule in [
+            serde_json::json!({ "name": "a", "tool": "memory", "because": "Fine.",
+                "action": { "argument": "query", "matches": TASK }, "max_calls": 1 }),
+            serde_json::json!({ "name": "c", "tool": "memory", "because": "Fine.",
+                "claimed": TASK }),
+        ] {
+            let mut edit = current();
+            edit.guardrails.push(serde_json::from_value(rule).unwrap());
+            let why = check_harness(&edit, &current(), TASK).unwrap_err();
+            assert!(why.contains("the task"), "{why}");
+        }
     }
 
     #[test]

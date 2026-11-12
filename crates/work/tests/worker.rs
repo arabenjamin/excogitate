@@ -224,18 +224,19 @@ async fn a_bad_payload_never_reaches_the_handler() {
 #[tokio::test(flavor = "multi_thread")]
 async fn a_panicking_job_does_not_take_the_worker_with_it() {
     let panics = Fixture::new(Does::Panic);
-    let rig = Rig::start(vec![panics.clone()], quick());
+    // A lease long enough that a busy machine can't let it lapse before the
+    // panic is recorded: this is about the panic, not the lease.
+    let options = WorkerOptions {
+        lease_margin: Duration::from_secs(30),
+        ..quick()
+    };
+    let rig = Rig::start(vec![panics.clone()], options);
     let first = job("test", json!({}), 1);
     let second = job("test", json!({}), 1);
     rig.add(&first).await;
     rig.add(&second).await;
-    assert!(
-        rig.settled(first.id)
-            .await
-            .last_error
-            .unwrap()
-            .contains("panicked")
-    );
+    let why = rig.settled(first.id).await.last_error.unwrap();
+    assert!(why.contains("panicked"), "{why}");
     assert!(
         rig.settled(second.id)
             .await

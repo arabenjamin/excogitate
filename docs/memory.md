@@ -49,8 +49,8 @@ the query's vector, so `min_similarity` can't be met by a source's own
 claim. An item from a source that wasn't declared public is private, and an
 item the run may not see is dropped, whatever the source says.
 
-The runtime's own loops and a plugin's `memory` capability search the store
-alone.
+The runtime's own loops search the store alone. A plugin's `memory`
+capability only stores notes; it doesn't search.
 
 ## The eval
 

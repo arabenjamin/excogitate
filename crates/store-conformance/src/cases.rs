@@ -1061,10 +1061,22 @@ pub async fn definitions_list_by_kind(store: &dyn Store) {
 
 // ---- records ----
 
-/// A record needs a declared type.
+/// A record needs a declared type. Reading an undeclared type or relation is
+/// `Invalid` too: an import tells what a build declares by it.
 pub async fn an_undeclared_record_type_is_refused(store: &dyn Store) {
     is_invalid(store.apply(WriteOp::PutRecord(item("a", 1)).into()).await);
     is_invalid(store.get_record(ITEM, item("a", 1).id).await);
+    let one = page(1);
+    is_invalid(
+        store
+            .query_records(RecordQuery::new(ITEM.to_owned(), one))
+            .await,
+    );
+    is_invalid(
+        store
+            .neighbors("test.nothing", item("a", 1).id, Direction::Outgoing, one)
+            .await,
+    );
 }
 
 /// A record must meet its schema, and the refusal undoes its unit.
