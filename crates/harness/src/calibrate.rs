@@ -114,6 +114,8 @@ impl Judges<'_> {
         let brief = Brief {
             instructions: INSTRUCTIONS,
             tools: &[],
+            skills: &[],
+            guardrails: &[],
             task: TASK,
             why: None,
             lessons: &[],

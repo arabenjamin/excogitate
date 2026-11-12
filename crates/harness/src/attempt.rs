@@ -5,16 +5,16 @@
 use std::collections::BTreeSet;
 
 use chrono::{DateTime, Utc};
-use dispatch::{Trajectory, read_trajectory};
+use dispatch::{Guardrail, Trajectory, read_trajectory};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use workflow::{Agent, Engine, ProbeRun};
+use workflow::{Agent, Engine, ProbeRun, Skill};
 
 use crate::cite::Cite;
-use crate::guard::check_instructions;
+use crate::guard::check_harness;
 use crate::lesson::lessons_for;
 use crate::render::Rendered;
-use crate::roles::{Brief, ComposerReply, Decision, Effect, Judges, Verdict};
+use crate::roles::{Brief, ComposerReply, Decision, Draft, Effect, Judges, Verdict, listed};
 
 /// How many steps of a probe are read back for the judges.
 const MAX_STEPS: usize = 512;
@@ -87,6 +87,14 @@ pub struct Candidate {
     /// Its instructions.
     #[schemars(length(max = 16_000))]
     pub system_prompt: String,
+    /// Its skills, all of them.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[schemars(length(max = 16))]
+    pub skills: Vec<Skill>,
+    /// Its guardrails, all of them.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[schemars(length(max = 16))]
+    pub guardrails: Vec<Guardrail>,
     /// What changed, as the editor put it.
     #[schemars(length(max = 1000))]
     pub change: String,
@@ -194,6 +202,62 @@ pub struct Adoption {
     /// Why, in a sentence.
     #[schemars(length(max = 2048))]
     pub reason: String,
+}
+
+impl Candidate {
+    fn drafted(label: &str, kind: Kind, draft: Draft, agent: &Agent) -> Self {
+        Self {
+            label: label.to_owned(),
+            kind,
+            system_prompt: draft.system_prompt,
+            skills: draft.skills.unwrap_or_else(|| agent.skills.clone()),
+            guardrails: draft.guardrails.unwrap_or_else(|| agent.guardrails.clone()),
+            change: draft.change,
+            cites: draft.cites,
+            dropped: Vec::new(),
+            refused: None,
+            probe: None,
+        }
+    }
+
+    /// The agent as this candidate would have it.
+    #[must_use]
+    pub fn agent(&self, base: &Agent) -> Agent {
+        Agent {
+            system_prompt: self.system_prompt.clone(),
+            skills: self.skills.clone(),
+            guardrails: self.guardrails.clone(),
+            ..base.clone()
+        }
+    }
+
+    /// Whether it's the agent as it is.
+    fn changes_nothing(&self, agent: &Agent) -> bool {
+        self.system_prompt.trim() == agent.system_prompt.trim()
+            && self.skills == agent.skills
+            && self.guardrails == agent.guardrails
+    }
+
+    /// The candidate as a judge reads it.
+    fn shown(&self) -> String {
+        format!(
+            "INSTRUCTIONS:\n{}\nSKILLS:\n{}\nGUARDRAILS:\n{}",
+            self.system_prompt,
+            listed(&self.skills),
+            listed(&self.guardrails)
+        )
+    }
+}
+
+/// `first`'s items, then those of `second` with a name not taken.
+fn union<T: Clone>(first: &[T], second: &[T], name: impl Fn(&T) -> &str) -> Vec<T> {
+    let mut all = first.to_vec();
+    for item in second {
+        if !all.iter().any(|kept| name(kept) == name(item)) {
+            all.push(item.clone());
+        }
+    }
+    all
 }
 
 impl Attempt {
@@ -341,6 +405,8 @@ impl Loop<'_> {
         let brief = Brief {
             instructions: &agent.system_prompt,
             tools: &agent.tools,
+            skills: &agent.skills,
+            guardrails: &agent.guardrails,
             task: &request.task,
             why: request.why.as_deref(),
             lessons: &lessons,
@@ -361,22 +427,10 @@ impl Loop<'_> {
             ("A", Kind::Invariant, edited.value.invariant),
             ("B", Kind::Domain, edited.value.domain),
         ] {
-            let mut candidate = Candidate {
-                label: label.to_owned(),
-                kind,
-                system_prompt: draft.system_prompt,
-                change: draft.change,
-                cites: draft.cites,
-                dropped: Vec::new(),
-                refused: None,
-                probe: None,
-            };
-            candidate.refused = Self::refusal(&mut candidate, &agent, &request.task, &reference);
+            let mut candidate = Candidate::drafted(label, kind, draft, &agent);
+            candidate.refused = self.refusal(&mut candidate, &agent, &request.task, &reference);
             if candidate.refused.is_none() {
-                let edit = Agent {
-                    system_prompt: candidate.system_prompt.clone(),
-                    ..agent.clone()
-                };
+                let edit = candidate.agent(&agent);
                 if let Some((probed, trajectory)) = self
                     .probe(&request.agent, &edit, &request.task, &mut attempt)
                     .await
@@ -395,19 +449,27 @@ impl Loop<'_> {
         self.decide(attempt, &agent, &brief, runs).await
     }
 
-    /// Why a candidate can't be tried, if it can't.
+    /// Why a candidate agent can't be run, if it can't: it breaks a rule on
+    /// what an edit may do, or wouldn't pass the checks an agent does.
+    fn unusable(&self, edit: &Agent, agent: &Agent, task: &str) -> Option<String> {
+        check_harness(edit, agent, task)
+            .and_then(|()| self.engine.check_candidate(edit))
+            .err()
+    }
+
     /// Why a candidate can't be tried, if it can't. Citations that don't hold
     /// are dropped, and recorded as dropped.
     fn refusal(
+        &self,
         candidate: &mut Candidate,
         agent: &Agent,
         task: &str,
         reference: &Rendered,
     ) -> Option<String> {
-        if candidate.system_prompt.trim() == agent.system_prompt.trim() {
+        if candidate.changes_nothing(agent) {
             return Some("it changes nothing".to_owned());
         }
-        if let Err(why) = check_instructions(&candidate.system_prompt, &agent.system_prompt, task) {
+        if let Some(why) = self.unusable(&candidate.agent(agent), agent, task) {
             return Some(why);
         }
         // Every edit traces to a moment in the reference run.
@@ -441,7 +503,7 @@ impl Loop<'_> {
             .candidates
             .iter()
             .filter(|c| c.probe.is_some())
-            .map(|c| (c.label.clone(), c.system_prompt.clone()))
+            .map(|c| (c.label.clone(), c.shown()))
             .collect();
         let Some(reply) = self.compose(&mut attempt, brief, &runs, &tried).await else {
             return attempt.end(Status::Failed);
@@ -530,30 +592,37 @@ impl Loop<'_> {
             return attempt.end(Status::Kept);
         }
         let merged = reply.merged.unwrap_or_default();
+        // The merge keeps both candidates' skills and guardrails.
+        let pair: Vec<&Candidate> = attempt
+            .candidates
+            .iter()
+            .filter(|c| c.probe.is_some())
+            .collect();
+        let (skills, guardrails) = match pair.as_slice() {
+            [first, second] => (
+                union(&first.skills, &second.skills, |skill| &skill.name),
+                union(&first.guardrails, &second.guardrails, |rule| &rule.name),
+            ),
+            _ => (agent.skills.clone(), agent.guardrails.clone()),
+        };
         let mut candidate = Candidate {
             label: "M".to_owned(),
             kind: Kind::Merged,
             system_prompt: merged,
+            skills,
+            guardrails,
             change: reply.reason,
             cites: Vec::new(),
             dropped: Vec::new(),
             refused: None,
             probe: None,
         };
-        candidate.refused = check_instructions(
-            &candidate.system_prompt,
-            &agent.system_prompt,
-            &attempt.request.task,
-        )
-        .err();
+        let edit = candidate.agent(agent);
+        candidate.refused = self.unusable(&edit, agent, &attempt.request.task);
         if candidate.refused.is_some() {
             attempt.candidates.push(candidate);
             return attempt.end(Status::Kept);
         }
-        let edit = Agent {
-            system_prompt: candidate.system_prompt.clone(),
-            ..agent.clone()
-        };
         let Request {
             agent: name, task, ..
         } = attempt.request.clone();
@@ -563,11 +632,11 @@ impl Loop<'_> {
         };
         let rendered = Rendered::new("M", &trajectory);
         candidate.probe = Some(summary(&probed, &rendered));
-        let prompt = candidate.system_prompt.clone();
+        let shown = candidate.shown();
         attempt.candidates.push(candidate);
         // The merge is judged on its own run, against the reference.
         let pair: Vec<Rendered> = runs.iter().take(1).cloned().chain([rendered]).collect();
-        let tried = [("M".to_owned(), prompt)];
+        let tried = [("M".to_owned(), shown)];
         let Some(second) = self.compose(&mut attempt, brief, &pair, &tried).await else {
             return attempt.end(Status::Failed);
         };

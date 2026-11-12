@@ -93,9 +93,14 @@ pub enum Step {
         offered: Vec<String>,
         /// Its limits.
         budget: Budget,
+        /// The skills its instructions include.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        #[schemars(length(max = 16), inner(length(max = 64)))]
+        skills: Vec<String>,
     },
-    /// A message the model was given at the start, such as its instructions or
-    /// the question.
+    /// A message the model was given: at the start, such as its instructions
+    /// or the question, or later by the harness, such as a guardrail's
+    /// reminder.
     Message {
         /// Who wrote it.
         role: Speaker,
@@ -418,6 +423,7 @@ mod tests {
                 purpose: "chat".to_owned(),
                 offered: vec!["memory".to_owned()],
                 budget: budget(),
+                skills: Vec::new(),
             },
             tool(0, "memory", CallStatus::Ran, true),
             Step::Message {

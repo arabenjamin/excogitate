@@ -15,6 +15,7 @@ events = { path = "../events" }
 model = { path = "../model" }
 plugin-api = { path = "../plugin-api" }
 protocol = { path = "../protocol" }
+regex.workspace = true
 schema = { path = "../schema" }
 schemars.workspace = true
 serde.workspace = true

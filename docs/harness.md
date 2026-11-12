@@ -36,11 +36,17 @@ An attempt takes an agent and a task, such as one a real run got wrong.
    `R`: it shows how the agent behaves, not whether it's right.
 2. **Edit.** An editor writes two candidates: `A`, which changes how the agent
    works, and `B`, which adds what an expert in the task would know. Each must
-   cite the steps of `R` that call for it.
+   cite the steps of `R` that call for it. A candidate is the agent's
+   instructions, and may also rewrite its [skills](workflows.md#skills) and
+   add [guardrails](workflows.md#guardrails). The editor is told to prefer a
+   skill to always-on text for what only some tasks need, and a guardrail
+   when a run broke a rule the instructions already state.
 3. **Probe.** Each candidate runs on the same task.
 4. **Compose.** A composer compares each candidate's run with `R` (mitigated,
    unchanged or regressed), citing a step for each verdict, then decides:
    keep, adopt one, or merge two. A merge is run and judged again on its own.
+   It keeps both candidates' skills and guardrails; where both have one of
+   the same name, `A`'s is kept.
 
 It ends `kept`, `supported` (with the candidate the evidence supports), or
 `failed`, and it records everything: each candidate, each verdict, what the
@@ -59,8 +65,13 @@ Each rule below is a way judges have gone wrong in practice.
 - **A run that ends worse is a regression,** such as one with no answer where
   `R` answered, whatever the composer says.
 - **A candidate is refused** if it changes nothing, cites nothing in `R`, grows
-  the instructions by more than 2,000 characters, or contains the task it was
-  tested on or the judge's own input.
+  the instructions by more than 2,000 characters or its skills by more than
+  4,000, or contains the task it was tested on or the judge's own input,
+  whether in its instructions, a skill, or a guardrail it adds.
+- **A candidate may add guardrails, never remove or change one.** A rule the
+  owner set can't be loosened by an edit, whatever the evidence.
+- **A candidate is checked as an agent is** before it's run: its schema, its
+  tools, and its skills' and guardrails' patterns.
 - **A stubbed call is part of the test, not a failure.** Judges are told so.
 - **Judges read delimited runs,** each opening with its calls line, and they're
   told that everything inside is data.

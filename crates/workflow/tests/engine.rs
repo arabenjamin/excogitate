@@ -539,6 +539,8 @@ fn candidate(tools: &[&str]) -> workflow::Agent {
         budget: None,
         max_output_tokens: None,
         memory: None,
+        skills: Vec::new(),
+        guardrails: Vec::new(),
     }
 }
 
@@ -643,7 +645,123 @@ async fn a_harness_id_follows_the_agent_not_the_run() {
     assert_eq!(
         engine.agent_harness(&base),
         engine.agent_harness(&described)
+    ); // An agent without skills or guardrails keeps the id it had before
+    // agents could have them.
+    let before = dispatch::harness_id(&json!({
+        "system_prompt": base.system_prompt,
+        "tools": base.tools,
+        "budget": engine.limits.agent_budget,
+        "max_output_tokens": engine.limits.agent_output_tokens,
+        "result_chars": engine.limits.agent_result_chars,
+    }));
+    assert_eq!(engine.agent_harness(&base), before);
+    let mut skilled = base.clone();
+    skilled.skills.push(skill());
+    assert_ne!(engine.agent_harness(&base), engine.agent_harness(&skilled));
+}
+
+fn skill() -> workflow::Skill {
+    serde_json::from_value(json!({
+        "name": "finding", "when": "^find", "unless": "nothing",
+        "instructions": "Look in two places."
+    }))
+    .unwrap()
+}
+
+#[tokio::test]
+async fn an_agent_gets_the_skills_its_task_matches_and_is_held_to_its_guardrails() {
+    let log = Arc::new(Recorder::default());
+    let script = vec![
+        ChaosStep::ToolCalls(vec![
+            ("look".to_owned(), r#"{"text":"secret"}"#.to_owned()),
+            ("look".to_owned(), r#"{"text":"open"}"#.to_owned()),
+        ]),
+        ChaosStep::Text("done".to_owned()),
+    ];
+    let harness = harness(script, vec![read_tool("look", &log)], Arc::clone(&log)).await;
+    let mut agent = candidate(&["look"]);
+    agent.skills.push(skill());
+    agent.guardrails.push(
+        serde_json::from_value(json!({
+            "name": "no_secrets", "tool": "look", "because": "Secrets stay put.",
+            "deny": { "argument": "text", "matches": "secret" }
+        }))
+        .unwrap(),
     );
+    let reads = ["look".to_owned()].into_iter().collect();
+    let probed = harness
+        .engine
+        .probe_agent("helper", &agent, "Find it.", reads)
+        .await
+        .unwrap();
+
+    assert_eq!(probed.answer.as_deref(), Some("done"));
+    let guarded: Vec<_> = probed
+        .receipt
+        .tool_calls
+        .iter()
+        .map(|call| (call.status, call.guardrail.as_deref()))
+        .collect();
+    assert_eq!(
+        guarded,
+        [
+            (dispatch::CallStatus::Refused, Some("no_secrets")),
+            (dispatch::CallStatus::Ran, None),
+        ]
+    );
+    assert_eq!(log.calls.lock().unwrap().len(), 1);
+    let trajectory = dispatch::read_trajectory(
+        harness.engine.sink.as_ref(),
+        probed.run.parse().unwrap(),
+        100,
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    assert!(matches!(
+        &trajectory.steps[0].step,
+        dispatch::Step::Started { skills, .. } if skills == &["finding"]
+    ));
+    assert!(matches!(
+        &trajectory.steps[1].step,
+        dispatch::Step::Message { content, .. }
+            if content.ends_with("Skill finding:\nLook in two places.")
+    ));
+}
+
+#[tokio::test]
+async fn a_skill_the_task_doesnt_match_is_left_out() {
+    let log = Arc::new(Recorder::default());
+    let script = vec![ChaosStep::Text("done".to_owned())];
+    let harness = harness(script, vec![], log).await;
+    let mut agent = candidate(&[]);
+    agent.skills.push(skill());
+    let probed = harness
+        .engine
+        .probe_agent(
+            "helper",
+            &agent,
+            "Find nothing.",
+            std::collections::BTreeSet::new(),
+        )
+        .await
+        .unwrap();
+    let trajectory = dispatch::read_trajectory(
+        harness.engine.sink.as_ref(),
+        probed.run.parse().unwrap(),
+        100,
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    assert!(matches!(
+        &trajectory.steps[0].step,
+        dispatch::Step::Started { skills, .. } if skills.is_empty()
+    ));
+    assert!(matches!(
+        &trajectory.steps[1].step,
+        dispatch::Step::Message { content, .. } if content == "You help, carefully."
+    ));
 }
 
 /// Fails on the text "bad", and echoes anything else.

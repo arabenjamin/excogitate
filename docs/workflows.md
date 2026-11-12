@@ -123,6 +123,67 @@ narrow agent isn't flooded by a large lake. A source named that no plugin
 offers stops the server, and so does naming sources without the `memory`
 tool. The front door's choice holds for the whole chat.
 
+### Skills
+
+A skill is instruction text the agent gets only when the task calls for it,
+so what only some tasks need isn't paid for on every run:
+
+```yaml
+skills:
+  - name: citing
+    when: '\b(sources?|cite)\b'
+    unless: 'no sources'
+    instructions: Name each source you used, with its address.
+```
+
+`when` and `unless` are patterns matched against the task as the agent
+receives it (a step's `message` and `context`, a hand-off's task, or the
+chat's newest message for the front door), ignoring case. A skill that
+matches is added after the agent's instructions, under its name. An agent has
+at most 16, each at most 4,000 characters. The run's trajectory says which
+were loaded.
+
+### Guardrails
+
+A guardrail is a rule on one of the agent's tools that dispatch enforces, so
+the agent doesn't have to remember it:
+
+```yaml
+guardrails:
+  - name: no_deleting
+    tool: memory
+    because: Notes are kept; say which one is wrong instead.
+    deny: {argument: operation, matches: '^delete$'}
+  - name: few_fetches
+    tool: http_request
+    because: Three pages are enough for one answer.
+    max_calls: 3
+  - name: look_first
+    tool: memory
+    because: The answer is often already stored.
+    required: true
+```
+
+- **`deny`** refuses a call whose argument matches the pattern. The argument
+  is a dotted path, such as `filter.kind`. A string is matched as it is and
+  anything else as JSON, ignoring case. A call without the argument is let
+  through.
+- **`max_calls`** refuses the agent's calls to the tool past that many.
+- **`required`** means the agent must call the tool, and see it run, before
+  it answers. An answer given first goes back once with a reminder, if the
+  run has two rounds and a tool call left. If it answers again without the
+  call, or there's no room for a reminder, the answer stands and the receipt
+  lists the guardrail in `guardrails_unmet`.
+
+A refused call tells the model `because`. Its receipt entry names the
+guardrail and is `arguments_invalid` for `deny` or `budget` for
+`max_calls`. A per-tool limit doesn't end the run. Only the agent's own calls
+count, not the ones the harness makes for it, such as the front door's
+memory search. A guardrail has at least one rule and holds a tool the agent
+has. Names must be unique and patterns must compile, or the server doesn't
+start. A workflow's `tool` steps have no guardrails; their arguments are
+fixed in the definition.
+
 An agent uses Excogitate's `budget` unless it sets its own. Either way, it can't
 use more than what's left of the run's money and time. Models are chosen with
 the purpose `workflow`, which is what a provider's `paid_for` matches.

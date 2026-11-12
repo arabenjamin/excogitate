@@ -55,7 +55,15 @@ fn speaker(role: Speaker) -> &'static str {
 
 fn step_text(step: &Step) -> String {
     match step {
-        Step::Started { offered, .. } => format!("started, offered tools: {}", offered.join(", ")),
+        Step::Started {
+            offered, skills, ..
+        } => {
+            let mut text = format!("started, offered tools: {}", offered.join(", "));
+            if !skills.is_empty() {
+                let _ = write!(text, "; skills loaded: {}", skills.join(", "));
+            }
+            text
+        }
         Step::Message { role, content, .. } => format!("{}: {}", speaker(*role), cut(content)),
         Step::Model {
             reply,

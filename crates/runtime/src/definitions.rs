@@ -287,6 +287,30 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn skills_and_guardrails_are_checked_when_loaded() {
+        let fixture = Fixture::new("agent-rules");
+        fixture.write(
+            "agents/helper.yaml",
+            "system_prompt: x\ntools: [memory]\n\
+             skills: [{name: s, when: '(', instructions: Look.}]\n",
+        );
+        assert_invalid(fixture.load().await, "the skill s");
+        fixture.write(
+            "agents/helper.yaml",
+            "system_prompt: x\ntools: [memory]\n\
+             guardrails: [{name: g, tool: http_request, because: Look first., required: true}]\n",
+        );
+        assert_invalid(fixture.load().await, "doesn't have");
+        fixture.write(
+            "agents/helper.yaml",
+            "system_prompt: x\ntools: [memory]\n\
+             skills: [{name: s, when: notes, instructions: Keep them short.}]\n\
+             guardrails: [{name: g, tool: memory, because: Look first., required: true}]\n",
+        );
+        assert_eq!(fixture.load().await.unwrap(), 1);
+    }
+
+    #[tokio::test]
     async fn a_workflow_can_use_an_agent_defined_alongside_it_only() {
         let step = "inputs: {type: object, additionalProperties: false, properties: {}}\n\
              steps:\n  - {type: agent, id: a, agent: helper, message: hi}\n";

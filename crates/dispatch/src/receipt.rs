@@ -95,6 +95,12 @@ pub struct ToolEntry {
     /// What went wrong, when something did.
     #[schemars(length(max = 512))]
     pub detail: Option<String>,
+    /// The guardrail that refused it, if one did. Its refusal is
+    /// `arguments_invalid` for an argument it denies and `budget` for a call
+    /// past its limit.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(length(max = 64))]
+    pub guardrail: Option<String>,
 }
 
 /// One model call, as it really went.
@@ -162,4 +168,9 @@ pub struct Receipt {
     pub events_lost: u32,
     /// What it used.
     pub totals: Totals,
+    /// Required guardrails whose tool never ran for the agent, so an answer
+    /// it gave came without it.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[schemars(length(max = 16), inner(length(max = 64)))]
+    pub guardrails_unmet: Vec<String>,
 }

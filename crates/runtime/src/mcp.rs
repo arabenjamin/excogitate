@@ -269,7 +269,8 @@ impl Runtime {
         } = input;
         // `_chosen` holds the front door's choice of sources for the chat.
         let (mut session, instructions, _chosen) = if let Some(name) = &self.config.front_door {
-            self.front_door(name, purpose, time_cap_ms).await?
+            self.front_door(name, purpose, time_cap_ms, &question)
+                .await?
         } else {
             // Without a front door there's no roster, so nothing to delegate to.
             let offered: Vec<String> = self
@@ -310,13 +311,16 @@ impl Runtime {
 
 impl Runtime {
     /// A chat's session and instructions when an agent is the front door:
-    /// its tools, its budget, and its instructions with the roster added.
+    /// its tools, its budget, its guardrails, and its instructions with the
+    /// skills that apply to `task`, the chat's newest message, and the
+    /// roster added.
     /// Its runs are that agent's, so Harness² can improve it like any other.
     async fn front_door(
         &self,
         name: &str,
         purpose: &str,
         time_cap_ms: Option<u64>,
+        task: &str,
     ) -> Result<(Session, String, Option<ChoiceHeld>), ToolFailure> {
         let agent = self
             .workflows
@@ -340,7 +344,7 @@ impl Runtime {
         }
         let instructions = self
             .workflows
-            .instructions(name, &agent)
+            .instructions(name, &agent, task)
             .await
             .map_err(ToolFailure::new)?;
         let session = session_with(
@@ -350,9 +354,12 @@ impl Runtime {
             purpose,
             self.config.max_result_chars,
             subject,
-        )?;
+        )?
+        .with_skills(instructions.skills)
+        .with_guardrails(agent.guardrails.clone())
+        .map_err(|error| setup_failed(&error))?;
         let chosen = self.workflows.choose_sources(session.run(), &agent);
-        Ok((session, instructions, chosen))
+        Ok((session, instructions.text, chosen))
     }
 }
 

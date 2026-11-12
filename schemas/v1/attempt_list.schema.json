@@ -232,6 +232,14 @@
           "maxItems": 8,
           "type": "array"
         },
+        "guardrails": {
+          "description": "Its guardrails, all of them.",
+          "items": {
+            "$ref": "#/$defs/Guardrail"
+          },
+          "maxItems": 16,
+          "type": "array"
+        },
         "kind": {
           "$ref": "#/$defs/Kind",
           "description": "What it is."
@@ -259,6 +267,14 @@
             "string",
             "null"
           ]
+        },
+        "skills": {
+          "description": "Its skills, all of them.",
+          "items": {
+            "$ref": "#/$defs/Skill"
+          },
+          "maxItems": 16,
+          "type": "array"
         },
         "system_prompt": {
           "description": "Its instructions.",
@@ -359,6 +375,29 @@
         }
       ]
     },
+    "Deny": {
+      "additionalProperties": false,
+      "description": "A call refused for what one of its arguments says.",
+      "properties": {
+        "argument": {
+          "description": "The argument, as a dotted path such as `operation` or `filter.kind`.",
+          "maxLength": 128,
+          "minLength": 1,
+          "type": "string"
+        },
+        "matches": {
+          "description": "A pattern that ignores case. A call whose argument matches is\nrefused. A string is matched as it is, anything else as JSON, and a\ncall without the argument is let through.",
+          "maxLength": 256,
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "argument",
+        "matches"
+      ],
+      "type": "object"
+    },
     "Effect": {
       "description": "How a candidate's run compares with the reference.",
       "oneOf": [
@@ -378,6 +417,62 @@
           "type": "string"
         }
       ]
+    },
+    "Guardrail": {
+      "additionalProperties": false,
+      "description": "A rule on one of the agent's tools.",
+      "properties": {
+        "because": {
+          "description": "Why, as the model is told when the rule stops it.",
+          "maxLength": 500,
+          "minLength": 1,
+          "type": "string"
+        },
+        "deny": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Deny"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Refuses a call whose argument matches."
+        },
+        "max_calls": {
+          "description": "Refuses the agent's calls past this many.",
+          "format": "uint32",
+          "maximum": 1000,
+          "minimum": 1,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "name": {
+          "description": "Its name, unique within the agent. A call it refuses names it.",
+          "maxLength": 64,
+          "minLength": 1,
+          "pattern": "^[a-z][a-z0-9_]*$",
+          "type": "string"
+        },
+        "required": {
+          "description": "The agent must call the tool, and see it run, before it answers.",
+          "type": "boolean"
+        },
+        "tool": {
+          "description": "The tool it holds to the rule: one the agent has.",
+          "maxLength": 64,
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "tool",
+        "because"
+      ],
+      "type": "object"
     },
     "Kind": {
       "description": "What a candidate is.",
@@ -462,6 +557,46 @@
       "required": [
         "agent",
         "task"
+      ],
+      "type": "object"
+    },
+    "Skill": {
+      "additionalProperties": false,
+      "description": "Instructions for some tasks, added when the task matches.",
+      "properties": {
+        "instructions": {
+          "description": "What the agent is told when it applies.",
+          "maxLength": 4000,
+          "minLength": 1,
+          "type": "string"
+        },
+        "name": {
+          "description": "Its name, unique within the agent.",
+          "maxLength": 64,
+          "minLength": 1,
+          "pattern": "^[a-z][a-z0-9_]*$",
+          "type": "string"
+        },
+        "unless": {
+          "description": "When it doesn't, even if `when` matches.",
+          "maxLength": 256,
+          "minLength": 1,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "when": {
+          "description": "When it applies: a pattern matched against the task as the agent\nreceives it, ignoring case.",
+          "maxLength": 256,
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "when",
+        "instructions"
       ],
       "type": "object"
     },
