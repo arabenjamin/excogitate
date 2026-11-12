@@ -10,11 +10,11 @@ use chrono::{DateTime, NaiveDate, Utc};
 use protocol::DataClass;
 use serde_json::Value;
 use store::{
-    Chunk, ChunkHit, ChunkId, ClassFilter, Definition, DefinitionKey, DefinitionKind,
-    DefinitionReader, Direction, Job, JobId, JobQueue, JobStatus, Lease, Note, NoteId, NoteReader,
-    Page, PageRequest, Record, RecordCatalog, RecordDecls, RecordId, RecordQuery, RecordReader,
-    SpendLog, Store, StoreError, Task, TaskId, TaskQuery, TaskReader, UnitOfWork, WorkingEntry,
-    WriteOp,
+    Archive, Chunk, ChunkHit, ChunkId, ClassFilter, Definition, DefinitionKey, DefinitionKind,
+    DefinitionReader, Direction, Job, JobId, JobQueue, JobStatus, Lease, Link, Note, NoteId,
+    NoteReader, Page, PageRequest, Record, RecordCatalog, RecordDecls, RecordId, RecordQuery,
+    RecordReader, SpendDay, SpendLog, Store, StoreError, Task, TaskId, TaskQuery, TaskReader,
+    UnitOfWork, WorkingEntry, WriteOp,
 };
 
 #[derive(Debug, Clone, Default)]
@@ -167,6 +167,12 @@ impl State {
                     return Err(StoreError::Conflict(format!("job {} exists", job.id)));
                 }
                 job.finished_at = None;
+                self.jobs.insert(job.id, job);
+            }
+            WriteOp::RestoreJob(job) => {
+                if self.jobs.contains_key(&job.id) {
+                    return Err(StoreError::Conflict(format!("job {} exists", job.id)));
+                }
                 self.jobs.insert(job.id, job);
             }
             WriteOp::PutDefinition(definition) => {
@@ -355,6 +361,66 @@ impl NoteReader for MemoryStore {
         Ok(self.state().search(classes, page, |chunk| {
             chunk.embedding.as_ref().map(|v| cosine(v, vector))
         }))
+    }
+}
+
+#[async_trait]
+impl Archive for MemoryStore {
+    async fn list_notes(&self, page: PageRequest) -> Result<Page<Note>, StoreError> {
+        Ok(Page::from_sorted(
+            self.state().notes.values().cloned().collect::<Vec<_>>(),
+            page,
+        ))
+    }
+
+    async fn list_working(
+        &self,
+        now: DateTime<Utc>,
+        page: PageRequest,
+    ) -> Result<Page<WorkingEntry>, StoreError> {
+        let state = self.state();
+        let live: Vec<WorkingEntry> = state
+            .working
+            .values()
+            .filter(|entry| entry.expires_at.is_none_or(|at| at > now))
+            .cloned()
+            .collect();
+        Ok(Page::from_sorted(live, page))
+    }
+
+    async fn list_all_records(&self, page: PageRequest) -> Result<Page<Record>, StoreError> {
+        Ok(Page::from_sorted(
+            self.state().records.values().cloned().collect::<Vec<_>>(),
+            page,
+        ))
+    }
+
+    async fn list_links(&self, page: PageRequest) -> Result<Page<Link>, StoreError> {
+        let state = self.state();
+        let links: Vec<Link> = state
+            .links
+            .iter()
+            .map(|(relation, from, to)| Link {
+                relation: relation.clone(),
+                from: *from,
+                to: *to,
+            })
+            .collect();
+        Ok(Page::from_sorted(links, page))
+    }
+
+    async fn list_spend(&self, page: PageRequest) -> Result<Page<SpendDay>, StoreError> {
+        let state = self.state();
+        let days: Vec<SpendDay> = state
+            .spend
+            .iter()
+            .map(|((provider, day), usd_micros)| SpendDay {
+                provider: provider.clone(),
+                day: *day,
+                usd_micros: *usd_micros,
+            })
+            .collect();
+        Ok(Page::from_sorted(days, page))
     }
 }
 

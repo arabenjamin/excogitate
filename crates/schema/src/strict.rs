@@ -8,7 +8,7 @@ use serde_json::{Map, Value};
 pub const EXTENSION_KEY: &str = "x-extension";
 
 /// String formats whose values have a fixed shape, so need no `maxLength`.
-const BOUNDED_FORMATS: [&str; 2] = ["uuid", "date-time"];
+const BOUNDED_FORMATS: [&str; 3] = ["uuid", "date-time", "date"];
 
 /// Keys holding one sub-schema.
 const SINGLE_KEYS: [&str; 3] = ["items", "not", "additionalProperties"];

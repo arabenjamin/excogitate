@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "What a provider spent on one UTC day.",
+  "properties": {
+    "day": {
+      "description": "The day.",
+      "format": "date",
+      "type": "string"
+    },
+    "provider": {
+      "description": "The provider.",
+      "maxLength": 256,
+      "type": "string"
+    },
+    "usd_micros": {
+      "description": "What it spent or reserved, in millionths of a dollar.",
+      "format": "uint64",
+      "minimum": 0,
+      "type": "integer"
+    }
+  },
+  "required": [
+    "provider",
+    "day",
+    "usd_micros"
+  ],
+  "title": "SpendLine",
+  "type": "object"
+}

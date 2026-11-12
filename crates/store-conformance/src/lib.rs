@@ -14,6 +14,7 @@
     reason = "this crate is a test suite: a panic is how a case fails"
 )]
 
+mod archive;
 pub mod cases;
 mod fixtures;
 
@@ -60,7 +61,8 @@ macro_rules! store_conformance {
             spend_stays_within_the_cap, a_refused_reservation_changes_nothing,
             settling_replaces_the_reservation, spend_is_per_provider_and_per_day,
             reservations_at_once_cannot_overrun, huge_amounts_are_refused_not_wrapped,
-            settling_never_goes_below_zero, jobs_list_newest_first_and_by_status
+            settling_never_goes_below_zero, jobs_list_newest_first_and_by_status,
+            the_archive_lists_everything_in_order, a_restored_job_keeps_how_it_ended
         );
     };
     (@cases [$store:ident] ($bind:pat) $make:expr; $($case:ident),+ $(,)?) => {

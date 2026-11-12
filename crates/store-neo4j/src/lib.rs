@@ -8,6 +8,7 @@
 
 #![deny(clippy::string_slice, clippy::indexing_slicing)]
 
+mod archive;
 mod codec;
 mod jobs;
 mod read;

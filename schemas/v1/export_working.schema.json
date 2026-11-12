@@ -1,0 +1,36 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "A working-memory entry that hadn't expired.",
+  "properties": {
+    "expires_at": {
+      "description": "When it stops being readable.",
+      "format": "date-time",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "key": {
+      "description": "Its name there.",
+      "maxLength": 1024,
+      "type": "string"
+    },
+    "scope": {
+      "description": "Its session or run.",
+      "maxLength": 1024,
+      "type": "string"
+    },
+    "value": {
+      "description": "Its value.",
+      "x-extension": "whatever was kept"
+    }
+  },
+  "required": [
+    "scope",
+    "key",
+    "value"
+  ],
+  "title": "WorkingLine",
+  "type": "object"
+}

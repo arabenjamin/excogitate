@@ -1,0 +1,144 @@
+{
+  "$defs": {
+    "JobState": {
+      "description": "Where a job stands.",
+      "oneOf": [
+        {
+          "const": "queued",
+          "description": "Waiting to run.",
+          "type": "string"
+        },
+        {
+          "const": "claimed",
+          "description": "Held by a worker.",
+          "type": "string"
+        },
+        {
+          "const": "succeeded",
+          "description": "Finished.",
+          "type": "string"
+        },
+        {
+          "const": "dead",
+          "description": "Out of attempts.",
+          "type": "string"
+        }
+      ]
+    },
+    "LeaseLine": {
+      "additionalProperties": false,
+      "description": "A worker's hold on a job.",
+      "properties": {
+        "until": {
+          "description": "When it lapses.",
+          "format": "date-time",
+          "type": "string"
+        },
+        "worker": {
+          "description": "The worker.",
+          "maxLength": 256,
+          "type": "string"
+        }
+      },
+      "required": [
+        "worker",
+        "until"
+      ],
+      "type": "object"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "A job, as it was: finished ones too, with their results.",
+  "properties": {
+    "attempts": {
+      "description": "How many times it was claimed.",
+      "format": "uint32",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "finished_at": {
+      "description": "When it finished.",
+      "format": "date-time",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "id": {
+      "description": "Its id.",
+      "format": "uuid",
+      "type": "string"
+    },
+    "kind": {
+      "description": "Its kind.",
+      "maxLength": 256,
+      "type": "string"
+    },
+    "last_error": {
+      "description": "Why its last attempt failed.",
+      "maxLength": 65536,
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "lease": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/LeaseLine"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "Its hold, while claimed."
+    },
+    "max_attempts": {
+      "description": "How many claims it may have.",
+      "format": "uint32",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "payload": {
+      "description": "Its input.",
+      "x-extension": "the job kind's own payload"
+    },
+    "priority": {
+      "description": "Higher runs first.",
+      "format": "int32",
+      "type": "integer"
+    },
+    "requested_by": {
+      "description": "Who asked for it.",
+      "maxLength": 256,
+      "type": "string"
+    },
+    "result": {
+      "description": "What it produced.",
+      "x-extension": "the job kind's own result"
+    },
+    "run_at": {
+      "description": "The earliest it may run.",
+      "format": "date-time",
+      "type": "string"
+    },
+    "status": {
+      "$ref": "#/$defs/JobState",
+      "description": "Where it stands."
+    }
+  },
+  "required": [
+    "id",
+    "kind",
+    "payload",
+    "priority",
+    "status",
+    "requested_by",
+    "run_at",
+    "attempts",
+    "max_attempts"
+  ],
+  "title": "JobLine",
+  "type": "object"
+}

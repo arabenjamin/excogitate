@@ -15,6 +15,7 @@
 //! - **Extensions from a fixed directory,** with automatic install off, so
 //!   nothing is fetched at runtime.
 
+mod archive;
 mod codec;
 mod read;
 mod schema_sql;

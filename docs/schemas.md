@@ -9,8 +9,8 @@ The check in `schema::check_strict` runs on every generated schema, and on
 every schema a plugin declares when it registers:
 
 - an object sets `additionalProperties: false`;
-- a string has a `maxLength`, unless it's an enum, a const, a `uuid` or a
-  `date-time`;
+- a string has a `maxLength`, unless it's an enum, a const, a `uuid`, a
+  `date-time` or a `date`;
 - an array has a `maxItems`;
 - a place that really is open declares it with `x-extension`, whose value
   says why.
@@ -62,6 +62,10 @@ cargo run -p schema-gen -- --against /tmp/baseline/schemas/v1 --since v0.4.0
   `api_error`.
 - **Each bundled tool's arguments and result:** `tool_<name>_input` and
   `tool_<name>_output`, for `http_request`, `memory`, `delegate` and `chat`.
+- **An export's files:** `export_manifest`, and `export_<kind>` for each
+  file's lines. An import accepts what an older export wrote, so they're
+  held to the rules for what Excogitate accepts. See
+  [export and import](store.md#export-and-import).
 - **The plugin process protocol:** `tool_call_context` is what a tool call
   carries in `_meta.context`, `capability_request` is the parameters of a
   `capabilities/call` request, and `capability_record`, `capability_page`,

@@ -41,6 +41,9 @@ pub enum WriteOp {
     },
     /// Adds a job. Its id must be new.
     EnqueueJob(Job),
+    /// Adds a job exactly as it was, finished time included, as an import
+    /// does, so finished work isn't queued again. Its id must be new.
+    RestoreJob(Job),
     /// Adds or replaces a definition.
     PutDefinition(Definition),
     /// Removes a definition, if it's there.

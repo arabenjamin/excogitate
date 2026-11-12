@@ -407,11 +407,14 @@ impl Writer<'_> {
         Ok(())
     }
 
-    fn insert_job(&self, job: &Job) -> Result<(), StoreError> {
+    /// Adds a job. Its finished time is the store's to set, unless it's
+    /// being restored as it was.
+    fn insert_job(&self, job: &Job, restored: bool) -> Result<(), StoreError> {
+        let finished_at = if restored { job.finished_at } else { None };
         self.connection
             .execute(
                 &format!(
-                    "INSERT INTO jobs ({JOB_COLUMNS}) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)"
+                    "INSERT INTO jobs ({JOB_COLUMNS}) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
                 ),
                 params![
                     id_of(job.id),
@@ -427,6 +430,7 @@ impl Writer<'_> {
                     job.lease.as_ref().map(|lease| lease.until),
                     job.last_error,
                     job.result.as_ref().map(to_json).transpose()?,
+                    finished_at,
                 ],
             )
             .map(|_| ())
@@ -678,7 +682,13 @@ impl Writer<'_> {
                 if self.exists("SELECT 1 FROM jobs WHERE id = ?", &id_of(job.id))? {
                     return Err(StoreError::Conflict(format!("job {} exists", job.id)));
                 }
-                self.insert_job(&job)
+                self.insert_job(&job, false)
+            }
+            WriteOp::RestoreJob(job) => {
+                if self.exists("SELECT 1 FROM jobs WHERE id = ?", &id_of(job.id))? {
+                    return Err(StoreError::Conflict(format!("job {} exists", job.id)));
+                }
+                self.insert_job(&job, true)
             }
             WriteOp::PutDefinition(definition) => self.put_definition(&definition),
             WriteOp::DeleteDefinition(key) => self.delete_definition(&key),

@@ -169,7 +169,7 @@ impl DuckDbStore {
         answer.await.map_err(|_| stopped())?
     }
 
-    async fn read<T: Send + 'static>(
+    pub(crate) async fn read<T: Send + 'static>(
         &self,
         query: impl FnOnce(&Connection) -> Result<T, StoreError> + Send + 'static,
     ) -> Result<T, StoreError> {

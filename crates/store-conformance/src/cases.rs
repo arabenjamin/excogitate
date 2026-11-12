@@ -1,5 +1,9 @@
 //! The cases. Each takes a fresh store and panics if the store is wrong.
 
+pub use crate::archive::{
+    a_restored_job_keeps_how_it_ended, the_archive_lists_everything_in_order,
+};
+
 use protocol::{Actor, DataClass, Trust};
 use serde_json::json;
 use store::{

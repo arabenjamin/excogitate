@@ -1,0 +1,75 @@
+{
+  "$defs": {
+    "TaskState": {
+      "description": "Where a task stands.",
+      "oneOf": [
+        {
+          "const": "pending",
+          "description": "Not started.",
+          "type": "string"
+        },
+        {
+          "const": "active",
+          "description": "Under way.",
+          "type": "string"
+        },
+        {
+          "const": "done",
+          "description": "Finished.",
+          "type": "string"
+        },
+        {
+          "const": "cancelled",
+          "description": "Given up.",
+          "type": "string"
+        }
+      ]
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "A task.",
+  "properties": {
+    "created_at": {
+      "description": "When it was made.",
+      "format": "date-time",
+      "type": "string"
+    },
+    "detail": {
+      "description": "More detail.",
+      "maxLength": 1000000,
+      "type": "string"
+    },
+    "due_at": {
+      "description": "When it's due.",
+      "format": "date-time",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "id": {
+      "description": "Its id.",
+      "format": "uuid",
+      "type": "string"
+    },
+    "status": {
+      "$ref": "#/$defs/TaskState",
+      "description": "Where it stands."
+    },
+    "title": {
+      "description": "What to do.",
+      "maxLength": 4096,
+      "type": "string"
+    }
+  },
+  "required": [
+    "id",
+    "title",
+    "detail",
+    "status",
+    "created_at"
+  ],
+  "title": "TaskLine",
+  "type": "object"
+}

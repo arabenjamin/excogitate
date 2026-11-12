@@ -10,6 +10,7 @@
 //! - **What a store means is defined by its conformance suite**, the
 //!   `store-conformance` crate, not by these signatures alone.
 
+mod archive;
 mod catalog;
 mod error;
 mod ids;
@@ -19,6 +20,7 @@ mod port;
 mod record;
 mod unit;
 
+pub use archive::{Archive, Link, SpendDay};
 pub use catalog::RecordCatalog;
 pub use error::StoreError;
 pub use ids::{ChunkId, JobId, NoteId, RecordId, TaskId};

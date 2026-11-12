@@ -72,6 +72,16 @@ fn fixed() -> BTreeMap<&'static str, Value> {
         ("trajectory", schema_of::<dispatch::Trajectory>()),
         ("workflow", schema_of::<workflow::Workflow>()),
         ("workflow_run", schema_of::<workflow::WorkflowRun>()),
+        ("export_manifest", schema_of::<runtime::Manifest>()),
+        ("export_note", schema_of::<runtime::NoteLine>()),
+        ("export_chunk", schema_of::<runtime::ChunkLine>()),
+        ("export_task", schema_of::<runtime::TaskLine>()),
+        ("export_working", schema_of::<runtime::WorkingLine>()),
+        ("export_job", schema_of::<runtime::JobLine>()),
+        ("export_definition", schema_of::<runtime::DefinitionLine>()),
+        ("export_record", schema_of::<runtime::RecordLine>()),
+        ("export_link", schema_of::<runtime::LinkLine>()),
+        ("export_spend", schema_of::<runtime::SpendLine>()),
     ])
 }
 
@@ -83,6 +93,11 @@ fn role(stem: &str) -> Option<Role> {
     }
     if stem.starts_with("tool_") && stem.ends_with("_output") {
         return Some(Role::Output);
+    }
+    // An export is written by one version and read by a later one, so it's
+    // held to what an import must keep accepting.
+    if stem.starts_with("export_") {
+        return Some(Role::Input);
     }
     match stem {
         "agent"

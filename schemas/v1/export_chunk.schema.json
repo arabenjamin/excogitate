@@ -1,0 +1,55 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "A chunk of a note. Chunks follow their notes' order, each note's in\norder.",
+  "properties": {
+    "embedding": {
+      "description": "Its embedding, if it had one.",
+      "items": {
+        "format": "float",
+        "type": "number"
+      },
+      "maxItems": 8192,
+      "type": [
+        "array",
+        "null"
+      ]
+    },
+    "id": {
+      "description": "Its id.",
+      "format": "uuid",
+      "type": "string"
+    },
+    "note_id": {
+      "description": "Its note.",
+      "format": "uuid",
+      "type": "string"
+    },
+    "ordinal": {
+      "description": "Its place in the note, from 0.",
+      "format": "uint32",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "text": {
+      "description": "Its text.",
+      "maxLength": 1000000,
+      "type": "string"
+    },
+    "token_count": {
+      "description": "Its length in the embedder's tokens.",
+      "format": "uint32",
+      "minimum": 0,
+      "type": "integer"
+    }
+  },
+  "required": [
+    "id",
+    "note_id",
+    "ordinal",
+    "text",
+    "token_count"
+  ],
+  "title": "ChunkLine",
+  "type": "object"
+}
