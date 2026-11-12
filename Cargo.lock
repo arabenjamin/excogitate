@@ -1855,7 +1855,6 @@ version = "0.5.0"
 dependencies = [
  "async-trait",
  "chrono",
- "futures-util",
  "model",
  "plugin-api",
  "proptest",

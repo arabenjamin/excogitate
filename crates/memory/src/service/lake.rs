@@ -4,16 +4,20 @@
 //! Privacy is checked here, whatever a source says: an item from a source
 //! not declared public is private, and an item the run can't see is
 //! dropped. A source that fails or runs out of time is skipped and named.
+//!
+//! Sources are asked one after another, each with what the run has left
+//! after the ones before it, and each call is marked as a read: what a
+//! source's plugin does through its capabilities may only read, and goes
+//! on the search as tool calls and cost.
 
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::sync::{Arc, Mutex, PoisonError};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use chrono::{DateTime, Utc};
-use futures_util::future::join_all;
 use plugin_api::{
-    MAX_HIT_TEXT, MAX_ITEM_ID, MAX_ITEM_TEXT, MAX_ITEM_TITLE, MAX_ITEM_URL, MAX_SOURCE_HITS,
-    Source, SourceFound, SourceItem, SourceQuery, ToolContext, ToolFailure,
+    CapabilityUse, MAX_HIT_TEXT, MAX_ITEM_ID, MAX_ITEM_TEXT, MAX_ITEM_TITLE, MAX_ITEM_URL,
+    MAX_SOURCE_HITS, Source, SourceFound, SourceItem, SourceQuery, ToolContext,
 };
 use protocol::{DataClass, RunId};
 use schema::bounded;
@@ -41,6 +45,17 @@ pub struct LakeSource {
     pub time_limit: Duration,
     /// The source.
     pub source: Arc<dyn Source>,
+    /// What its plugin's capability calls spent and did, if it holds
+    /// capabilities that are metered.
+    pub meter: Option<Arc<dyn SourceMeter>>,
+}
+
+/// What a source's plugin spent and did through its capabilities, taken
+/// after each call to the source so it's charged once, on that call.
+pub trait SourceMeter: Send + Sync + std::fmt::Debug {
+    /// Takes what `run` spent, in millionths of a dollar, and the calls it
+    /// made.
+    fn take(&self, run: RunId) -> (u64, Vec<CapabilityUse>);
 }
 
 /// The sources each run may read, for the runs an agent definition limits.
@@ -150,6 +165,8 @@ pub struct LakeResults {
     pub cost_usd_micros: u64,
     /// The sources searched that gave nothing, and why.
     pub sources_skipped: Vec<SkippedSource>,
+    /// The capability calls the sources' plugins made for the search.
+    pub uses: Vec<CapabilityUse>,
 }
 
 /// One item read whole, or none.
@@ -162,6 +179,8 @@ pub struct OpenedItem {
     pub truncated: bool,
     /// What reading it cost, in millionths of a dollar.
     pub cost_usd_micros: u64,
+    /// The capability calls its plugin made to read it.
+    pub uses: Vec<CapabilityUse>,
 }
 
 /// What one source gave a search.
@@ -170,6 +189,7 @@ struct Searched {
     asked: u32,
     cost: u64,
     skipped: Option<String>,
+    uses: Vec<CapabilityUse>,
 }
 
 /// What ranks in the fusion: a chunk, or a source's item by its place in
@@ -238,6 +258,17 @@ impl LakeSource {
             .min(Duration::from_millis(context.time_left_ms))
     }
 
+    /// What its plugin spent and did for the call just made, with what the
+    /// plugin itself reported: the meter's record wins when it's more.
+    fn drained(&self, run: RunId, reported: u64) -> (u64, Vec<CapabilityUse>) {
+        let (spent, uses) = self
+            .meter
+            .as_ref()
+            .map(|meter| meter.take(run))
+            .unwrap_or_default();
+        (reported.max(spent), uses)
+    }
+
     async fn search(
         &self,
         text: &str,
@@ -247,15 +278,16 @@ impl LakeSource {
         context: ToolContext,
     ) -> Searched {
         let sent = self.takes(vector);
-        let nothing = |cost: u64, why: String| Searched {
+        let nothing = |(cost, uses): (u64, Vec<CapabilityUse>), why: String| Searched {
             items: Vec::new(),
             asked,
             cost,
             skipped: Some(bounded(&why)),
+            uses,
         };
         if sent.is_none() && !self.words {
             return nothing(
-                0,
+                (0, Vec::new()),
                 "it's searched only by vectors, and the query wasn't embedded by a model it takes"
                     .to_owned(),
             );
@@ -265,13 +297,18 @@ impl LakeSource {
             query = query.with_vector(vector.clone());
         }
         let limit = self.limit(context);
-        let found = match tokio::time::timeout(limit, self.source.search(query, context)).await {
-            Err(_) => return nothing(0, took_too_long(limit)),
+        let outcome = tokio::time::timeout(limit, self.source.search(query, context)).await;
+        // What its plugin did goes on the search however the call ended, a
+        // call cut off for time included.
+        let found = match outcome {
+            Err(_) => return nothing(self.drained(context.run, 0), took_too_long(limit)),
             Ok(Err(failure)) => {
-                return nothing(failure.cost_usd_micros(), failure.message().to_owned());
+                let drained = self.drained(context.run, failure.cost_usd_micros());
+                return nothing(drained, failure.message().to_owned());
             }
             Ok(Ok(found)) => found,
         };
+        let (cost, uses) = self.drained(context.run, found.cost_usd_micros);
         let mut seen = HashSet::new();
         let items = found
             .hits
@@ -284,16 +321,22 @@ impl LakeSource {
         Searched {
             items,
             asked,
-            cost: found.cost_usd_micros,
+            cost,
             skipped: None,
+            uses,
         }
     }
 }
 
-/// The context a source is called with: the call's, less what's spent.
-fn less_spent(mut context: ToolContext, spent: u64) -> ToolContext {
+/// The context a source is called with: the call's, marked as a read, less
+/// the money, tool calls and time the search has used so far.
+fn left(mut context: ToolContext, spent: u64, calls: usize, begun: Instant) -> ToolContext {
     context.budget_usd_micros = context.budget_usd_micros.saturating_sub(spent);
-    context
+    let calls = u32::try_from(calls).unwrap_or(u32::MAX);
+    context.tool_calls_left = context.tool_calls_left.saturating_sub(calls);
+    let used = u64::try_from(begun.elapsed().as_millis()).unwrap_or(u64::MAX);
+    context.time_left_ms = context.time_left_ms.saturating_sub(used);
+    context.with_reading(true)
 }
 
 impl Memory {
@@ -363,20 +406,26 @@ impl Memory {
         }
         // A pool wider than the answer: fusing only the top few loses what
         // ranks well in one list and appears in another.
+        let begun = Instant::now();
         let pool = PageRequest::new((limit * 3).max(10), 0)?;
         let stored = self.store_lists(query, classes, scope, pool).await?;
         let sources = lake.map_or_else(Vec::new, |lake| self.chosen(lake.chosen));
         let asked = pool.limit().min(MAX_SOURCE_HITS);
-        let context = lake.map(|lake| less_spent(lake.context, stored.cost));
-        let searched = match context {
-            Some(context) => {
-                join_all(sources.iter().map(|source| {
-                    source.search(query, stored.vector.as_ref(), asked, classes, context)
-                }))
-                .await
+        // One after another: sources asked at once would each be told the
+        // whole of what's left, and together spend it several times over.
+        let mut searched: Vec<Searched> = Vec::with_capacity(sources.len());
+        if let Some(lake) = lake {
+            let (mut spent, mut calls) = (stored.cost, 0_usize);
+            for source in &sources {
+                let context = left(lake.context, spent, calls, begun);
+                let found = source
+                    .search(query, stored.vector.as_ref(), asked, classes, context)
+                    .await;
+                spent = spent.saturating_add(found.cost);
+                calls = calls.saturating_add(found.uses.len());
+                searched.push(found);
             }
-            None => Vec::new(),
-        };
+        }
         self.ranked(stored, &sources, searched, limit, min_similarity)
             .await
     }
@@ -420,6 +469,10 @@ impl Memory {
         ];
         let mut items: HashMap<Key, &SourceItem> = HashMap::new();
         let (mut cost, mut skipped) = (stored.cost, Vec::new());
+        let uses: Vec<CapabilityUse> = searched
+            .iter()
+            .flat_map(|found| found.uses.iter().cloned())
+            .collect();
         let mut has_more = stored.text.has_more || stored.vectors.has_more;
         for (place, (source, found)) in sources.iter().zip(&searched).enumerate() {
             cost = cost.saturating_add(found.cost);
@@ -461,7 +514,17 @@ impl Memory {
         has_more |= best.len() > wanted;
         best.truncate(wanted);
 
-        let hits = self.filled(best, &chunks, &items, sources).await?;
+        let hits = match self.filled(best, &chunks, &items, sources).await {
+            Ok(hits) => hits,
+            // The sources were paid for, and their calls made.
+            Err(error) => {
+                return Err(MemoryError::Unfinished {
+                    error: bounded(&error.to_string()),
+                    cost_usd_micros: cost,
+                    uses,
+                });
+            }
+        };
         Ok(LakeResults {
             hits,
             mode: stored.mode,
@@ -469,6 +532,7 @@ impl Memory {
             not_close_enough,
             cost_usd_micros: cost,
             sources_skipped: skipped,
+            uses,
         })
     }
 
@@ -549,18 +613,24 @@ impl Memory {
                 "an item id is 1 to {MAX_ITEM_ID} characters"
             )));
         }
-        let limit = found.limit(lake.context);
-        let failed = |why: String, cost: u64| MemoryError::Source {
+        let context = lake.context.with_reading(true);
+        let limit = found.limit(context);
+        let failed = |why: String, (cost, uses): (u64, Vec<CapabilityUse>)| MemoryError::Source {
             name: source.to_owned(),
             error: bounded(&why),
             cost_usd_micros: cost,
+            uses,
         };
         let read: SourceFound =
-            match tokio::time::timeout(limit, found.source.get(id, lake.context)).await {
-                Err(_) => return Err(failed(took_too_long(limit), 0)),
-                Ok(Err(failure)) => return Err(failure_of(&failure, failed)),
+            match tokio::time::timeout(limit, found.source.get(id, context)).await {
+                Err(_) => return Err(failed(took_too_long(limit), found.drained(context.run, 0))),
+                Ok(Err(failure)) => {
+                    let drained = found.drained(context.run, failure.cost_usd_micros());
+                    return Err(failed(failure.message().to_owned(), drained));
+                }
                 Ok(Ok(read)) => read,
             };
+        let (cost, uses) = found.drained(context.run, read.cost_usd_micros);
         let visible = read
             .hits
             .into_iter()
@@ -571,11 +641,8 @@ impl Memory {
         Ok(OpenedItem {
             item: visible.map(|(item, _)| item),
             truncated,
-            cost_usd_micros: read.cost_usd_micros,
+            cost_usd_micros: cost,
+            uses,
         })
     }
-}
-
-fn failure_of(failure: &ToolFailure, failed: impl Fn(String, u64) -> MemoryError) -> MemoryError {
-    failed(failure.message().to_owned(), failure.cost_usd_micros())
 }

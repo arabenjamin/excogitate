@@ -94,6 +94,7 @@ impl RecordsCapability for ScopedRecords {
         context: ToolContext,
     ) -> Result<RecordId, CapabilityError> {
         self.own(record_type)?;
+        context.check_may_write()?;
         let id = id.unwrap_or_else(RecordId::generate);
         if context.probing {
             return Ok(id);
@@ -132,6 +133,7 @@ impl RecordsCapability for ScopedRecords {
         context: ToolContext,
     ) -> Result<(), CapabilityError> {
         self.own(record_type)?;
+        context.check_may_write()?;
         if context.probing {
             return Ok(());
         }
@@ -150,6 +152,7 @@ impl RecordsCapability for ScopedRecords {
         context: ToolContext,
     ) -> Result<(), CapabilityError> {
         self.own(relation)?;
+        context.check_may_write()?;
         if context.probing {
             return Ok(());
         }
@@ -182,6 +185,7 @@ impl RecordsCapability for ScopedRecords {
         context: ToolContext,
     ) -> Result<Vec<RecordId>, CapabilityError> {
         check_batch(records.len())?;
+        context.check_may_write()?;
         // Every name is checked before anything is written.
         for write in &records {
             self.own(&write.record_type)?;
@@ -210,6 +214,7 @@ impl RecordsCapability for ScopedRecords {
         context: ToolContext,
     ) -> Result<(), CapabilityError> {
         check_batch(links.len())?;
+        context.check_may_write()?;
         for link in &links {
             self.own(&link.relation)?;
         }

@@ -10,7 +10,9 @@ use memory::{
     EmbedScope, Found, ItemHit, LakeSearch, Memory, MemoryError, NewNote, NoteEdit, NoteHit,
     NoteOrigin, SearchMode, SourceChoices, StoredNote,
 };
-use plugin_api::{Effect, Tool, ToolContext, ToolDefinition, ToolFailure, ToolOutput};
+use plugin_api::{
+    CapabilityUse, Effect, Tool, ToolContext, ToolDefinition, ToolFailure, ToolOutput,
+};
 use protocol::{Actor, DataClass, Trust};
 use schemars::{JsonSchema, Schema};
 use serde::{Deserialize, Serialize};
@@ -322,8 +324,14 @@ fn stored(note: &StoredNote) -> MemoryResult {
 }
 
 fn failure(error: &MemoryError) -> ToolFailure {
-    ToolFailure::new(schema::bounded(&error.to_string())).with_cost(error.cost_usd_micros())
+    ToolFailure::new(schema::bounded(&error.to_string()))
+        .with_cost(error.cost_usd_micros())
+        .with_uses(error.uses().to_vec())
 }
+
+/// What a search or an open answered, with the capability calls the
+/// sources' plugins made for it: they count as the run's tool calls.
+type Read = (MemoryResult, Trust, u64, Vec<CapabilityUse>);
 
 fn missing(what: &str) -> ToolFailure {
     ToolFailure::new(format!("this operation needs `{what}`"))
@@ -405,11 +413,7 @@ impl MemoryTool {
         Ok((stored(&done), Trust::Trusted, done.cost_usd_micros))
     }
 
-    async fn search(
-        &self,
-        args: MemoryArgs,
-        context: ToolContext,
-    ) -> Result<(MemoryResult, Trust, u64), ToolFailure> {
+    async fn search(&self, args: MemoryArgs, context: ToolContext) -> Result<Read, ToolFailure> {
         let query = args.query.ok_or_else(|| missing("query"))?;
         let scope = EmbedScope {
             data_class: context.data_class,
@@ -473,6 +477,7 @@ impl MemoryTool {
                 Trust::Untrusted
             },
             results.cost_usd_micros,
+            results.uses,
         ))
     }
 
@@ -552,11 +557,7 @@ impl MemoryTool {
         Ok((stored(&done), Trust::Trusted, done.cost_usd_micros))
     }
 
-    async fn open(
-        &self,
-        args: MemoryArgs,
-        context: ToolContext,
-    ) -> Result<(MemoryResult, Trust, u64), ToolFailure> {
+    async fn open(&self, args: MemoryArgs, context: ToolContext) -> Result<Read, ToolFailure> {
         let source = args.source.ok_or_else(|| missing("source"))?;
         let item = args.item.ok_or_else(|| missing("item"))?;
         let chosen = self.choices.of(context.run);
@@ -573,7 +574,8 @@ impl MemoryTool {
             return Err(ToolFailure::new(format!(
                 "{source} has no item {item} visible to this run"
             ))
-            .with_cost(opened.cost_usd_micros));
+            .with_cost(opened.cost_usd_micros)
+            .with_uses(opened.uses));
         };
         let whole = SourceHit {
             source: clamped(source, MAX_SOURCE),
@@ -597,6 +599,7 @@ impl MemoryTool {
             },
             Trust::Untrusted,
             opened.cost_usd_micros,
+            opened.uses,
         ))
     }
 
@@ -635,10 +638,18 @@ impl Tool for MemoryTool {
         let args: MemoryArgs = serde_json::from_value(arguments)
             .map_err(|error| ToolFailure::new(schema::bounded(&error.to_string())))?;
         let id = args.id.map(NoteId::from_uuid);
+        let mut uses = Vec::new();
         let (result, trust, cost_usd_micros) = match args.operation {
             Operation::Store => self.store(args, context).await?,
-            Operation::Search => self.search(args, context).await?,
-            Operation::Open => self.open(args, context).await?,
+            Operation::Search | Operation::Open => {
+                let (result, trust, cost, called) = if args.operation == Operation::Search {
+                    self.search(args, context).await?
+                } else {
+                    self.open(args, context).await?
+                };
+                uses = called;
+                (result, trust, cost)
+            }
             Operation::Get => self.get(id.ok_or_else(|| missing("id"))?, context).await?,
             Operation::Update => {
                 self.update(id.ok_or_else(|| missing("id"))?, args, context)
@@ -651,6 +662,8 @@ impl Tool for MemoryTool {
         };
         let value = serde_json::to_value(result)
             .map_err(|error| ToolFailure::new(schema::bounded(&error.to_string())))?;
-        Ok(ToolOutput::new(value, trust).with_cost(cost_usd_micros))
+        Ok(ToolOutput::new(value, trust)
+            .with_cost(cost_usd_micros)
+            .with_uses(uses))
     }
 }

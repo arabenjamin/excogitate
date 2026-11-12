@@ -96,6 +96,9 @@ pub struct ToolContext {
     /// True in a Harness² probe: a tool that runs at all must change
     /// nothing, and work it starts must be a probe too.
     pub probing: bool,
+    /// True while a plugin's source answers a search: a search only reads,
+    /// so the capability calls made for it may only read too.
+    pub reading: bool,
     /// In a plugin process, the host's token for this one tool call, which
     /// its capability calls carry back.
     pub(crate) call: Option<uuid::Uuid>,
@@ -112,6 +115,7 @@ impl ToolContext {
             tool_calls_left: u32::MAX,
             time_left_ms: u64::MAX,
             probing: false,
+            reading: false,
             call: None,
         }
     }
@@ -121,6 +125,28 @@ impl ToolContext {
     pub const fn with_probing(mut self, probing: bool) -> Self {
         self.probing = probing;
         self
+    }
+
+    /// The same context, marked as a source's read or not.
+    #[must_use]
+    pub const fn with_reading(mut self, reading: bool) -> Self {
+        self.reading = reading;
+        self
+    }
+
+    /// A refusal, if a capability call that writes can't be made in this
+    /// context: a source's read writes nothing.
+    ///
+    /// # Errors
+    ///
+    /// [`CapabilityError::Refused`] while a source answers a search.
+    pub fn check_may_write(&self) -> Result<(), crate::CapabilityError> {
+        if self.reading {
+            return Err(crate::CapabilityError::Refused(
+                "a source only reads; this call writes".to_owned(),
+            ));
+        }
+        Ok(())
     }
 
     /// The same context, with how long the run has left.
@@ -217,6 +243,13 @@ impl ToolOutput {
     #[must_use]
     pub const fn with_cost(mut self, cost_usd_micros: u64) -> Self {
         self.cost_usd_micros = cost_usd_micros;
+        self
+    }
+
+    /// The same output, with the capability calls made for it.
+    #[must_use]
+    pub fn with_uses(mut self, uses: Vec<CapabilityUse>) -> Self {
+        self.uses = uses;
         self
     }
 }

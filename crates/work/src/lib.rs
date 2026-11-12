@@ -14,7 +14,8 @@ mod transport;
 mod worker;
 
 pub use definitions::{
-    DefinitionError, DefinitionFile, list_definitions, read_definition_files, save_definitions,
+    DefinitionError, DefinitionFile, is_definition_name, list_definitions, read_definition_files,
+    save_definitions,
 };
 pub use schedule::{MIN_CATCH_UP_SECONDS, Schedule, Scheduler};
 pub use transport::{Enqueued, JobTransport, StoreTransport};

@@ -413,6 +413,7 @@ async fn a_run_limited_to_no_sources_reads_none() {
             dimension: None,
             time_limit: std::time::Duration::from_secs(1),
             source: Arc::new(OneItem),
+            meter: None,
         }])
         .unwrap();
     let choices = memory::SourceChoices::default();

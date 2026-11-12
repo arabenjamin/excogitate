@@ -88,14 +88,20 @@ fn file_problem(path: &Path, problem: impl std::fmt::Display) -> DefinitionError
     DefinitionError::File(bounded(&format!("{}: {problem}", path.display())))
 }
 
+/// Whether `name` can name a definition: 1 to 64 lowercase letters,
+/// digits, `_` and `-`, so it's also a plain file name.
+#[must_use]
+pub fn is_definition_name(name: &str) -> bool {
+    !name.is_empty()
+        && name.len() <= 64
+        && name
+            .chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_' || c == '-')
+}
+
 fn name_of(path: &Path) -> Option<String> {
     let stem = path.file_stem()?.to_str()?;
-    let good = !stem.is_empty()
-        && stem.len() <= 64
-        && stem
-            .chars()
-            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_' || c == '-');
-    good.then(|| stem.to_owned())
+    is_definition_name(stem).then(|| stem.to_owned())
 }
 
 /// Reads every `*.yaml` under each `(kind, directory)` of `root`. A missing

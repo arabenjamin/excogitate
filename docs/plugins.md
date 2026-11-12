@@ -48,16 +48,23 @@ batches. Records calls don't count against a run's tool calls; `http` and
 
 **Starting work.** `run_workflow` queues a run and returns its job; with an
 idempotency key, the same key starts the workflow once for that plugin,
-which is how a feed fans out to one run per new item without repeats. A
+which is how a feed fans out to one run per new item without repeats. A key
+is remembered as long as its job is kept: once `retention.job_days` prunes
+the finished job (30 days by default), the same key starts the workflow
+again, so a feed that can list an item for longer keeps its own record of
+what it has seen. A
 plugin may have at most 100 jobs waiting or running at once; past that a
 start is refused, so a workflow that calls the plugin again can't multiply
 without end. Only workflow runs can be started, never Harness² or any other
-kind of job. `job` reads a job back, with its result once it's finished.
+kind of job. `job` reads a job back, with its result once it's finished; a
+workflow run is private, so a run that isn't gets its phase without the
+result. Each start and each read counts as one of the run's tool calls.
 
 **In a Harness² probe,** a plugin's tools may run only if they're on the
 probe's read list, and even then a write through `records` or `memory`
 passes its checks and isn't made, and a run passes its checks and isn't
-started, as a probe's other writes aren't.
+started, as a probe's other writes aren't. An `http` request other than
+`GET` or `HEAD` is refused in a probe.
 
 **What the host enforces for `http`, `model`, `memory` and `jobs`.** A plugin
 holding any of them can bring in text from outside or from a model, so everything its
@@ -117,9 +124,15 @@ and `sources/get` over the same connection as its tools, and
 - **Time and money.** Each search of a source has its own limit inside the
   memory call's: `source_time_limit_secs` for that plugin in `plugins.yaml`,
   5 by default. A source that fails or runs out of time is left out and
-  named in `sources_skipped`, and the rest of the search goes on. What a
-  source reports it spent, and what its metered capability calls cost, go on
-  the memory call's cost.
+  named in `sources_skipped`, and the rest of the search goes on. Sources
+  are asked one after another, each with the money, tool calls and time the
+  search has left after the ones before it. What a source reports it spent,
+  and what its metered capability calls cost, go on the memory call's cost,
+  a call cut off for time included, and each capability call counts as one
+  of the run's tool calls.
+- **A source only reads.** Its `ToolContext` has `reading` set, and while
+  it's set a capability call that writes is refused: `records` and `memory`
+  writes, starting a job, and any `http` request but `GET` or `HEAD`.
 - **Agents choose.** An agent's `memory.sources` names the sources its
   memory reads; left out, it reads them all. See
   [workflows.md](workflows.md#agents).

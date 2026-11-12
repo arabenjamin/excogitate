@@ -63,7 +63,7 @@ fn parse(text: &str) -> Result<Vec<Part<'_>>, TemplateError> {
 /// # Errors
 ///
 /// [`TemplateError::Malformed`] if it isn't well formed.
-pub(crate) fn references(text: &str) -> Result<Vec<&str>, TemplateError> {
+pub fn references(text: &str) -> Result<Vec<&str>, TemplateError> {
     Ok(parse(text)?
         .into_iter()
         .filter_map(|part| match part {

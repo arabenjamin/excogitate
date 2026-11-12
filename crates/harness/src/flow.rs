@@ -12,7 +12,7 @@ use serde_json::Value;
 use workflow::{Engine, Step, Workflow};
 
 use crate::attempt::{Attempt, Base, Candidate, Kind, Loop, MAX_STEPS, Probed, Request, Status};
-use crate::guard::{MAX_GROWTH_CHARS, leaks};
+use crate::guard::{MAX_GROWTH_CHARS, holds_a_value, leaks};
 use crate::render::Rendered;
 use crate::roles::{Brief, WorkflowDraft};
 
@@ -187,12 +187,68 @@ pub fn check_workflow_edit(
             grown - was
         ));
     }
+    let inputs = serde_json::from_str::<Value>(task).unwrap_or(Value::Null);
     for (step, (text, before)) in candidate.steps.iter().zip(new.iter().zip(&old)) {
-        if text != before {
-            leaks(&format!("step {} contains", step.id()), text, task)?;
+        if text == before {
+            continue;
+        }
+        let what = format!("step {} contains", step.id());
+        leaks(&what, text, task)?;
+        holds_a_value(&what, text, &inputs)?;
+        // An edit that stops using an input answers the test case, whatever
+        // it's asked later.
+        let kept = inputs_used(text);
+        if let Some(dropped) = inputs_used(before)
+            .into_iter()
+            .find(|path| !kept.contains(path))
+        {
+            return Err(format!(
+                "step {} no longer uses {{{{{dropped}}}}}; an edit can't drop an input",
+                step.id()
+            ));
         }
     }
     Ok(())
+}
+
+/// Why an edit can't be run, if it can't: a step whose arguments it
+/// changed would write with them. A tool declared as reading may still
+/// write for some arguments, and what a writing tool is sent never changes.
+///
+/// # Errors
+///
+/// The step and tool, in a sentence.
+pub fn check_edited_reads(
+    candidate: &Workflow,
+    current: &Workflow,
+    registry: &dispatch::ToolRegistry,
+) -> Result<(), String> {
+    for (step, before) in candidate.steps.iter().zip(&current.steps) {
+        if let (
+            Step::Tool {
+                tool, arguments, ..
+            },
+            Step::Tool { arguments: was, .. },
+        ) = (step, before)
+            && arguments != was
+            && registry.effect_of(tool, arguments) != Some(dispatch::Effect::Read)
+        {
+            return Err(format!(
+                "step {} would make {tool} write with its new arguments",
+                step.id()
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// The inputs `text` refers to.
+fn inputs_used(text: &str) -> BTreeSet<&str> {
+    workflow::references(text)
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|path| path.starts_with("inputs."))
+        .collect()
 }
 
 /// Both candidates' edits: `first`'s, with `second`'s filling in what
@@ -473,6 +529,90 @@ mod tests {
                 .contains("step sum")
         );
         assert_eq!(check_workflow_edit(&flow(), &flow(), task), Ok(()));
+    }
+
+    #[test]
+    fn an_edit_can_neither_paste_an_input_nor_drop_one() {
+        let task = r#"{"topic":"otter habitats"}"#;
+        let pasted = apply_edits(
+            &flow(),
+            &[edit(
+                &json!({ "id": "find", "arguments": { "query": "otter  Habitats" } }),
+            )],
+            &reads(),
+        )
+        .unwrap();
+        let why = check_workflow_edit(&pasted, &flow(), task).unwrap_err();
+        assert!(why.contains("an input it was tested on"), "{why}");
+        let dropped = apply_edits(
+            &flow(),
+            &[edit(
+                &json!({ "id": "find", "arguments": { "query": "otters" } }),
+            )],
+            &reads(),
+        )
+        .unwrap();
+        let why = check_workflow_edit(&dropped, &flow(), task).unwrap_err();
+        assert!(why.contains("no longer uses {{inputs.topic}}"), "{why}");
+        let kept = apply_edits(
+            &flow(),
+            &[edit(
+                &json!({ "id": "find", "arguments": { "query": "{{ inputs.topic }} news" } }),
+            )],
+            &reads(),
+        )
+        .unwrap();
+        assert_eq!(check_workflow_edit(&kept, &flow(), task), Ok(()));
+    }
+
+    /// Declared as reading, but deletes when it's told to.
+    #[derive(Debug)]
+    struct Look;
+
+    #[async_trait::async_trait]
+    impl dispatch::Tool for Look {
+        fn definition(&self) -> dispatch::ToolDefinition {
+            let schema = json!({ "type": "object", "additionalProperties": false,
+                "properties": { "query": { "type": "string", "maxLength": 100 },
+                                "delete": { "type": "boolean" } } });
+            let out = json!({ "type": "object", "additionalProperties": false, "properties": {} });
+            dispatch::ToolDefinition::new("look", "d", schema, out, dispatch::Effect::Read)
+        }
+
+        fn effect_of(&self, arguments: &Value) -> dispatch::Effect {
+            if arguments.get("delete") == Some(&Value::Bool(true)) {
+                dispatch::Effect::Write
+            } else {
+                dispatch::Effect::Read
+            }
+        }
+
+        async fn run(
+            &self,
+            _: Value,
+            _: dispatch::ToolContext,
+        ) -> Result<dispatch::ToolOutput, dispatch::ToolFailure> {
+            Err(dispatch::ToolFailure::new("unused"))
+        }
+    }
+
+    #[test]
+    fn new_arguments_are_judged_by_what_they_would_do() {
+        let mut registry = dispatch::ToolRegistry::new();
+        registry.register(std::sync::Arc::new(Look)).unwrap();
+        let edited = |arguments: Value| {
+            apply_edits(
+                &flow(),
+                &[edit(&json!({ "id": "find", "arguments": arguments }))],
+                &reads(),
+            )
+            .unwrap()
+        };
+        let reading = edited(json!({ "query": "{{inputs.topic}} news" }));
+        assert_eq!(check_edited_reads(&reading, &flow(), &registry), Ok(()));
+        let deleting = edited(json!({ "query": "{{inputs.topic}}", "delete": true }));
+        let why = check_edited_reads(&deleting, &flow(), &registry).unwrap_err();
+        assert!(why.contains("would make look write"), "{why}");
     }
 
     #[test]

@@ -18,5 +18,5 @@ pub use fuse::{FusedChunk, RRF_K, fuse};
 pub use service::{
     ChoiceHeld, Found, ItemHit, LakeResults, LakeSearch, LakeSource, MAX_SEARCH_LIMIT, Memory,
     MemoryError, NewNote, NoteEdit, NoteHit, NoteOrigin, OpenedItem, SearchMode, SearchResults,
-    SkippedSource, SourceChoices, StoredNote,
+    SkippedSource, SourceChoices, SourceMeter, StoredNote,
 };

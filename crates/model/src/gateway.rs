@@ -101,9 +101,10 @@ struct Answered<T> {
     failed_attempts: Vec<FailedAttempt>,
 }
 
-/// What calls dropped mid-flight were charged, for a caller that may cut a
-/// call off, as a run's time limit does: the call returns nothing then, so
-/// this is how the run learns what the day's ledger was charged for it.
+/// What a call has been charged without an answer: attempts that failed and
+/// attempts dropped mid-flight. For a caller that may cut a call off, as a
+/// run's time limit does: the call returns nothing then, so this is how the
+/// run learns what the day's ledger was charged for it.
 #[derive(Debug, Clone, Default)]
 pub struct Abandoned(Arc<AtomicU64>);
 
@@ -298,6 +299,11 @@ impl Gateway {
                         0
                     };
                     self.settle(&candidate, charged, reserved_at).await;
+                    // Counted now: if a later attempt is cut off, this one's
+                    // charge is still the run's.
+                    if let Some(tally) = tally {
+                        tally.add(charged);
+                    }
                     let go_on = error.worth_trying_elsewhere();
                     failed_attempts.push(FailedAttempt {
                         model: model_name,
@@ -719,6 +725,69 @@ models:
         assert!(timed_out > 0);
         // The answer's own usage: a million input tokens at 80 per million.
         assert_eq!(done.cost_usd_micros, timed_out + 80);
+    }
+
+    /// Times out on its first call, and never answers the next.
+    #[derive(Debug, Default)]
+    struct FailsThenHangs(std::sync::atomic::AtomicBool);
+
+    #[async_trait::async_trait]
+    impl ModelClient for FailsThenHangs {
+        async fn chat(
+            &self,
+            _: &crate::Model,
+            _: &ChatRequest,
+            _: u32,
+        ) -> Result<ChatResponse, ModelError> {
+            if !self.0.swap(true, Ordering::Relaxed) {
+                return Err(ModelError::Timeout);
+            }
+            std::future::pending().await
+        }
+
+        async fn embed(&self, _: &crate::Model, _: &[String]) -> Result<Vec<Vec<f32>>, ModelError> {
+            std::future::pending().await
+        }
+    }
+
+    #[tokio::test]
+    async fn a_call_cut_off_still_counts_the_attempts_that_failed_before_it() {
+        let yaml = YAML
+            .replace(
+                "spend_cap_usd_micros_per_day: 100,",
+                "spend_cap_usd_micros_per_day: 1000000,",
+            )
+            .replace(
+                "  - {name: second, provider: two, wire_model: b, capabilities: [chat],\n     context_tokens: 2000000, max_output_tokens: 10}",
+                "  - {name: second, provider: paid, wire_model: b, capabilities: [chat, investigative],\n     context_tokens: 2000000, max_output_tokens: 10,\n     price: {input_usd_micros_per_mtok: 80, output_usd_micros_per_mtok: 0}}",
+            );
+        let ledger = Arc::new(Settlements::default());
+        let gateway = Gateway::new(
+            catalog(&yaml),
+            Arc::new(FailsThenHangs::default()),
+            Arc::clone(&ledger) as Arc<dyn SpendLedger>,
+        );
+        let tally = Abandoned::default();
+        let cut = tokio::time::timeout(
+            std::time::Duration::from_millis(20),
+            gateway.chat_counting(&priced_policy(), &request(), Some(&tally)),
+        )
+        .await;
+        assert!(cut.is_err());
+        // The dropped call's settlement is spawned when it's dropped.
+        for _ in 0..100 {
+            if ledger.0.lock().unwrap().len() == 2 {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+        }
+        let settled = ledger.0.lock().unwrap().clone();
+        assert_eq!(settled.len(), 2, "{settled:?}");
+        // The first model's prompt for its timeout, and the second's for the
+        // call dropped mid-flight: the run is told what the ledger took.
+        let charged: u64 = settled.iter().map(|(_, actual)| actual).sum();
+        assert!(settled.iter().all(|(_, actual)| *actual > 0), "{settled:?}");
+        assert_eq!(tally.charged(), charged);
     }
 
     #[tokio::test]

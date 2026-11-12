@@ -3,6 +3,7 @@
 use std::sync::{Arc, OnceLock};
 
 use chrono::{DateTime, Utc};
+use plugin_api::CapabilityUse;
 use protocol::{Actor, DataClass, Trust};
 use schema::bounded;
 use sha2::{Digest, Sha256};
@@ -17,7 +18,7 @@ mod lake;
 
 pub use lake::{
     ChoiceHeld, Found, ItemHit, LakeResults, LakeSearch, LakeSource, OpenedItem, SkippedSource,
-    SourceChoices,
+    SourceChoices, SourceMeter,
 };
 
 /// The most notes one search may return.
@@ -147,6 +148,19 @@ pub enum MemoryError {
         error: String,
         /// What it was charged, in millionths of a dollar.
         cost_usd_micros: u64,
+        /// The capability calls its plugin made for it.
+        uses: Vec<CapabilityUse>,
+    },
+    /// The sources answered a search, then the store failed filling in
+    /// its notes. What the search spent and did stands all the same.
+    #[error("the search failed part way: {error}")]
+    Unfinished {
+        /// What went wrong.
+        error: String,
+        /// What the search had spent, in millionths of a dollar.
+        cost_usd_micros: u64,
+        /// The capability calls the sources' plugins made for it.
+        uses: Vec<CapabilityUse>,
     },
     /// The note was embedded, then the store failed or refused to save it.
     /// The embedding was paid for all the same.
@@ -170,8 +184,21 @@ impl MemoryError {
             }
             | Self::Source {
                 cost_usd_micros, ..
+            }
+            | Self::Unfinished {
+                cost_usd_micros, ..
             } => *cost_usd_micros,
             _ => 0,
+        }
+    }
+
+    /// The capability calls sources' plugins made before it failed. They
+    /// count as the run's tool calls all the same.
+    #[must_use]
+    pub fn uses(&self) -> &[CapabilityUse] {
+        match self {
+            Self::Source { uses, .. } | Self::Unfinished { uses, .. } => uses,
+            _ => &[],
         }
     }
 }
@@ -534,21 +561,25 @@ impl Memory {
         &self,
         query: &str,
         scope: EmbedScope,
-    ) -> Result<(Vec<f32>, Option<String>, u64), String> {
+    ) -> Result<(Vec<f32>, Option<String>, u64), (String, u64)> {
         let Some(embedder) = &self.embedder else {
-            return Err("no embedder is configured".to_owned());
+            return Err(("no embedder is configured".to_owned(), 0));
         };
         let input = [query.to_owned()];
-        let embedding = embedder
-            .embed(&input, scope)
-            .await
-            .map_err(|error| format!("the embedder failed: {error}"))?;
+        // A failed call that reached the model was paid for all the same.
+        let embedding = embedder.embed(&input, scope).await.map_err(|error| {
+            (
+                format!("the embedder failed: {error}"),
+                error.cost_usd_micros,
+            )
+        })?;
+        let cost = embedding.cost_usd_micros;
         let vector = embedding
             .vectors
             .into_iter()
             .next()
-            .ok_or_else(|| "the embedder returned nothing".to_owned())?;
-        Ok((vector, embedding.model, embedding.cost_usd_micros))
+            .ok_or_else(|| ("the embedder returned nothing".to_owned(), cost))?;
+        Ok((vector, embedding.model, cost))
     }
 
     /// The store's text and vector lists for a query. A vector failure
@@ -570,12 +601,12 @@ impl Memory {
         };
         let (vector, model, cost) = match self.query_vector(query, scope).await {
             Ok(made) => made,
-            Err(reason) => {
+            Err((reason, cost)) => {
                 return Ok(StoreLists {
                     text,
                     vectors: nothing,
                     mode: keyword_only(&reason),
-                    cost: 0,
+                    cost,
                     vector: None,
                 });
             }

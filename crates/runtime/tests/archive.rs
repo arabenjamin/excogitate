@@ -363,3 +363,48 @@ async fn an_unfinished_or_newer_export_is_refused() {
     let why = refusal(import(&ready().await, &directory).await);
     assert!(why.contains("didn't finish"), "{why}");
 }
+
+#[tokio::test]
+async fn a_store_holding_only_spend_is_not_empty() {
+    let directory = exported(&filled().await, "spend-only").await;
+    let into = ready().await;
+    assert!(
+        into.reserve_spend(
+            "cloud",
+            NaiveDate::from_ymd_opt(2027, 1, 2).unwrap(),
+            5,
+            10_000
+        )
+        .await
+        .unwrap()
+    );
+    let why = refusal(import(&into, &directory).await);
+    assert!(
+        why.contains("isn't empty") && why.contains("spend"),
+        "{why}"
+    );
+}
+
+#[tokio::test]
+async fn a_line_held_twice_is_refused() {
+    let directory = exported(&filled().await, "twice-line").await;
+    rewrite(&directory, "tasks.jsonl", |text| format!("{text}{text}"));
+    rewrite(&directory, "manifest.json", |text| {
+        text.replace("\"tasks\": 1", "\"tasks\": 2")
+    });
+    let why = refusal(import(&ready().await, &directory).await);
+    assert!(
+        why.contains("tasks.jsonl has") && why.contains("twice"),
+        "{why}"
+    );
+}
+
+#[tokio::test]
+async fn a_definition_name_that_couldnt_be_a_file_is_refused() {
+    let directory = exported(&filled().await, "bad-name").await;
+    rewrite(&directory, "definitions.jsonl", |text| {
+        text.replace("\"name\":\"helper\"", "\"name\":\"../../elsewhere\"")
+    });
+    let why = refusal(import(&ready().await, &directory).await);
+    assert!(why.contains("../../elsewhere"), "{why}");
+}

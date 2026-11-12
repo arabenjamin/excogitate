@@ -11,7 +11,7 @@ use plugin_api::{
 };
 use store::{Store, StoreError};
 
-use crate::guarded::{CapabilityMeter, CapabilitySource, GuardedSource, GuardedTool};
+use crate::guarded::{CapabilityMeter, CapabilitySource, GuardedTool};
 use crate::service::{self, ServiceError, ServiceSpec};
 use crate::{PluginsConfig, ScopedRecords};
 
@@ -104,6 +104,10 @@ pub struct PluginSource {
     pub time_limit: Duration,
     /// The source.
     pub source: Arc<dyn Source>,
+    /// What its plugin's metered capability calls spent and did, per run,
+    /// if it holds any: whoever calls the source takes them after each
+    /// call.
+    pub meter: Option<Arc<CapabilityMeter>>,
 }
 
 fn compare_sources(
@@ -309,19 +313,12 @@ impl PluginHost {
             else {
                 continue;
             };
-            let source: Arc<dyn Source> = if granted.guarded {
-                Arc::new(GuardedSource {
-                    inner,
-                    meter: granted.meter.clone(),
-                })
-            } else {
-                inner
-            };
             self.sources.push(PluginSource {
                 id: format!("{}.{}", manifest.name, declared.name),
                 declared: declared.clone(),
                 time_limit,
-                source,
+                source: inner,
+                meter: granted.meter.clone(),
             });
         }
         self.installed.insert(manifest.name.clone());

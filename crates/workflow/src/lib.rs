@@ -28,4 +28,4 @@ pub use memory::SourceChoices;
 pub use probe::{ProbeRun, WorkflowProbe};
 pub use roster::{Instructions, ROSTER_LIMIT};
 pub use skill::{MAX_SKILL_CHARS, MAX_SKILLS, Skill, check_skills, with_skills};
-pub use template::{TemplateError, render_text, render_value};
+pub use template::{TemplateError, references, render_text, render_value};
