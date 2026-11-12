@@ -354,11 +354,11 @@ impl Runtime {
             purpose,
             self.config.max_result_chars,
             subject,
-        )?
-        .with_skills(instructions.skills)
-        .with_guardrails(agent.guardrails.clone())
-        .map_err(|error| setup_failed(&error))?;
-        let chosen = self.workflows.choose_sources(session.run(), &agent);
+        )?;
+        let (session, chosen) = self
+            .workflows
+            .ready_agent(session, &agent, instructions.skills)
+            .map_err(|error| setup_failed(&error))?;
         Ok((session, instructions.text, chosen))
     }
 }

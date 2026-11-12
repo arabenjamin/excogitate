@@ -467,18 +467,14 @@ impl Session {
         }
     }
 
-    /// Calls a model for the next round. The tools in `request` are replaced
-    /// by this run's, and its limits are applied.
-    ///
-    /// # Errors
-    ///
-    /// [`ModelStop`] if a budget stops the call or no model answers.
-    pub async fn call_model(
+    /// The checks before a model call, and what it's sent: the run's tools,
+    /// and as many output tokens as the budget leaves. Says which limit
+    /// stops it first, if one does.
+    fn ready_call(
         &mut self,
-        gateway: &Gateway,
         capabilities: &[Capability],
         mut request: ChatRequest,
-    ) -> Result<Completion, ModelStop> {
+    ) -> Result<(ChatRequest, RoutePolicy, u64), ModelStop> {
         if let Some(kind) = self.stopped() {
             return Err(ModelStop::Budget(kind));
         }
@@ -520,7 +516,22 @@ impl Session {
             embedding_dimension: None,
             only_model: None,
         };
+        Ok((request, policy, estimate))
+    }
 
+    /// Calls a model for the next round. The tools in `request` are replaced
+    /// by this run's, and its limits are applied.
+    ///
+    /// # Errors
+    ///
+    /// [`ModelStop`] if a budget stops the call or no model answers.
+    pub async fn call_model(
+        &mut self,
+        gateway: &Gateway,
+        capabilities: &[Capability],
+        request: ChatRequest,
+    ) -> Result<Completion, ModelStop> {
+        let (request, policy, estimate) = self.ready_call(capabilities, request)?;
         self.totals.rounds += 1;
         let abandoned = Abandoned::default();
         let call = gateway.chat_counting(&policy, &request, Some(&abandoned));

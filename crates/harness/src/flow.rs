@@ -336,7 +336,16 @@ impl Loop<'_> {
         attempt.spend(probed.run.cost_usd_micros);
         let mut parts = Vec::new();
         let mut runs = Vec::new();
-        for (id, receipt) in receipts(&probed.run) {
+        let all = receipts(&probed.run);
+        // Many steps, or a step once per item, can make more runs than a
+        // judge can read; the first are read, and the attempt says so.
+        if all.len() > MAX_RUNS {
+            attempt.problem(format!(
+                "the probe made {} runs; the judges read the first {MAX_RUNS}",
+                all.len()
+            ));
+        }
+        for (id, receipt) in all.into_iter().take(MAX_RUNS) {
             let trajectory = match receipt.run.parse() {
                 Ok(run) => read_trajectory(self.engine.sink.as_ref(), run, MAX_STEPS).await,
                 Err(_) => Ok(None),
@@ -348,7 +357,6 @@ impl Loop<'_> {
             parts.push((id, trajectory));
             runs.push(receipt.run.clone());
         }
-        runs.truncate(MAX_RUNS);
         let rendered = Rendered::workflow(label, &parts, &probed.run);
         let summary = Probed {
             run: runs.first().cloned().unwrap_or_default(),

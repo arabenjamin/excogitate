@@ -19,13 +19,10 @@ use plugin_api::{
 };
 use plugin_host::{CapabilityMeter, CapabilitySource};
 use protocol::{Actor, DataClass, Trust};
-use serde_json::json;
-use store::{Job, JobId, JobStatus, PageRequest, Store};
+use store::{JobId, JobStatus, PageRequest, Store};
 use tools::HttpRequestTool;
 use uuid::Uuid;
 use work::{Enqueued, JobTransport, StoreTransport};
-
-use crate::jobs::WORKFLOW_KIND;
 
 /// Makes both capabilities for any plugin that's granted them.
 #[derive(Debug)]
@@ -203,9 +200,6 @@ impl ModelCapability for PluginModel {
     }
 }
 
-/// The longest title made from a note's first line, when it has none.
-const DERIVED_TITLE: usize = 80;
-
 #[derive(Debug)]
 struct PluginMemory {
     memory: Memory,
@@ -233,13 +227,7 @@ impl MemoryCapability for PluginMemory {
         }
         let begun = Instant::now();
         let title = if note.title.trim().is_empty() {
-            let first = note.text.lines().find(|line| !line.trim().is_empty());
-            first
-                .unwrap_or_default()
-                .trim()
-                .chars()
-                .take(DERIVED_TITLE)
-                .collect()
+            memory::derived_title(&note.text)
         } else {
             note.title
         };
@@ -338,14 +326,6 @@ impl PluginJobs {
         Ok(mine)
     }
 
-    /// The job's id: one per key, for this plugin and workflow.
-    fn job_id(&self, workflow: &str, key: Option<&str>) -> JobId {
-        key.map_or_else(JobId::generate, |key| {
-            let seed = format!("plugin|{}|{workflow}|{key}", self.plugin);
-            JobId::from_uuid(Uuid::new_v5(&Uuid::NAMESPACE_OID, seed.as_bytes()))
-        })
-    }
-
     fn check(run: &RunWorkflow) -> Result<(), CapabilityError> {
         if !(-1000..=1000).contains(&run.priority) {
             return Err(CapabilityError::Refused(
@@ -378,7 +358,19 @@ impl PluginJobs {
         if context.probing {
             return Ok(JobStarted::new(Uuid::new_v4(), false));
         }
-        let id = self.job_id(&run.workflow, run.idempotency_key.as_deref());
+        let scope = format!("plugin|{}", self.plugin);
+        let key = run
+            .idempotency_key
+            .as_deref()
+            .map(|key| (scope.as_str(), key));
+        let job = crate::jobs::workflow_job(
+            &run.workflow,
+            run.inputs,
+            run.priority,
+            self.requested_by.clone(),
+            key,
+        );
+        let id = job.id;
         // A start already made returns its job, whatever the count.
         if self.store.get_job(id).await.map_err(failed)?.is_some() {
             return Ok(JobStarted::new(id.as_uuid(), true));
@@ -390,22 +382,6 @@ impl PluginJobs {
                 self.plugin
             )));
         }
-        let job = Job {
-            id,
-            kind: WORKFLOW_KIND.to_owned(),
-            payload: json!({ "workflow": run.workflow, "inputs": run.inputs }),
-            priority: run.priority,
-            status: JobStatus::Queued,
-            requested_by: self.requested_by.clone(),
-            run_at: Utc::now(),
-            attempts: 0,
-            // A retry would repeat whatever the earlier steps did.
-            max_attempts: 1,
-            lease: None,
-            last_error: None,
-            result: None,
-            finished_at: None,
-        };
         let enqueued = StoreTransport(Arc::clone(&self.store))
             .enqueue(job)
             .await
@@ -484,10 +460,12 @@ impl JobsCapability for PluginJobs {
 mod tests {
     use memory::ChunkConfig;
     use protocol::{DataClass, RunId};
+    use serde_json::json;
     use store::{ClassFilter, JobQueue, NoteId, NoteReader, Store};
     use store_memory::MemoryStore;
 
     use super::*;
+    use crate::jobs::WORKFLOW_KIND;
 
     #[test]
     fn a_plugins_purpose_carries_its_name() {
