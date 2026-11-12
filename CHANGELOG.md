@@ -3,6 +3,23 @@
 All notable changes are listed here. The file is generated from the
 Conventional Commits by [git-cliff](https://git-cliff.org) (`cliff.toml`).
 
+## [0.6.0] - 2026-11-12
+
+### Changed
+
+- Settle the published shapes before the freeze (breaking)
+- One of each, and the tests the review asked for
+- The store port and the event sink changed in 0.5.0 without saying so:
+  `Archive` became part of `Store`, `find_note_by_hash` takes a class,
+  `prune_jobs` and `EventSink::prune_runs` are required, `WriteOp::RestoreJob`
+  and `Job.finished_at` are new. Both are internal before 1.0
+  (docs/store.md) (breaking)
+
+### Fixed
+
+- The v0.5.0 review's bugs and holes
+- The v0.5.0 review's drift, and failures made visible
+
 ## [0.5.0] - 2026-11-12
 
 ### Added
