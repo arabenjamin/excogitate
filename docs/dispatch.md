@@ -60,7 +60,7 @@ caller's receipt.
 When the server stops, every run still going ends at once, mid-call if need
 be, as `budget_hit` with `stopped`, and keeps its receipt. A model call cut
 off this way, or by a time limit, is settled in the day's spend at what its
-prompt cost.
+prompt cost, and the run's receipt counts the same charge.
 
 ## Receipts
 

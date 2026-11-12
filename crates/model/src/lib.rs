@@ -24,7 +24,7 @@ pub use chat::{
     Usage, estimate_tokens,
 };
 pub use client::{ModelClient, ModelError, OpenAiClient};
-pub use gateway::{Completion, Embedded, FailedAttempt, Gateway, GatewayError};
+pub use gateway::{Abandoned, Completion, Embedded, FailedAttempt, Gateway, GatewayError};
 pub use ledger::{MemoryLedger, SpendLedger};
 pub use route::{Candidate, NoRoute, Rejection, RoutePolicy, TokenEstimate, plan};
 #[doc(hidden)]

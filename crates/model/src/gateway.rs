@@ -3,6 +3,7 @@
 
 use std::fmt;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use chrono::{DateTime, Utc};
 
@@ -100,6 +101,29 @@ struct Answered<T> {
     failed_attempts: Vec<FailedAttempt>,
 }
 
+/// What calls dropped mid-flight were charged, for a caller that may cut a
+/// call off, as a run's time limit does: the call returns nothing then, so
+/// this is how the run learns what the day's ledger was charged for it.
+#[derive(Debug, Clone, Default)]
+pub struct Abandoned(Arc<AtomicU64>);
+
+impl Abandoned {
+    /// What has been charged so far, in millionths of a dollar.
+    #[must_use]
+    pub fn charged(&self) -> u64 {
+        self.0.load(Ordering::Relaxed)
+    }
+
+    fn add(&self, micros: u64) {
+        // Saturating: a sum this large is already wrong, never wrapped.
+        let _ = self
+            .0
+            .try_update(Ordering::Relaxed, Ordering::Relaxed, |now| {
+                Some(now.saturating_add(micros))
+            });
+    }
+}
+
 /// A reservation not yet settled. If the call is dropped while it's out, as
 /// by a run's time limit, it's settled at what the prompt alone costs: the
 /// provider may bill a little more for output it had started, but leaving
@@ -111,6 +135,8 @@ struct Reservation {
     reserved: u64,
     abandoned: u64,
     at: DateTime<Utc>,
+    /// Told what a dropped call was charged.
+    tally: Option<Abandoned>,
 }
 
 impl Reservation {
@@ -125,6 +151,9 @@ impl Drop for Reservation {
         let Some(provider) = self.provider.take() else {
             return;
         };
+        if let Some(tally) = &self.tally {
+            tally.add(self.abandoned);
+        }
         let Ok(handle) = tokio::runtime::Handle::try_current() else {
             return;
         };
@@ -203,7 +232,12 @@ impl Gateway {
 
     /// A guard that settles the reservation if the call is abandoned before
     /// it's settled the ordinary way.
-    fn open_reservation(&self, candidate: &Candidate, at: DateTime<Utc>) -> Reservation {
+    fn open_reservation(
+        &self,
+        candidate: &Candidate,
+        at: DateTime<Utc>,
+        tally: Option<&Abandoned>,
+    ) -> Reservation {
         Reservation {
             ledger: Arc::clone(&self.ledger),
             provider: candidate
@@ -213,6 +247,7 @@ impl Gateway {
             reserved: candidate.worst_case_usd_micros,
             abandoned: candidate.input_usd_micros,
             at,
+            tally: tally.cloned(),
         }
     }
 
@@ -221,6 +256,7 @@ impl Gateway {
     async fn first_success<T, F, Fut>(
         &self,
         candidates: Vec<Candidate>,
+        tally: Option<&Abandoned>,
         call: F,
     ) -> Result<Answered<T>, GatewayError>
     where
@@ -239,7 +275,7 @@ impl Gateway {
                 at_cap.push((model_name, Rejection::OverDailyCap));
                 continue;
             }
-            let open = self.open_reservation(&candidate, reserved_at);
+            let open = self.open_reservation(&candidate, reserved_at, tally);
             let answer = call(candidate.clone()).await;
             open.close();
             match answer {
@@ -291,6 +327,21 @@ impl Gateway {
         policy: &RoutePolicy,
         request: &ChatRequest,
     ) -> Result<Completion, GatewayError> {
+        self.chat_counting(policy, request, None).await
+    }
+
+    /// As [`chat`](Self::chat), telling `abandoned` what the ledger was
+    /// charged if the call is dropped before it ends.
+    ///
+    /// # Errors
+    ///
+    /// As for [`chat`](Self::chat).
+    pub async fn chat_counting(
+        &self,
+        policy: &RoutePolicy,
+        request: &ChatRequest,
+        abandoned: Option<&Abandoned>,
+    ) -> Result<Completion, GatewayError> {
         let mut required = policy.capabilities.clone();
         required.push(Capability::Chat);
         if !request.tools.is_empty() {
@@ -305,7 +356,7 @@ impl Gateway {
         let candidates = plan(&self.catalog, &required, policy, estimate)?;
         let client = &self.client;
         let answered = self
-            .first_success(candidates, |candidate| async move {
+            .first_success(candidates, abandoned, |candidate| async move {
                 let model = &candidate.model;
                 let response = client.chat(model, request, candidate.output_tokens).await?;
                 let cost = response
@@ -351,7 +402,7 @@ impl Gateway {
         let candidates = plan(&self.catalog, &[Capability::Embeddings], policy, estimate)?;
         let client = &self.client;
         let answered = self
-            .first_success(candidates, |candidate| async move {
+            .first_success(candidates, None, |candidate| async move {
                 let vectors = client.embed(&candidate.model, inputs).await?;
                 Ok((vectors, candidate.worst_case_usd_micros))
             })
@@ -593,9 +644,10 @@ models:
             Arc::clone(&ledger) as Arc<dyn SpendLedger>,
         );
         let policy = priced_policy();
+        let tally = Abandoned::default();
         let abandoned = tokio::time::timeout(
             std::time::Duration::from_millis(20),
-            gateway.chat(&policy, &request()),
+            gateway.chat_counting(&policy, &request(), Some(&tally)),
         )
         .await;
         assert!(abandoned.is_err());
@@ -613,6 +665,8 @@ models:
         // output it never gave.
         assert_eq!(reserved - actual, 10, "{settled:?}");
         assert!(actual > 0);
+        // The caller is told the same charge, at once.
+        assert_eq!(tally.charged(), actual);
     }
 
     #[tokio::test]

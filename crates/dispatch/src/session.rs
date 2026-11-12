@@ -7,8 +7,8 @@ use std::time::{Duration, Instant};
 use chrono::Utc;
 use events::{Event, EventSink};
 use model::{
-    Capability, ChatRequest, Completion, Gateway, GatewayError, Rejection, RoutePolicy, ToolCall,
-    ToolSpec, estimate_tokens,
+    Abandoned, Capability, ChatRequest, Completion, Gateway, GatewayError, Rejection, RoutePolicy,
+    ToolCall, ToolSpec, estimate_tokens,
 };
 use protocol::{DataClass, RunId, Trust};
 use schema::{Refusal, Validator, bounded};
@@ -394,7 +394,9 @@ impl Session {
         };
 
         self.totals.rounds += 1;
-        let result = match self.within(gateway.chat(&policy, &request)).await {
+        let abandoned = Abandoned::default();
+        let call = gateway.chat_counting(&policy, &request, Some(&abandoned));
+        let result = match self.within(call).await {
             Waited::Done(result) => result,
             cut => {
                 let stopped = matches!(cut, Waited::Stopped);
@@ -403,10 +405,9 @@ impl Session {
                 } else {
                     "timed out against the run's time budget"
                 };
-                // The day's ledger charges a call cut off here at its
-                // prompt's price; which model it was isn't known here, so
-                // the run's totals can't say.
-                self.record_model_failure(why.to_owned(), 0, 0);
+                // The call was dropped with the wait, and the day's ledger
+                // charged it at its prompt's price; so does the run.
+                self.record_model_failure(why.to_owned(), 0, abandoned.charged());
                 return Err(ModelStop::Budget(self.mark_hit(Self::cut_short(stopped))));
             }
         };
