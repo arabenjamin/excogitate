@@ -11,6 +11,9 @@ use crate::codec::{from_neo, get};
 /// was written by a newer store, and this one refuses it rather than guess.
 pub(crate) const SCHEMA_VERSION: i64 = 1;
 
+/// The vector index over chunks' embeddings, by cosine.
+pub(crate) const VECTOR_INDEX: &str = "chunk_embedding";
+
 /// The name of the lock node the job queue takes before it changes a job.
 pub(crate) const JOBS_LOCK: &str = "jobs";
 
@@ -38,6 +41,15 @@ pub(crate) async fn prepare(store: &Neo4jStore) -> Result<(), StoreError> {
     for statement in STATEMENTS {
         store.graph.run(query(statement)).await.map_err(from_neo)?;
     }
+    // Its width is the store's, so it's made here, not listed above. A
+    // database of another width is refused below, before it's searched.
+    let vectors = format!(
+        "CREATE VECTOR INDEX {VECTOR_INDEX} IF NOT EXISTS FOR (c:Chunk) ON c.embedding \
+         OPTIONS {{indexConfig: {{`vector.dimensions`: {}, \
+         `vector.similarity_function`: 'cosine'}}}}",
+        store.dimension
+    );
+    store.graph.run(query(&vectors)).await.map_err(from_neo)?;
     // Index creation returns before the index is online; a search before
     // then would fail.
     store
