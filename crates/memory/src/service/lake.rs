@@ -17,7 +17,7 @@ use std::time::{Duration, Instant};
 use chrono::{DateTime, Utc};
 use plugin_api::{
     CapabilityUse, MAX_HIT_TEXT, MAX_ITEM_ID, MAX_ITEM_TEXT, MAX_ITEM_TITLE, MAX_ITEM_URL,
-    MAX_SOURCE_HITS, Source, SourceFound, SourceItem, SourceQuery, ToolContext,
+    MAX_SOURCE_HITS, Source, SourceGot, SourceItem, SourceQuery, ToolContext,
 };
 use protocol::{DataClass, RunId};
 use schema::bounded;
@@ -141,7 +141,8 @@ pub enum Found {
     Item(ItemHit),
 }
 
-/// A source that was searched and gave nothing, and why.
+/// A source left out of a search, and why: it failed, ran out of time, or
+/// couldn't be searched by this query.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SkippedSource {
     /// The source, as `plugin.name`.
@@ -163,7 +164,7 @@ pub struct LakeResults {
     pub not_close_enough: u32,
     /// What the embedding and the sources cost, in millionths of a dollar.
     pub cost_usd_micros: u64,
-    /// The sources searched that gave nothing, and why.
+    /// The sources left out of the search, and why.
     pub sources_skipped: Vec<SkippedSource>,
     /// The capability calls the sources' plugins made for the search.
     pub uses: Vec<CapabilityUse>,
@@ -621,20 +622,20 @@ impl Memory {
             cost_usd_micros: cost,
             uses,
         };
-        let read: SourceFound =
-            match tokio::time::timeout(limit, found.source.get(id, context)).await {
-                Err(_) => return Err(failed(took_too_long(limit), found.drained(context.run, 0))),
-                Ok(Err(failure)) => {
-                    let drained = found.drained(context.run, failure.cost_usd_micros());
-                    return Err(failed(failure.message().to_owned(), drained));
-                }
-                Ok(Ok(read)) => read,
-            };
+        let read: SourceGot = match tokio::time::timeout(limit, found.source.get(id, context)).await
+        {
+            Err(_) => return Err(failed(took_too_long(limit), found.drained(context.run, 0))),
+            Ok(Err(failure)) => {
+                let drained = found.drained(context.run, failure.cost_usd_micros());
+                return Err(failed(failure.message().to_owned(), drained));
+            }
+            Ok(Ok(read)) => read,
+        };
         let (cost, uses) = found.drained(context.run, read.cost_usd_micros);
+        // An item with another id isn't the one asked for.
         let visible = read
-            .hits
-            .into_iter()
-            .find(|item| item.id == id)
+            .item
+            .filter(|item| item.id == id)
             .map(|item| kept(found, item, MAX_ITEM_TEXT, false))
             .filter(|(item, _)| visible_to(classes, item.data_class));
         let truncated = visible.as_ref().is_some_and(|(_, truncated)| *truncated);

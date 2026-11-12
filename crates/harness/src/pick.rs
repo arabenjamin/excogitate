@@ -119,6 +119,7 @@ pub fn pick(agents: &[Recent]) -> Option<Pick> {
                 request: Request {
                     agent: recent.agent.clone(),
                     task,
+                    inputs: None,
                     target: crate::Target::Agent,
                     why: Some(format!(
                         "{repeats} of its last {of} runs went wrong the same way: {why}. \

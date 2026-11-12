@@ -60,6 +60,7 @@ async fn start(
         .improve_request
         .parse(raw)
         .map_err(|refusal| ApiError::refused(&refusal))?;
+    request.check().map_err(|why| ApiError::invalid(&why))?;
     let engine = &app.runtime.workflows;
     let known = match request.target {
         harness::Target::Agent => engine
@@ -79,14 +80,7 @@ async fn start(
             request.agent
         )));
     }
-    if request.target == harness::Target::Workflow
-        && !serde_json::from_str::<serde_json::Value>(&request.task)
-            .is_ok_and(|inputs| inputs.is_object())
-    {
-        return Err(ApiError::invalid(
-            "a workflow's task is the inputs to run it on, as a JSON object",
-        ));
-    }
+
     let id = JobId::generate();
     let job = Job {
         id,
@@ -203,16 +197,14 @@ pub struct HoldList {
     pub has_more: bool,
 }
 
-/// Holds an agent, or a workflow.
+/// Holds an agent, or a workflow with `?target=workflow`, as a release
+/// says it.
 #[derive(Debug, Clone, serde::Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct HoldRequest {
     /// Why, for whoever reads the hold later.
     #[schemars(length(min = 1, max = 2048))]
     pub reason: String,
-    /// What's held: an agent unless it says `workflow`.
-    #[serde(default, skip_serializing_if = "harness::Target::is_agent")]
-    pub target: harness::Target,
 }
 
 /// The `target` query parameter: an agent unless it says `workflow`.
@@ -369,9 +361,12 @@ async fn list_holds(
 async fn hold(
     State(app): State<App>,
     Path(agent): Path<String>,
+    Query(params): Params,
     headers: HeaderMap,
     body: Bytes,
 ) -> Result<Json<Hold>, ApiError> {
+    only(&params, &["target"])?;
+    let target = target_of(&params)?;
     let agent = agent_name(&agent)?;
     let raw = json_body(&headers, &body)?;
     let request: HoldRequest = app
@@ -380,7 +375,7 @@ async fn hold(
         .map_err(|refusal| ApiError::refused(&refusal))?;
     let held = app
         .runtime
-        .set_hold(agent, request.target, Some(request.reason))
+        .set_hold(agent, target, Some(request.reason))
         .await?;
     held.map(Json)
         .ok_or_else(|| ApiError::internal(&"the hold wasn't kept"))

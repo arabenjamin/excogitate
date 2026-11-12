@@ -40,12 +40,11 @@ impl Runtime {
         let mut swept = Swept::default();
         if let Some(days) = retention.trajectory_days {
             let before = now - TimeDelta::days(i64::from(days));
-            let batch = usize::try_from(BATCH).unwrap_or(usize::MAX);
             for _ in 0..MAX_BATCHES {
-                match self.sink.prune_runs(before, batch).await {
+                match self.sink.prune_runs(before, BATCH).await {
                     Ok(gone) => {
-                        swept.runs = swept.runs.saturating_add(gone as u64);
-                        if gone < batch {
+                        swept.runs = swept.runs.saturating_add(u64::from(gone));
+                        if gone < BATCH {
                             break;
                         }
                     }

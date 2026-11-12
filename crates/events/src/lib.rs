@@ -180,7 +180,7 @@ pub trait EventSink: Send + Sync + std::fmt::Debug {
     ///
     /// [`EventError`] if the sink fails; what it deleted before failing is
     /// gone whole, run by run.
-    async fn prune_runs(&self, before: DateTime<Utc>, limit: usize) -> Result<usize, EventError>;
+    async fn prune_runs(&self, before: DateTime<Utc>, limit: u32) -> Result<u32, EventError>;
 }
 
 /// A sink that keeps events in memory, for tests.
@@ -256,7 +256,7 @@ impl EventSink for MemorySink {
         Ok(RunPage { runs, has_more })
     }
 
-    async fn prune_runs(&self, before: DateTime<Utc>, limit: usize) -> Result<usize, EventError> {
+    async fn prune_runs(&self, before: DateTime<Utc>, limit: u32) -> Result<u32, EventError> {
         let mut all = self.0.lock().unwrap_or_else(PoisonError::into_inner);
         let mut first: std::collections::HashMap<RunId, DateTime<Utc>> =
             std::collections::HashMap::new();
@@ -272,10 +272,10 @@ impl EventSink for MemorySink {
             .map(|(run, at)| (at, run.to_string(), run))
             .collect();
         old.sort();
-        old.truncate(limit);
+        old.truncate(usize::try_from(limit).unwrap_or(usize::MAX));
         let gone: std::collections::HashSet<RunId> = old.iter().map(|(_, _, run)| *run).collect();
         all.retain(|event| !gone.contains(&event.run));
-        Ok(gone.len())
+        Ok(u32::try_from(gone.len()).unwrap_or(u32::MAX))
     }
 }
 

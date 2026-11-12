@@ -360,7 +360,7 @@ impl Loop<'_> {
         Some((summary, rendered))
     }
 
-    /// Runs one attempt on a workflow: `request.task` is the inputs.
+    /// Runs one attempt on a workflow, on `request.inputs`.
     pub(crate) async fn improve_workflow(&self, request: Request) -> Attempt {
         let mut attempt = Attempt::begun(request.clone());
         let name = &request.agent;
@@ -375,13 +375,11 @@ impl Loop<'_> {
                 return attempt.end(Status::Failed);
             }
         };
-        let inputs = match serde_json::from_str::<Value>(&request.task) {
-            Ok(inputs) if inputs.is_object() => inputs,
-            _ => {
-                attempt.problem("a workflow's task is the inputs to run it on, as a JSON object");
-                return attempt.end(Status::Failed);
-            }
+        let Some(inputs) = request.workflow_inputs() else {
+            attempt.problem("a workflow is improved on inputs to run it on, as an object");
+            return attempt.end(Status::Failed);
         };
+        let task = request.task_text();
         attempt.base_harness = Some(self.engine.workflow_harness(&workflow));
         let Some((probed, reference)) = self
             .probe_flow(name, &workflow, &inputs, "R", &mut attempt)
@@ -400,7 +398,7 @@ impl Loop<'_> {
             tools: &tools,
             skills: &[],
             guardrails: &[],
-            task: &request.task,
+            task: &task,
             why: request.why.as_deref(),
             lessons: &lessons,
         };

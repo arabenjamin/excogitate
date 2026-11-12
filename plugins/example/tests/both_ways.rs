@@ -280,9 +280,9 @@ async fn check_glossary(host: &PluginHost) {
     assert_eq!(first.id, "receipt");
     assert_eq!(first.data_class, DataClass::Public);
     let read = glossary.source.get("trajectory", context).await.unwrap();
-    assert_eq!(read.hits.len(), 1);
+    assert_eq!(read.item.map(|item| item.id).as_deref(), Some("trajectory"));
     let none = glossary.source.get("nothing", context).await.unwrap();
-    assert_eq!(none.hits.len(), 0);
+    assert_eq!(none.item, None);
 }
 
 #[tokio::test]

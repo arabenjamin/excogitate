@@ -16,7 +16,7 @@ mod tool;
 mod trajectory;
 
 pub use budget::{Budget, BudgetKind};
-pub use guardrail::{Deny, Guardrail, MAX_GUARDRAILS, check_guardrails, pattern};
+pub use guardrail::{ArgumentMatch, Guardrail, MAX_GUARDRAILS, check_guardrails, pattern};
 pub use plugin_api::{Effect, Tool, ToolContext, ToolDefinition, ToolFailure, ToolOutput};
 pub use receipt::{CallStatus, ModelEntry, Outcome, Receipt, RefusalKind, ToolEntry, Totals};
 pub use session::{

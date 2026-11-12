@@ -69,9 +69,15 @@ cargo run -p schema-gen -- --against /tmp/baseline/schemas/v1 --since v0.4.0
 - **The plugin process protocol:** `tool_call_context` is what a tool call
   carries in `_meta.context`, `capability_request` is the parameters of a
   `capabilities/call` request, and `capability_record`, `capability_page`,
-  `capability_http_response` and `capability_model_reply` are what comes
-  back. The host checks every capability request against
-  `capability_request`, bounds included, before it does anything.
+  `capability_http_response`, `capability_model_reply`,
+  `capability_job_started`, `capability_job_state` and
+  `capability_note_stored` are what comes back. The host checks every
+  capability request against `capability_request`, bounds included, before
+  it does anything. A plugin's sources are asked with `source_search` (the
+  parameters of `sources/search`, the call's context in `_meta`) and
+  `source_get` (of `sources/get`), and
+  answer with `source_found` and `source_got`; a source that couldn't do
+  what was asked answers with the JSON-RPC error code -32010.
 
 ## Validating a value
 

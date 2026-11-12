@@ -13,8 +13,8 @@ use memory::{
     Memory, MemoryError, NewNote, NoteOrigin, SourceMeter,
 };
 use plugin_api::{
-    CapabilityUse, MAX_ITEM_TEXT, PluginCapability, Source, SourceFound, SourceItem, SourceQuery,
-    ToolContext, ToolFailure,
+    CapabilityUse, MAX_ITEM_TEXT, PluginCapability, Source, SourceFound, SourceGot, SourceItem,
+    SourceQuery, ToolContext, ToolFailure,
 };
 use protocol::{Actor, DataClass, RunId, Trust};
 use store::ClassFilter;
@@ -65,9 +65,9 @@ impl Source for Lake {
         }
     }
 
-    async fn get(&self, id: &str, _: ToolContext) -> Result<SourceFound, ToolFailure> {
-        let found = self.hits.iter().filter(|item| item.id == id).cloned();
-        Ok(SourceFound::new(found.collect()).with_cost(self.cost))
+    async fn get(&self, id: &str, _: ToolContext) -> Result<SourceGot, ToolFailure> {
+        let found = self.hits.iter().find(|item| item.id == id).cloned();
+        Ok(SourceGot::new(found).with_cost(self.cost))
     }
 }
 
@@ -461,8 +461,8 @@ impl Source for Spender {
         Ok(SourceFound::new(vec![item(self.name, "cats")]))
     }
 
-    async fn get(&self, _: &str, _: ToolContext) -> Result<SourceFound, ToolFailure> {
-        Ok(SourceFound::default())
+    async fn get(&self, _: &str, _: ToolContext) -> Result<SourceGot, ToolFailure> {
+        Ok(SourceGot::default())
     }
 }
 

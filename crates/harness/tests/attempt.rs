@@ -142,6 +142,7 @@ async fn attempt(setup: &Setup) -> Attempt {
             agent: "helper".to_owned(),
             target: harness::Target::Agent,
             task: TASK.to_owned(),
+            inputs: None,
             why: Some("It gave up without looking.".to_owned()),
         })
         .await
@@ -359,6 +360,7 @@ async fn an_agent_that_doesnt_exist_fails_and_says_so() {
             agent: "ghost".to_owned(),
             target: harness::Target::Agent,
             task: TASK.to_owned(),
+            inputs: None,
             why: None,
         })
         .await;
@@ -392,6 +394,7 @@ async fn the_record_type_registers_and_an_attempt_meets_it() {
             agent: "ghost".to_owned(),
             target: harness::Target::Agent,
             task: TASK.to_owned(),
+            inputs: None,
             why: None,
         })
         .await;
@@ -854,7 +857,10 @@ async fn a_workflows_merge_combines_the_step_edits_and_is_judged_on_its_own() {
     let attempt = looped
         .improve(Request {
             agent: "ask".to_owned(),
-            task: r#"{"q":"six times seven"}"#.to_owned(),
+            task: String::new(),
+            inputs: serde_json::json!({ "q": "six times seven" })
+                .as_object()
+                .cloned(),
             target: harness::Target::Workflow,
             why: None,
         })

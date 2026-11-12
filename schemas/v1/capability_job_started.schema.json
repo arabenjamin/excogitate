@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "A started run, on the wire.",
+  "properties": {
+    "already_existed": {
+      "type": "boolean"
+    },
+    "job_id": {
+      "format": "uuid",
+      "type": "string"
+    }
+  },
+  "required": [
+    "job_id",
+    "already_existed"
+  ],
+  "title": "WireJobStarted",
+  "type": "object"
+}

@@ -28,6 +28,9 @@ pub const REFUSED_CODE: i64 = -32001;
 pub const NOT_GRANTED_CODE: i64 = -32002;
 /// The host couldn't do it.
 pub const FAILED_CODE: i64 = -32003;
+/// The JSON-RPC error code for a source that couldn't do what was asked, in
+/// reply to `sources/search` or `sources/get`.
+pub const SOURCE_FAILED_CODE: i64 = -32010;
 
 /// The longest type, relation, field or actor name on the wire.
 pub const NAME: usize = 128;
@@ -733,9 +736,18 @@ pub const SOURCE_SEARCH_METHOD: &str = "sources/search";
 /// The JSON-RPC method the host reads one item of a process's source with.
 pub const SOURCE_GET_METHOD: &str = "sources/get";
 
-/// A search of one source, as the host sends it. The call's context travels
-/// in `_meta`, as a tool call's does.
+/// The `_meta` a request to a source carries: the call's context, as a
+/// tool call's does.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct WireSourceMeta {
+    /// The call's context.
+    pub context: WireContext,
+}
+
+/// A search of one source, as the host sends it.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 #[allow(missing_docs, reason = "the fields are SourceQuery's")]
 pub struct WireSourceSearch {
     /// The source's name.
@@ -748,10 +760,14 @@ pub struct WireSourceSearch {
     pub vector: Option<Vec<f32>>,
     #[schemars(range(min = 1, max = crate::MAX_SOURCE_HITS))]
     pub limit: u32,
+    /// The call's context.
+    #[serde(rename = "_meta", default, skip_serializing_if = "Option::is_none")]
+    pub meta: Option<WireSourceMeta>,
 }
 
 /// A read of one item of a source, as the host sends it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct WireSourceGet {
     /// The source's name.
     #[schemars(length(max = 32))]
@@ -759,23 +775,33 @@ pub struct WireSourceGet {
     /// The item's id.
     #[schemars(length(max = crate::MAX_ITEM_ID))]
     pub id: String,
+    /// The call's context.
+    #[serde(rename = "_meta", default, skip_serializing_if = "Option::is_none")]
+    pub meta: Option<WireSourceMeta>,
 }
 
-/// One item of a source, on the wire.
+/// One item of a source, on the wire. The bounds are what the host keeps:
+/// a longer title or text is cut, and a longer id or URL is left out.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 #[allow(missing_docs, reason = "the fields are SourceItem's")]
 pub struct WireSourceItem {
+    #[schemars(length(min = 1, max = crate::MAX_ITEM_ID))]
     pub id: String,
+    #[schemars(length(max = crate::MAX_ITEM_TITLE))]
     pub title: String,
+    #[schemars(length(max = crate::MAX_ITEM_TEXT))]
     pub text: String,
     /// True if the source says the item is public.
     #[serde(default)]
     pub public: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(length(max = crate::MAX_ITEM_URL))]
     pub source_url: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub updated_at: Option<DateTime<Utc>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(range(min = -1.0, max = 1.0))]
     pub similarity: Option<f32>,
 }
 
@@ -808,12 +834,24 @@ impl From<WireSourceItem> for crate::SourceItem {
     }
 }
 
-/// What a search of a source found, or the one item read, on the wire.
+/// What a search of a source found, on the wire.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 #[allow(missing_docs, reason = "the fields are SourceFound's")]
 pub struct WireSourceFound {
     #[schemars(length(max = crate::MAX_SOURCE_HITS))]
     pub hits: Vec<WireSourceItem>,
+    #[serde(default)]
+    pub cost_usd_micros: u64,
+}
+
+/// The one item read, or none, on the wire.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+#[allow(missing_docs, reason = "the fields are SourceGot's")]
+pub struct WireSourceGot {
+    #[serde(default)]
+    pub item: Option<WireSourceItem>,
     #[serde(default)]
     pub cost_usd_micros: u64,
 }

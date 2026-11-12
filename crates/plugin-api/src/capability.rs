@@ -83,11 +83,13 @@ impl RecordLink {
     }
 }
 
-/// Refuses a batch over [`MAX_BATCH`].
+/// Refuses a batch over [`MAX_BATCH`]. The runtime's own check, shared with
+/// the trait's defaults; not part of the plugin contract.
 ///
 /// # Errors
 ///
 /// [`CapabilityError::Refused`] if it's too big.
+#[doc(hidden)]
 pub fn check_batch(len: usize) -> Result<(), CapabilityError> {
     if len > MAX_BATCH {
         return Err(CapabilityError::Refused(format!(

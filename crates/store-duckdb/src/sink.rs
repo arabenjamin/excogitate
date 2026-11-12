@@ -287,8 +287,8 @@ impl EventSink for DuckDbSink {
         .map_err(sink_error)?
     }
 
-    async fn prune_runs(&self, before: DateTime<Utc>, limit: usize) -> Result<usize, EventError> {
-        let limit = i64::try_from(limit).map_err(sink_error)?;
+    async fn prune_runs(&self, before: DateTime<Utc>, limit: u32) -> Result<u32, EventError> {
+        let limit = i64::from(limit);
         let inner = Arc::clone(&self.0);
         tokio::task::spawn_blocking(move || {
             prune(
@@ -304,7 +304,7 @@ impl EventSink for DuckDbSink {
 
 /// Deletes the oldest whole runs started before `before`: their events and
 /// index rows in one transaction, so no run is left in part.
-fn prune(inner: &mut Inner, before: DateTime<Utc>, limit: i64) -> Result<usize, EventError> {
+fn prune(inner: &mut Inner, before: DateTime<Utc>, limit: i64) -> Result<u32, EventError> {
     let transaction = inner.connection.transaction().map_err(sink_error)?;
     let runs: Vec<String> = {
         let mut statement = transaction
@@ -328,7 +328,7 @@ fn prune(inner: &mut Inner, before: DateTime<Utc>, limit: i64) -> Result<usize, 
             .map_err(sink_error)?;
     }
     transaction.commit().map_err(sink_error)?;
-    Ok(runs.len())
+    Ok(u32::try_from(runs.len()).unwrap_or(u32::MAX))
 }
 
 #[cfg(test)]

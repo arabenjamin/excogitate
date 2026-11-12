@@ -27,29 +27,16 @@ pub fn pattern(text: &str) -> Result<Regex, String> {
         .map_err(|error| schema::bounded(&format!("the pattern {text:?}: {error}")))
 }
 
-/// A call refused for what one of its arguments says.
+/// What one of a call's arguments says, as a guardrail's `deny` refuses it
+/// or its `action` picks the calls it's about.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
-pub struct Deny {
+pub struct ArgumentMatch {
     /// The argument, as a dotted path such as `operation` or `filter.kind`.
     #[schemars(length(min = 1, max = 128))]
     pub argument: String,
-    /// A pattern that ignores case. A call whose argument matches is
-    /// refused. A string is matched as it is, anything else as JSON, and a
-    /// call without the argument is let through.
-    #[schemars(length(min = 1, max = 256))]
-    pub matches: String,
-}
-
-/// The calls a guardrail is about, by what one of their arguments says.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct Action {
-    /// The argument, as a dotted path such as `operation`.
-    #[schemars(length(min = 1, max = 128))]
-    pub argument: String,
-    /// A pattern that ignores case, matched as `deny` matches. Only a call
-    /// whose argument matches counts, and a call without it doesn't.
+    /// A pattern that ignores case. A string is matched as it is, anything
+    /// else as JSON. A call without the argument doesn't match.
     #[schemars(length(min = 1, max = 256))]
     pub matches: String,
 }
@@ -69,10 +56,10 @@ pub struct Guardrail {
     pub because: String,
     /// The calls of the tool its rules are about. Left out, all of them.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub action: Option<Action>,
+    pub action: Option<ArgumentMatch>,
     /// Refuses a call whose argument matches.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub deny: Option<Deny>,
+    pub deny: Option<ArgumentMatch>,
     /// Refuses the agent's calls past this many.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(range(min = 1, max = 1000))]

@@ -1,0 +1,100 @@
+{
+  "$defs": {
+    "WireContext": {
+      "additionalProperties": false,
+      "description": "The context a tool call carries to a plugin process, in `_meta`.",
+      "properties": {
+        "budget_usd_micros": {
+          "description": "What's left of the run's budget.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "call": {
+          "description": "The host's token for this tool call. A capability call made for it\nmust carry it back, and it's good only while the call runs.",
+          "format": "uuid",
+          "type": "string"
+        },
+        "public": {
+          "description": "`true` if the run's data is public.",
+          "type": "boolean"
+        },
+        "run": {
+          "description": "The run.",
+          "format": "uuid",
+          "type": "string"
+        }
+      },
+      "required": [
+        "run",
+        "public",
+        "budget_usd_micros",
+        "call"
+      ],
+      "type": "object"
+    },
+    "WireSourceMeta": {
+      "additionalProperties": false,
+      "description": "The `_meta` a request to a source carries: the call's context, as a\ntool call's does.",
+      "properties": {
+        "context": {
+          "$ref": "#/$defs/WireContext",
+          "description": "The call's context."
+        }
+      },
+      "required": [
+        "context"
+      ],
+      "type": "object"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "A search of one source, as the host sends it.",
+  "properties": {
+    "_meta": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/WireSourceMeta"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "The call's context."
+    },
+    "limit": {
+      "format": "uint32",
+      "maximum": 50,
+      "minimum": 1,
+      "type": "integer"
+    },
+    "source": {
+      "description": "The source's name.",
+      "maxLength": 32,
+      "type": "string"
+    },
+    "text": {
+      "maxLength": 1024,
+      "type": "string"
+    },
+    "vector": {
+      "items": {
+        "format": "float",
+        "type": "number"
+      },
+      "maxItems": 65536,
+      "type": [
+        "array",
+        "null"
+      ]
+    }
+  },
+  "required": [
+    "source",
+    "text",
+    "limit"
+  ],
+  "title": "WireSourceSearch",
+  "type": "object"
+}

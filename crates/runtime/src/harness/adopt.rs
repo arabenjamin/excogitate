@@ -523,7 +523,10 @@ impl Runtime {
             target,
             change_id: change_id.to_string(),
             at: now,
-            situation: harness::situation(&attempt.request.task, attempt.request.why.as_deref()),
+            situation: harness::situation(
+                &attempt.request.task_text(),
+                attempt.request.why.as_deref(),
+            ),
             lesson: change.summary.clone(),
             evidence: change.evidence.clone(),
             status: LessonStatus::Active,

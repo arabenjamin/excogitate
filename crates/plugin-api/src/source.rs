@@ -159,6 +159,34 @@ impl SourceFound {
     }
 }
 
+/// One item read whole, or none, and what reading it cost.
+#[derive(Debug, Clone, PartialEq, Default)]
+#[non_exhaustive]
+pub struct SourceGot {
+    /// The item, with the id asked for, or `None` if there's no such item.
+    pub item: Option<SourceItem>,
+    /// What reading it cost, in millionths of a dollar.
+    pub cost_usd_micros: u64,
+}
+
+impl SourceGot {
+    /// This item, or none, which cost nothing.
+    #[must_use]
+    pub const fn new(item: Option<SourceItem>) -> Self {
+        Self {
+            item,
+            cost_usd_micros: 0,
+        }
+    }
+
+    /// The same, with what reading it cost.
+    #[must_use]
+    pub const fn with_cost(mut self, cost_usd_micros: u64) -> Self {
+        self.cost_usd_micros = cost_usd_micros;
+        self
+    }
+}
+
 /// Something memory reads, offered by a plugin and declared in its
 /// manifest's `sources`.
 #[async_trait]
@@ -179,11 +207,11 @@ pub trait Source: Send + Sync + std::fmt::Debug {
         context: ToolContext,
     ) -> Result<SourceFound, ToolFailure>;
 
-    /// One item, whole: `hits` holds it, or nothing if there's no such
-    /// item, with what reading it cost.
+    /// One item, whole, or `None` if there's no such item, with what
+    /// reading it cost. An item whose id isn't `id` is taken as none.
     ///
     /// # Errors
     ///
     /// [`ToolFailure`] if it couldn't read it.
-    async fn get(&self, id: &str, context: ToolContext) -> Result<SourceFound, ToolFailure>;
+    async fn get(&self, id: &str, context: ToolContext) -> Result<SourceGot, ToolFailure>;
 }

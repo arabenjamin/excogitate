@@ -1,0 +1,38 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "What storing a note did, on the wire.",
+  "properties": {
+    "chunks": {
+      "format": "uint32",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "cost_usd_micros": {
+      "format": "uint64",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "created": {
+      "type": "boolean"
+    },
+    "id": {
+      "format": "uuid",
+      "type": "string"
+    },
+    "unembedded_chunks": {
+      "format": "uint32",
+      "minimum": 0,
+      "type": "integer"
+    }
+  },
+  "required": [
+    "id",
+    "created",
+    "chunks",
+    "unembedded_chunks",
+    "cost_usd_micros"
+  ],
+  "title": "WireNoteStored",
+  "type": "object"
+}

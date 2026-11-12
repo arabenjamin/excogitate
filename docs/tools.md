@@ -20,9 +20,10 @@ hit reports its `similarity`.
 A search also reads the sources plugins offer. Their items come back under
 `sources`, ranked with the notes, so `score` compares across both; each says
 which source it's from and its `id` there. `sources_skipped` names any source
-that failed or ran out of time. `open` reads one item whole, given its
-`source` and `item`. Items from a source are always untrusted, and a result
-holding one is too.
+left out because it failed, ran out of time or couldn't be searched by this
+query. `open` reads one item whole, given its `source` and `item`, and
+answers with `result: item`, its text marked `truncated` if it was cut.
+Items from a source are always untrusted, and a result holding one is too.
 
 | Excogitate sets | To |
 |---|---|

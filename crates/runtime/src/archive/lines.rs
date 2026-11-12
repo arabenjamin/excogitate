@@ -494,8 +494,8 @@ pub const KINDS: [DefinitionKind; 3] = [
 pub struct DefinitionLine {
     /// What it defines.
     pub kind: Kind,
-    /// Its name.
-    #[schemars(length(max = 256))]
+    /// Its name, which is also its file's.
+    #[schemars(length(min = 1, max = 64), regex(pattern = r"^[a-z0-9_-]{1,64}$"))]
     pub name: String,
     /// The definition.
     #[schemars(extend("x-extension" = "checked against its kind's schema when it's loaded"))]

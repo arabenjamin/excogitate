@@ -122,7 +122,9 @@ async fn memory_finds_and_opens_what_a_plugins_source_holds() {
     )
     .await;
     assert_eq!(opened["isError"], false, "{opened}");
-    let whole = &opened["structuredContent"]["result"]["sources"][0];
+    let whole = &opened["structuredContent"]["result"];
+    assert_eq!(whole["result"], "item", "{whole}");
+    assert_eq!(whole["source"], "example.glossary");
     assert!(
         whole["text"].as_str().unwrap().starts_with("Every step"),
         "{whole}"

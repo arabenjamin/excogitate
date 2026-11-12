@@ -907,8 +907,8 @@ impl EventSink for BrokenSink {
     async fn prune_runs(
         &self,
         _: chrono::DateTime<chrono::Utc>,
-        _: usize,
-    ) -> Result<usize, EventError> {
+        _: u32,
+    ) -> Result<u32, EventError> {
         Err(EventError("disk full".to_owned()))
     }
 }

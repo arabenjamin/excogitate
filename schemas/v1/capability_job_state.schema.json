@@ -1,0 +1,42 @@
+{
+  "$defs": {
+    "WireJobPhase": {
+      "description": "Where a job stands, on the wire.",
+      "enum": [
+        "queued",
+        "running",
+        "succeeded",
+        "dead"
+      ],
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "A job's state, on the wire.",
+  "properties": {
+    "job_id": {
+      "format": "uuid",
+      "type": "string"
+    },
+    "last_error": {
+      "maxLength": 4096,
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "phase": {
+      "$ref": "#/$defs/WireJobPhase"
+    },
+    "result": {
+      "x-extension": "what the workflow run produced"
+    }
+  },
+  "required": [
+    "job_id",
+    "phase"
+  ],
+  "title": "WireJobState",
+  "type": "object"
+}
