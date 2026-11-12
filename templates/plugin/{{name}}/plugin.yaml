@@ -1,0 +1,58 @@
+{%- set caps = capabilities | split(pat=",") -%}
+{%- if tools %}{% set tool_list = tools | split(pat=",") %}{% else %}{% set tool_list = [] %}{% endif -%}
+{%- if records %}{% set record_list = records | split(pat=",") %}{% else %}{% set record_list = [] %}{% endif -%}
+# {{ name }}: its manifest, which both ways of running use. Every schema is
+# strict: objects close with additionalProperties: false, strings have a
+# maxLength, arrays a maxItems.
+api_version: 1
+name: {{ name }}
+version: 0.1.0
+description: "{{ description }}"
+
+capabilities: [{{ capabilities | replace(from=",", to=", ") }}]
+{%- if "sources" in caps %}
+
+# What memory reads beside its own notes.
+sources:
+  - name: {{ name }}
+    description: "TODO: what it holds, for whoever chooses an agent's sources."
+    public: false
+    words: true
+{%- endif %}
+{%- if record_list %}
+
+records:
+  types:
+{%- for record in record_list %}
+    - name: {{ name }}.{{ record }}
+      schema:
+        type: object
+        additionalProperties: false
+        required: [name]
+        properties:
+          name: { type: string, maxLength: 256 }
+      filterable:
+        - { name: name, kind: text }
+{%- endfor %}
+  relations: []
+{%- endif %}
+{%- if tool_list %}
+
+tools:
+{%- for tool in tool_list %}
+  - name: {{ name }}_{{ tool }}
+    description: "TODO: what {{ name }}_{{ tool }} does, for the model."
+    effect: read
+    input_schema:
+      type: object
+      additionalProperties: false
+      properties: {}
+    output_schema:
+      type: object
+      additionalProperties: false
+      properties: {}
+{%- endfor %}
+{%- else %}
+
+tools: []
+{%- endif %}

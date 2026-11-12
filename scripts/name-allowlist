@@ -23,3 +23,5 @@ tests/done/*
 scripts/done_test.sh
 scripts/name-allowlist
 scripts/check_name.sh
+templates/plugin/**
+scripts/plugin_template.sh

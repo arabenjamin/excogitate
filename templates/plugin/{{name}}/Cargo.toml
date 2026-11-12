@@ -1,0 +1,65 @@
+{%- set caps = capabilities | split(pat=",") -%}
+[package]
+name = "plugin-{{ name }}"
+description = "{{ description }}"
+{%- if crates == "path" %}
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+{%- else %}
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.99.1"
+{%- endif %}
+publish = false
+
+# The same plugin as its own process (src/main.rs).
+[[bin]]
+name = "{{ name }}-service"
+path = "src/main.rs"
+
+[dependencies]
+{%- if crates == "path" %}
+async-trait.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+{%- else %}
+async-trait = "0.1"
+serde_json = "1"
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+{%- endif %}
+{%- for crate in ["plugin-api"] %}
+{% if crates == "path" %}{{ crate }} = { path = "../../crates/{{ crate }}" }{% elif crates == "workspace" %}{{ crate }}.workspace = true{% else %}{{ crate }} = { git = "https://github.com/arabenjamin/excogitate", tag = "{{ crates }}" }{% endif %}
+{%- endfor %}
+
+# The test runs the plugin through the real host and dispatcher.
+[dev-dependencies]
+{%- if "http" in caps or "model" in caps or "memory" in caps or "jobs" in caps %}
+{% if crates == "path" %}uuid.workspace = true{% else %}uuid = "1"{% endif %}
+{%- endif %}
+{%- for crate in ["dispatch", "events", "model", "plugin-host", "store", "store-memory"] %}
+{% if crates == "path" %}{{ crate }} = { path = "../../crates/{{ crate }}" }{% elif crates == "workspace" %}{{ crate }}.workspace = true{% else %}{{ crate }} = { git = "https://github.com/arabenjamin/excogitate", tag = "{{ crates }}" }{% endif %}
+{%- endfor %}
+{%- if crates == "path" %}
+
+[lints]
+workspace = true
+{%- elif crates == "workspace" %}
+
+[lints]
+workspace = true
+{%- else %}
+
+# The runtime's own lints.
+[lints.rust]
+missing_docs = "deny"
+missing_debug_implementations = "deny"
+unsafe_code = "forbid"
+
+[lints.clippy]
+pedantic = { level = "warn", priority = -1 }
+unwrap_used = "deny"
+expect_used = "deny"
+{%- endif %}

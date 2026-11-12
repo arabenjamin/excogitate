@@ -34,7 +34,12 @@ mod tests {
 
     #[test]
     fn plugins_are_compiled_in_only_by_feature() {
-        let expected = usize::from(cfg!(feature = "plugin-example"));
+        #[allow(unused_mut, reason = "one block per plugin feature")]
+        let mut expected = 0;
+        #[cfg(feature = "plugin-example")]
+        {
+            expected += 1;
+        }
         assert_eq!(compiled_plugins().len(), expected);
     }
 }
