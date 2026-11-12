@@ -4,11 +4,16 @@
 //! Strict means unknown keys are refused and every string and array has a
 //! maximum. A place that really is open says so with [`EXTENSION_KEY`], and
 //! the check then stops at that place.
+//!
+//! [`breaking_changes`] says whether a changed schema breaks what was built
+//! against the old one, which CI checks against the last release.
 
+mod compat;
 mod strict;
 mod validate;
 mod yaml;
 
+pub use compat::{Break, Role, breaking_changes};
 pub use strict::{EXTENSION_KEY, Violation, check_strict, for_model};
 pub use validate::{InvalidSchema, Problem, Refusal, Validator, bounded};
 pub use yaml::{YamlError, parse_yaml};

@@ -61,6 +61,11 @@ checks, which don't belong in the repo, go in an executable
   `scripts/name-allowlist` lists (the binary, the image, the env prefix, the
   docs). `scripts/check_name.sh` fails anywhere else, which keeps a rename
   a small scripted change. Inside code, say "the runtime" or use `crate::`.
+- **Compatibility with the last release:** `cargo semver-checks` on
+  `plugin-api`, and `schema-gen --against` on the schemas in `schemas/v1`,
+  both against the newest `v*` tag. A break passes only when the version in
+  `Cargo.toml` is past the tag's (the minor before 1.0), and the commit
+  marks it with `!`. See `docs/schemas.md` for what counts as a break.
 
 ## Reviewing a public API
 
