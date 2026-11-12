@@ -113,8 +113,9 @@ input and output, and narrow capabilities granted by name. It can also offer
 memory a source to read beside its own notes, such as a data lake. Plugins live in
 your own repo: run one as its own process on the stock image, listed in
 `plugins.yaml`, or compile them into a small binary of your own. Either way,
-nothing in Excogitate changes. Start by copying [`plugins/example`](plugins/example), and
-see [the guide](docs/plugins.md).
+nothing in Excogitate changes. Start one with `scripts/plugin_template.sh new`, which
+stamps a plugin that already meets the contract and passes its tests; see
+[the guide](docs/plugins.md) and the worked [`plugins/example`](plugins/example).
 
 ## Getting help, contributing, security
 

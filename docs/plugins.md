@@ -1,8 +1,47 @@
 # Writing a plugin
 
 Excogitate has opinions on how a plugin is built and none on what it does.
-Copy `plugins/example` to start. Its tests run it both ways, through the real
-host and dispatcher.
+Start one from the template (below): it stamps a plugin that already meets
+the contract, with a test that runs it through the real host and
+dispatcher. `plugins/example` is a worked one, written by hand: a source,
+records, and tests that run it both ways.
+
+## Starting from the template
+
+`templates/plugin` is a [kickstart](https://github.com/Keats/kickstart)
+template, and `scripts/plugin_template.sh` drives it. It needs git and
+kickstart 0.6.0 (`cargo install --locked kickstart@0.6.0 --features cli`).
+
+```bash
+# In your own repo, on a release's crates (this checkout's version unless --crates says):
+scripts/plugin_template.sh new media --description "Watches channels and feeds." \
+  --capabilities records,http --tools watch_add,watch_list --records watch \
+  --out ../my-instance/plugins --crates workspace
+```
+
+- **What you answer:** the name, one sentence, the capabilities it asks for
+  (`records`, `http`, `model`, `memory`, `jobs`, `sources`), its tools and
+  its record types (each without the name's prefix), and where the
+  runtime's crates come from: `workspace` (your workspace declares them) or
+  a release tag such as `v0.6.0`.
+- **What you get:** `plugin.yaml` with strict schema stubs; `src/lib.rs` with
+  the plugin, a stub for each tool holding only the capabilities it was
+  granted, and a source stub if it asked for `sources`; `src/main.rs`, the
+  same plugin as its own process; and `tests/<name>.rs`, which installs it
+  through the host, calls each tool, and checks it won't install without
+  its grant. It formats, lints clean under the runtime's lints, and passes
+  its tests before you write a line.
+- **`.template.json`** records the answers and which version of the
+  template made it (the git tree of `templates/plugin`).
+  `scripts/plugin_template.sh update <plugin dir>`, run from a checkout of
+  a later release, brings the template's changes in three-way per file: your
+  edits are kept, and a conflict is marked in the file. Your `README.md` is
+  never touched.
+- **In this repo** (`new` without `--out`), the plugin is also compiled
+  into the app behind a `plugin-<name>` feature, then formatted, linted and
+  tested. CI runs `check` (every plugin here is on the current template)
+  and `selftest` (the template, rendered with every option and with the
+  sparse ones, lints clean and passes its tests).
 
 ## The manifest
 
@@ -172,7 +211,8 @@ process protocol's schemas (see `docs/schemas.md`).
 ## Two ways to run
 
 **Compiled into your own binary.** Plugins live in your own repo, not this
-one; this repo keeps only the example. Your repo has a small binary crate
+one; this repo keeps only the example. Stamp yours there with the template
+(`--out`). Your repo has a small binary crate
 that depends on Excogitate's crates at a release tag and lists your plugins:
 
 ```toml

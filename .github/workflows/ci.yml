@@ -46,6 +46,8 @@ jobs:
               - 'definitions/**'
               - 'eval/**'
               - 'scripts/fetch_duckdb_extensions.sh'
+              - 'scripts/plugin_template.sh'
+              - 'templates/**'
               - 'Cargo.toml'
               - 'Cargo.lock'
               - 'rust-toolchain.toml'
@@ -168,6 +170,25 @@ jobs:
       # the world.
       - run: cargo hack check --locked --workspace --each-feature
 
+  template:
+    name: The plugin template
+    needs: changes
+    if: needs.changes.outputs.rust == 'true'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - run: rustup toolchain install
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          shared-key: dev
+          save-if: false
+      - name: kickstart
+        run: cargo install --locked kickstart@0.6.0 --features cli
+      - name: Every plugin here is on the template as it is
+        run: scripts/plugin_template.sh check
+      - name: The template renders plugins that lint clean and pass their tests
+        run: scripts/plugin_template.sh selftest
+
   compat:
     name: Compatible with the last release
     needs: changes
@@ -206,7 +227,7 @@ jobs:
     # The one required check. It passes when every job passed or was skipped
     # by the path filter, and fails when any failed or was cancelled.
     if: always()
-    needs: [changes, quick, clippy, test, docs, features, compat]
+    needs: [changes, quick, clippy, test, docs, features, template, compat]
     runs-on: ubuntu-24.04
     steps:
       - name: Every job passed or was skipped

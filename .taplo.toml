@@ -1,4 +1,7 @@
 # taplo: TOML formatting, checked in CI with `taplo fmt --check`.
+# The plugin template's files are Tera templates, not TOML yet.
+exclude = ["templates/**"]
+
 [formatting]
 align_entries = false
 array_auto_collapse = false

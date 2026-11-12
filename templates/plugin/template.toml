@@ -1,0 +1,49 @@
+# The plugin template. scripts/plugin_template.sh renders it with kickstart
+# 0.6.0 and records which version of it made a plugin in that plugin's
+# .template.json, so `update` can bring later template changes in. Files
+# under {{name}}/ are Tera templates. Answers are data, never evaluated as
+# templates; each one's rule is its `validation` below.
+name = "plugin"
+description = "A plugin: its manifest, a crate on plugin-api that runs compiled in or as its own process, and a test through the real host."
+kickstart_version = 1
+
+[[variables]]
+name = "name"
+default = "demo"
+prompt = "Plugin name: lowercase letters and digits, starting with a letter. It prefixes its tools and record types."
+validation = "^[a-z][a-z0-9]{0,31}$"
+
+# One line for plugin.yaml's double-quoted string: no ", \ or newline.
+[[variables]]
+name = "description"
+default = "What the plugin does, in one sentence."
+prompt = "What it does, in one sentence"
+validation = '^[^"\\\n]{1,300}$'
+
+[[variables]]
+name = "capabilities"
+default = "records"
+prompt = "What it asks the runtime for, comma-separated: records, http, model, memory, jobs, sources (or nothing)"
+validation = "^((records|http|model|memory|jobs|sources)(,(records|http|model|memory|jobs|sources))*)?$"
+
+# Each becomes <name>_<tool>.
+[[variables]]
+name = "tools"
+default = "lookup"
+prompt = "Its tools, without the plugin's prefix, comma-separated (or nothing)"
+validation = "^([a-z][a-z0-9_]{0,30}(,[a-z][a-z0-9_]{0,30})*)?$"
+
+# Each becomes <name>.<type>; needs the records capability.
+[[variables]]
+name = "records"
+default = ""
+prompt = "Its record types, without the plugin's prefix, comma-separated (or nothing)"
+validation = "^([a-z][a-z0-9_]{0,30}(,[a-z][a-z0-9_]{0,30})*)?$"
+
+# How it depends on the runtime's crates: `path` inside this repo,
+# `workspace` in a workspace that declares them, or a release tag.
+[[variables]]
+name = "crates"
+default = "path"
+prompt = "Where the runtime's crates come from: path, workspace, or a release tag such as v0.6.0"
+validation = '^(path|workspace|v[0-9]+\.[0-9]+\.[0-9]+)$'
