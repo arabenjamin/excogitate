@@ -90,6 +90,46 @@
         }
       ]
     },
+    "ItemReport": {
+      "additionalProperties": false,
+      "description": "One item's run, in a step run once per item.",
+      "properties": {
+        "detail": {
+          "description": "Why it failed.",
+          "maxLength": 1024,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "index": {
+          "description": "Its place in the list, from 0.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "receipt": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Receipt"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "What its run did."
+        },
+        "status": {
+          "$ref": "#/$defs/StepStatus",
+          "description": "Where it ended up."
+        }
+      },
+      "required": [
+        "index",
+        "status"
+      ],
+      "type": "object"
+    },
     "ModelEntry": {
       "additionalProperties": false,
       "description": "One model call, as it really went.",
@@ -318,6 +358,14 @@
           "maxLength": 64,
           "type": "string"
         },
+        "items": {
+          "description": "For a step run once per item: each item's run, in order. Empty for\na step that ran once.",
+          "items": {
+            "$ref": "#/$defs/ItemReport"
+          },
+          "maxItems": 50,
+          "type": "array"
+        },
         "receipt": {
           "anyOf": [
             {
@@ -327,7 +375,7 @@
               "type": "null"
             }
           ],
-          "description": "What the step actually did."
+          "description": "What the step actually did. A step run once per item has one per\nitem instead, in `items`."
         },
         "status": {
           "$ref": "#/$defs/StepStatus",
@@ -336,7 +384,8 @@
       },
       "required": [
         "id",
-        "status"
+        "status",
+        "items"
       ],
       "type": "object"
     },

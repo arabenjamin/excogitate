@@ -643,3 +643,203 @@ async fn a_harness_id_follows_the_agent_not_the_run() {
         engine.agent_harness(&described)
     );
 }
+
+/// Fails on the text "bad", and echoes anything else.
+#[derive(Debug)]
+struct Picky;
+
+#[async_trait]
+impl Tool for Picky {
+    fn definition(&self) -> ToolDefinition {
+        ToolDefinition::new(
+            "picky".to_owned(),
+            "fails on bad".to_owned(),
+            open_object(),
+            open_object(),
+            Effect::Read,
+        )
+    }
+
+    async fn run(&self, arguments: Value, _: ToolContext) -> Result<ToolOutput, ToolFailure> {
+        let text = arguments["text"].as_str().unwrap_or_default().to_owned();
+        if text == "bad" {
+            return Err(ToolFailure::new("that one was bad".to_owned()));
+        }
+        Ok(ToolOutput::new(json!({ "text": text }), Trust::Untrusted).with_cost(5))
+    }
+}
+
+fn list_inputs() -> Value {
+    json!({
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["links"],
+        "properties": { "links": { "type": "array", "maxItems": 10,
+                                   "items": { "type": "string", "maxLength": 10 } } }
+    })
+}
+
+fn per_link(tool: &str, max_items: u32, continue_on_failure: bool) -> Value {
+    json!({
+        "type": "tool", "id": "read", "tool": tool, "arguments": { "text": "{{item}}" },
+        "for_each": { "items": "{{inputs.links}}", "max_items": max_items,
+                      "continue_on_failure": continue_on_failure }
+    })
+}
+
+async fn picky_harness() -> Harness {
+    let log = Arc::new(Recorder::default());
+    let mut harness = harness(vec![], vec![], log).await;
+    let mut registry = ToolRegistry::new();
+    registry.register(Arc::new(Picky)).unwrap();
+    harness.engine.registry = Arc::new(registry);
+    harness
+}
+
+#[tokio::test]
+async fn a_step_runs_once_per_item_and_says_where_it_cut() {
+    let log = Arc::new(Recorder::default());
+    let fake = tool("fake", Ok(json!({ "text": "read" })), 10, &log);
+    let harness = harness(vec![], vec![fake], log).await;
+    let steps = json!([
+        per_link("fake", 2, false),
+        tool_step(
+            "count",
+            "fake",
+            &json!({ "count": "{{steps.read.fan_out.ran}}" })
+        ),
+    ]);
+    let output = "{{steps.read.result}} cut={{steps.read.fan_out.cut}}";
+    define(
+        &harness,
+        steps,
+        json!({ "inputs": list_inputs(), "max_usd_micros": 100, "output": output }),
+    )
+    .await;
+
+    let run = harness
+        .engine
+        .run("flow", json!({ "links": ["a", "b", "c"] }))
+        .await
+        .unwrap();
+
+    assert_eq!(run.outcome, RunOutcome::Completed, "{run:?}");
+    let calls = harness.log.calls.lock().unwrap().clone();
+    let given: Vec<&Value> = calls.iter().map(|call| &call.0).collect();
+    assert_eq!(
+        given,
+        [
+            &json!({ "text": "a" }),
+            &json!({ "text": "b" }),
+            &json!({ "count": 2 })
+        ]
+    );
+    let left: Vec<u64> = calls.iter().map(|call| call.1).collect();
+    assert_eq!(left, [100, 90, 80], "each item spends from what's left");
+    assert_eq!(run.cost_usd_micros, 30);
+    let read = &run.steps[0];
+    assert_eq!(read.receipt, None, "each item has its own");
+    assert_eq!(read.items.len(), 2);
+    assert!(read.items.iter().all(|item| item.receipt.is_some()));
+    assert_eq!(
+        run.output,
+        Some(json!(r#"[{"text":"read"},{"text":"read"}] cut=true"#))
+    );
+}
+
+#[tokio::test]
+async fn a_failing_item_stops_the_step_unless_told_otherwise() {
+    let harness = picky_harness().await;
+    define(
+        &harness,
+        json!([per_link("picky", 10, false)]),
+        json!({ "inputs": list_inputs(), "max_usd_micros": 100 }),
+    )
+    .await;
+    let links = json!({ "links": ["a", "bad", "c"] });
+
+    let stopped = harness.engine.run("flow", links.clone()).await.unwrap();
+
+    assert_eq!(stopped.outcome, RunOutcome::Failed);
+    let failure = stopped.failure.as_deref().unwrap();
+    assert!(failure.starts_with("step read: item 1:"), "{failure}");
+    assert!(failure.contains("that one was bad"), "{failure}");
+    let statuses: Vec<_> = stopped.steps[0]
+        .items
+        .iter()
+        .map(|item| item.status)
+        .collect();
+    assert_eq!(statuses, [StepStatus::Ran, StepStatus::Failed]);
+    assert_eq!(stopped.cost_usd_micros, 5);
+
+    define(
+        &harness,
+        json!([per_link("picky", 10, true)]),
+        json!({
+            "inputs": list_inputs(), "max_usd_micros": 100,
+            "output": "{{steps.read.result}} failed={{steps.read.fan_out.failed}}"
+        }),
+    )
+    .await;
+
+    let went_on = harness.engine.run("flow", links).await.unwrap();
+
+    assert_eq!(went_on.outcome, RunOutcome::Completed, "{went_on:?}");
+    assert_eq!(went_on.steps[0].items.len(), 3);
+    assert_eq!(went_on.cost_usd_micros, 10);
+    assert_eq!(
+        went_on.output,
+        Some(json!(r#"[{"text":"a"},null,{"text":"c"}] failed=1"#))
+    );
+}
+
+#[tokio::test]
+async fn items_that_arent_a_list_fail_the_step() {
+    let log = Arc::new(Recorder::default());
+    let fake = tool("fake", Ok(json!({ "text": "one" })), 0, &log);
+    let harness = harness(vec![], vec![fake], log).await;
+    let steps = json!([
+        tool_step("find", "fake", &json!({})),
+        {
+            "type": "tool", "id": "read", "tool": "fake", "arguments": { "text": "{{item}}" },
+            "for_each": { "items": "{{steps.find.result.text}}", "max_items": 5 }
+        }
+    ]);
+    define(&harness, steps, json!({})).await;
+
+    let run = harness.engine.run("flow", subject()).await.unwrap();
+
+    let failure = run.failure.as_deref().unwrap();
+    assert!(failure.contains("a single value, not a list"), "{failure}");
+    assert_eq!(harness.log.calls.lock().unwrap().len(), 1);
+}
+
+#[tokio::test]
+async fn an_agent_gets_each_item_as_context() {
+    let log = Arc::new(Recorder::default());
+    let script = vec![
+        ChaosStep::Text("first".to_owned()),
+        ChaosStep::Text("second".to_owned()),
+    ];
+    let harness = harness(script, vec![], log).await;
+    let step = json!({
+        "type": "agent", "id": "each", "agent": "helper", "message": "Say one thing",
+        "context": "{{item}}", "for_each": { "items": "{{inputs.links}}", "max_items": 5 }
+    });
+    define(
+        &harness,
+        json!([step]),
+        json!({ "inputs": list_inputs(), "output": "{{steps.each.answer}}" }),
+    )
+    .await;
+
+    let run = harness
+        .engine
+        .run("flow", json!({ "links": ["x", "y"] }))
+        .await
+        .unwrap();
+
+    assert_eq!(run.outcome, RunOutcome::Completed, "{run:?}");
+    assert_eq!(harness.server.served().len(), 2);
+    assert_eq!(run.output, Some(json!(["first", "second"])));
+}
