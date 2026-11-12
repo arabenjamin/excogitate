@@ -67,8 +67,8 @@ jobs:
       - name: Toolchain from rust-toolchain.toml
         run: rustup toolchain install
       - run: cargo fmt --all -- --check
-      - uses: crate-ci/typos@7f9d0819ca1c008ade73f4b41fa9d258d48f605b # v1.51.1
-      - uses: taiki-e/install-action@5488ac5a951645ce95062214902ac4b6bc1a1037 # v2.87.32
+      - uses: crate-ci/typos@2611abd15acb0c2e317fb9e45855aabb8b35a414 # v1.52.1
+      - uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2.90.3
         with:
           tool: taplo-cli@0.10.0,cargo-deny@0.20.2
       - run: taplo fmt --check
@@ -124,7 +124,7 @@ jobs:
         with:
           shared-key: dev
           save-if: ${{ github.ref == 'refs/heads/main' }}
-      - uses: taiki-e/install-action@5488ac5a951645ce95062214902ac4b6bc1a1037 # v2.87.32
+      - uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2.90.3
         with:
           tool: cargo-nextest@0.9.150
       - name: DuckDB extensions for the store's tests
@@ -161,7 +161,7 @@ jobs:
         with:
           shared-key: dev
           save-if: false
-      - uses: taiki-e/install-action@5488ac5a951645ce95062214902ac4b6bc1a1037 # v2.87.32
+      - uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2.90.3
         with:
           tool: cargo-hack@0.6.45
       # `check`, not `build`: no codegen, so the feature sets don't rebuild
@@ -182,7 +182,7 @@ jobs:
         with:
           shared-key: dev
           save-if: false
-      - uses: taiki-e/install-action@5488ac5a951645ce95062214902ac4b6bc1a1037 # v2.87.32
+      - uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2.90.3
         with:
           tool: cargo-semver-checks@0.51.0
       - name: The last release
