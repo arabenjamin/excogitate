@@ -145,6 +145,25 @@ impl HostCalls {
             .map_err(|error| CapabilityError::Failed(error.to_string()))
     }
 
+    async fn run_workflow(
+        &self,
+        run: plugin_api::RunWorkflow,
+        context: ToolContext,
+    ) -> Result<Value, CapabilityError> {
+        let started = self.capabilities.jobs()?.run_workflow(run, context).await?;
+        let wire = plugin_api::wire::WireJobStarted {
+            job_id: started.job_id,
+            already_existed: started.already_existed,
+        };
+        serde_json::to_value(wire).map_err(|error| CapabilityError::Failed(error.to_string()))
+    }
+
+    async fn job(&self, job_id: Uuid, context: ToolContext) -> Result<Value, CapabilityError> {
+        let found = self.capabilities.jobs()?.job(job_id, context).await?;
+        serde_json::to_value(found.map(plugin_api::wire::WireJobState::from))
+            .map_err(|error| CapabilityError::Failed(error.to_string()))
+    }
+
     async fn store_note(
         &self,
         mut note: plugin_api::NoteToStore,
@@ -208,7 +227,8 @@ impl HostCalls {
         Ok(Value::Null)
     }
 
-    async fn answer(
+    /// The records calls, which are most of them.
+    async fn answer_records(
         &self,
         call: CapabilityCall,
         context: ToolContext,
@@ -279,6 +299,20 @@ impl HostCalls {
                 self.neighbors(&relation, id, direction.into(), page, context)
                     .await
             }
+            // Every other call is answered before it gets here.
+            _ => Err(CapabilityError::Refused("not a records call".to_owned())),
+        }
+    }
+
+    async fn answer(
+        &self,
+        call: CapabilityCall,
+        context: ToolContext,
+    ) -> Result<Value, CapabilityError> {
+        let json = |value: Result<Value, serde_json::Error>| {
+            value.map_err(|error| CapabilityError::Failed(error.to_string()))
+        };
+        match call {
             CapabilityCall::Http {
                 method,
                 url,
@@ -299,6 +333,18 @@ impl HostCalls {
                     .await?;
                 json(serde_json::to_value(WireModelReply::from(reply)))
             }
+            CapabilityCall::JobsRunWorkflow {
+                workflow,
+                inputs,
+                priority,
+                idempotency_key,
+            } => {
+                let mut run =
+                    plugin_api::RunWorkflow::new(workflow, inputs).with_priority(priority);
+                run.idempotency_key = idempotency_key;
+                self.run_workflow(run, context).await
+            }
+            CapabilityCall::JobsGet { job_id } => self.job(job_id, context).await,
             CapabilityCall::MemoryStore {
                 title,
                 text,
@@ -308,6 +354,7 @@ impl HostCalls {
                 let note = plugin_api::NoteToStore::new(title, text).with_tags(tags);
                 self.store_note(note, source_url, context).await
             }
+            records => self.answer_records(records, context).await,
         }
     }
 

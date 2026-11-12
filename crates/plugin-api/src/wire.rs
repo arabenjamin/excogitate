@@ -190,6 +190,26 @@ pub enum CapabilityCall {
         #[schemars(length(min = 1, max = MAX_PROMPT))]
         prompt: String,
     },
+    /// `JobsCapability::run_workflow`.
+    JobsRunWorkflow {
+        /// The workflow.
+        #[schemars(length(min = 1, max = 64))]
+        workflow: String,
+        /// Its inputs.
+        #[schemars(extend("x-extension" = "checked against the workflow's inputs schema"))]
+        inputs: Value,
+        /// Higher runs first.
+        #[schemars(range(min = -1000, max = 1000))]
+        priority: i32,
+        /// Starts it once per key.
+        #[schemars(length(min = 1, max = crate::MAX_IDEMPOTENCY_KEY))]
+        idempotency_key: Option<String>,
+    },
+    /// `JobsCapability::job`.
+    JobsGet {
+        /// The job.
+        job_id: Uuid,
+    },
     /// `MemoryCapability::store`.
     MemoryStore {
         /// A short title.
@@ -569,6 +589,67 @@ impl From<WireModelReply> for ModelReply {
             model: reply.model,
             cost_usd_micros: reply.cost_usd_micros,
         }
+    }
+}
+
+/// A started run, on the wire.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+#[allow(missing_docs, reason = "the fields are JobStarted's")]
+pub struct WireJobStarted {
+    pub job_id: Uuid,
+    pub already_existed: bool,
+}
+
+/// Where a job stands, on the wire.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+#[allow(missing_docs, reason = "the variants are JobPhase's")]
+pub enum WireJobPhase {
+    Queued,
+    Running,
+    Succeeded,
+    Dead,
+}
+
+/// A job's state, on the wire.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+#[allow(missing_docs, reason = "the fields are JobState's")]
+pub struct WireJobState {
+    pub job_id: Uuid,
+    pub phase: WireJobPhase,
+    #[schemars(length(max = 4096))]
+    pub last_error: Option<String>,
+    #[schemars(extend("x-extension" = "what the workflow run produced"))]
+    pub result: Option<Value>,
+}
+
+impl From<crate::JobState> for WireJobState {
+    fn from(state: crate::JobState) -> Self {
+        Self {
+            job_id: state.job_id,
+            phase: match state.phase {
+                crate::JobPhase::Queued => WireJobPhase::Queued,
+                crate::JobPhase::Running => WireJobPhase::Running,
+                crate::JobPhase::Succeeded => WireJobPhase::Succeeded,
+                crate::JobPhase::Dead => WireJobPhase::Dead,
+            },
+            last_error: state.last_error,
+            result: state.result,
+        }
+    }
+}
+
+impl From<WireJobState> for crate::JobState {
+    fn from(state: WireJobState) -> Self {
+        let phase = match state.phase {
+            WireJobPhase::Queued => crate::JobPhase::Queued,
+            WireJobPhase::Running => crate::JobPhase::Running,
+            WireJobPhase::Succeeded => crate::JobPhase::Succeeded,
+            WireJobPhase::Dead => crate::JobPhase::Dead,
+        };
+        Self::new(state.job_id, phase).with_outcome(state.last_error, state.result)
     }
 }
 

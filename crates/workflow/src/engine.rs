@@ -227,6 +227,42 @@ pub struct Engine {
     pub stop: StopSignal,
 }
 
+/// The workflow named, once `inputs` are checked against it.
+async fn checked_workflow(
+    store: &dyn Store,
+    name: &str,
+    inputs: &Value,
+) -> Result<Workflow, WorkflowError> {
+    let key = DefinitionKey {
+        kind: DefinitionKind::Workflow,
+        name: name.to_owned(),
+    };
+    let found = store
+        .get_definition(&key)
+        .await?
+        .ok_or_else(|| WorkflowError::Unknown(name.to_owned()))?;
+    let workflow: Workflow = parse(found.body, name)?;
+    Validator::from_schema(&workflow.inputs)
+        .map_err(|error| WorkflowError::Invalid(bounded(&error.to_string())))?
+        .check(inputs)
+        .map_err(|refusal| WorkflowError::Invalid(bounded(&format!("its inputs: {refusal}"))))?;
+    Ok(workflow)
+}
+
+/// Checks that a run of workflow `name` could start with `inputs`, from the
+/// store alone, without an engine: what's checked before a run is queued.
+///
+/// # Errors
+///
+/// [`WorkflowError`] if there's no such workflow, or `inputs` don't fit.
+pub async fn check_workflow_run(
+    store: &dyn Store,
+    name: &str,
+    inputs: &Value,
+) -> Result<(), WorkflowError> {
+    checked_workflow(store, name, inputs).await.map(|_| ())
+}
+
 impl Engine {
     async fn definition<T: serde::de::DeserializeOwned>(
         &self,
@@ -287,17 +323,7 @@ impl Engine {
 
     /// The workflow, if it exists and `inputs` fit it.
     async fn checked(&self, name: &str, inputs: &Value) -> Result<Workflow, WorkflowError> {
-        let workflow: Workflow = self
-            .definition(DefinitionKind::Workflow, name)
-            .await?
-            .ok_or_else(|| WorkflowError::Unknown(name.to_owned()))?;
-        Validator::from_schema(&workflow.inputs)
-            .map_err(|error| WorkflowError::Invalid(bounded(&error.to_string())))?
-            .check(inputs)
-            .map_err(|refusal| {
-                WorkflowError::Invalid(bounded(&format!("its inputs: {refusal}")))
-            })?;
-        Ok(workflow)
+        checked_workflow(self.store.as_ref(), name, inputs).await
     }
 
     /// Checks that a run could start, without starting one.

@@ -20,10 +20,11 @@ mod tool;
 pub mod wire;
 
 pub use capability::{
-    Capabilities, CapabilityError, HttpCapability, HttpRequest, HttpResponse, MAX_BATCH,
-    MAX_NOTE_TAG, MAX_NOTE_TAGS, MAX_NOTE_TEXT, MAX_NOTE_TITLE, MAX_NOTE_URL, MemoryCapability,
+    Capabilities, CapabilityError, HttpCapability, HttpRequest, HttpResponse, JobPhase, JobStarted,
+    JobState, JobsCapability, MAX_BATCH, MAX_IDEMPOTENCY_KEY, MAX_NOTE_TAG, MAX_NOTE_TAGS,
+    MAX_NOTE_TEXT, MAX_NOTE_TITLE, MAX_NOTE_URL, MAX_OUTSTANDING_JOBS, MemoryCapability,
     ModelCapability, ModelReply, NoteStored, NoteToStore, RecordLink, RecordWrite,
-    RecordsCapability, check_batch,
+    RecordsCapability, RunWorkflow, check_batch,
 };
 pub use manifest::{
     API_VERSION, ManifestError, PluginCapability, PluginManifest, RESERVED_NAMES, ToolManifest,

@@ -246,6 +246,40 @@ impl crate::MemoryCapability for RemoteMemory {
     }
 }
 
+#[derive(Debug)]
+struct RemoteJobs(Arc<Link>);
+
+#[async_trait]
+impl crate::JobsCapability for RemoteJobs {
+    async fn run_workflow(
+        &self,
+        run: crate::RunWorkflow,
+        context: ToolContext,
+    ) -> Result<crate::JobStarted, CapabilityError> {
+        let call = CapabilityCall::JobsRunWorkflow {
+            workflow: run.workflow,
+            inputs: run.inputs,
+            priority: run.priority,
+            idempotency_key: run.idempotency_key,
+        };
+        let started: crate::wire::WireJobStarted = self.0.call(context, call).await?;
+        Ok(crate::JobStarted::new(
+            started.job_id,
+            started.already_existed,
+        ))
+    }
+
+    async fn job(
+        &self,
+        job_id: uuid::Uuid,
+        context: ToolContext,
+    ) -> Result<Option<crate::JobState>, CapabilityError> {
+        let call = CapabilityCall::JobsGet { job_id };
+        let found: Option<crate::wire::WireJobState> = self.0.call(context, call).await?;
+        Ok(found.map(Into::into))
+    }
+}
+
 /// Proxies for the capabilities the manifest declares. The host refuses to
 /// start a plugin that asks for one it wasn't granted, so these are the ones
 /// it has.
@@ -264,6 +298,9 @@ fn remote_capabilities(manifest: &PluginManifest, link: &Arc<Link>) -> Capabilit
             }
             PluginCapability::Memory => {
                 capabilities.memory = Some(Arc::new(RemoteMemory(Arc::clone(link))));
+            }
+            PluginCapability::Jobs => {
+                capabilities.jobs = Some(Arc::new(RemoteJobs(Arc::clone(link))));
             }
         }
     }

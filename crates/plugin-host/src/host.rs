@@ -222,13 +222,22 @@ impl PluginHost {
                     let meter = Arc::clone(meter.get_or_insert_with(Arc::default));
                     capabilities.memory = Some(source.memory(&manifest.name, meter));
                 }
+                PluginCapability::Jobs => {
+                    let source = self
+                        .source
+                        .as_ref()
+                        .ok_or_else(|| not_available(capability))?;
+                    let meter = Arc::clone(meter.get_or_insert_with(Arc::default));
+                    capabilities.jobs = Some(source.jobs(&manifest.name, meter));
+                }
                 _ => return Err(not_available(capability)),
             }
         }
         // Memory is metered too: what its embedding costs goes on the run.
         let guarded = capabilities.http.is_some()
             || capabilities.model.is_some()
-            || capabilities.memory.is_some();
+            || capabilities.memory.is_some()
+            || capabilities.jobs.is_some();
         Ok(Granted {
             capabilities,
             meter,
