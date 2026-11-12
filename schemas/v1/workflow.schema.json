@@ -1,5 +1,34 @@
 {
   "$defs": {
+    "ForEach": {
+      "additionalProperties": false,
+      "description": "Runs a step once per item of a list, one after another, out of the\nstep's money and time. Each run sees its item as `{{item}}`.",
+      "properties": {
+        "continue_on_failure": {
+          "default": false,
+          "description": "Whether an item that fails lets the rest run. If not, the first\nfailure fails the step.",
+          "type": "boolean"
+        },
+        "items": {
+          "description": "One reference to a list, such as `{{steps.find.result.links}}`.",
+          "maxLength": 256,
+          "minLength": 5,
+          "type": "string"
+        },
+        "max_items": {
+          "description": "The most items it runs for. A longer list is cut, and the step's\n`fan_out` says so.",
+          "format": "uint32",
+          "maximum": 50,
+          "minimum": 1,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "items",
+        "max_items"
+      ],
+      "type": "object"
+    },
     "Step": {
       "description": "One step of a workflow.",
       "oneOf": [
@@ -10,6 +39,17 @@
             "arguments": {
               "description": "Its arguments. Strings may hold references.",
               "x-extension": "checked against the tool's input schema"
+            },
+            "for_each": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/ForEach"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Runs it once per item, which the arguments see as `{{item}}`."
             },
             "id": {
               "description": "Its name, which later steps refer to.",
@@ -54,6 +94,17 @@
                 "string",
                 "null"
               ]
+            },
+            "for_each": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/ForEach"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Asks it once per item, which only `context` may use, as `{{item}}`."
             },
             "id": {
               "description": "Its name, which later steps refer to.",

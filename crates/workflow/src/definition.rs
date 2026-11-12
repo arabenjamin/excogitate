@@ -36,6 +36,27 @@ pub struct Agent {
     pub max_output_tokens: Option<u32>,
 }
 
+/// The most items one step may run for.
+pub const MAX_ITEMS: u32 = 50;
+
+/// Runs a step once per item of a list, one after another, out of the
+/// step's money and time. Each run sees its item as `{{item}}`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ForEach {
+    /// One reference to a list, such as `{{steps.find.result.links}}`.
+    #[schemars(length(min = 5, max = 256))]
+    pub items: String,
+    /// The most items it runs for. A longer list is cut, and the step's
+    /// `fan_out` says so.
+    #[schemars(range(min = 1, max = MAX_ITEMS))]
+    pub max_items: u32,
+    /// Whether an item that fails lets the rest run. If not, the first
+    /// failure fails the step.
+    #[serde(default)]
+    pub continue_on_failure: bool,
+}
+
 /// One step of a workflow.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
@@ -51,6 +72,9 @@ pub enum Step {
         /// Its arguments. Strings may hold references.
         #[schemars(extend("x-extension" = "checked against the tool's input schema"))]
         arguments: Value,
+        /// Runs it once per item, which the arguments see as `{{item}}`.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        for_each: Option<ForEach>,
     },
     /// Asks a sub-agent.
     Agent {
@@ -67,6 +91,9 @@ pub enum Step {
         /// What it should work from, usually an earlier step's output.
         #[schemars(length(max = 4096))]
         context: Option<String>,
+        /// Asks it once per item, which only `context` may use, as `{{item}}`.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        for_each: Option<ForEach>,
     },
 }
 
@@ -76,6 +103,24 @@ impl Step {
     pub fn id(&self) -> &str {
         match self {
             Self::Tool { id, .. } | Self::Agent { id, .. } => id,
+        }
+    }
+
+    /// The list it runs over, if it runs once per item.
+    #[must_use]
+    pub const fn for_each(&self) -> Option<&ForEach> {
+        match self {
+            Self::Tool { for_each, .. } | Self::Agent { for_each, .. } => for_each.as_ref(),
+        }
+    }
+
+    /// The field of its output that later steps read: `result` for a tool,
+    /// `answer` for an agent.
+    #[must_use]
+    pub const fn output_field(&self) -> &'static str {
+        match self {
+            Self::Tool { .. } => "result",
+            Self::Agent { .. } => "answer",
         }
     }
 }
@@ -135,6 +180,8 @@ fn input_names(inputs: &Value) -> BTreeSet<&str> {
 struct Scope<'a> {
     inputs: BTreeSet<&'a str>,
     earlier: BTreeMap<&'a str, &'a Step>,
+    /// True inside a step that runs once per item, which may use `item`.
+    item: bool,
 }
 
 impl Scope<'_> {
@@ -144,6 +191,8 @@ impl Scope<'_> {
             (Some("inputs"), Some(name), _) if self.inputs.contains(name) => Ok(()),
             (Some("inputs"), name, _) => Err(format!("there is no input {}", name.unwrap_or(""))),
             (Some("steps"), Some(id), field) => self.check_step_reference(path, id, field),
+            (Some("item"), ..) if self.item => Ok(()),
+            (Some("item"), ..) => Err(format!("{path}: only a step with for_each has an item")),
             _ => Err(format!("{path} must start with inputs. or steps.")),
         }
     }
@@ -157,11 +206,8 @@ impl Scope<'_> {
         let Some(step) = self.earlier.get(id) else {
             return Err(format!("{path} refers to a step that hasn't run yet"));
         };
-        let allowed = match step {
-            Step::Tool { .. } => "result",
-            Step::Agent { .. } => "answer",
-        };
-        if field == Some(allowed) {
+        let allowed = step.output_field();
+        if field == Some(allowed) || (step.for_each().is_some() && field == Some("fan_out")) {
             Ok(())
         } else {
             Err(format!("{path}: that step's output is under .{allowed}"))
@@ -220,6 +266,24 @@ fn check_arguments(definition: &ToolDefinition, arguments: &Value) -> Result<(),
     }
 }
 
+/// A step's list must be one reference, to the inputs or an earlier step.
+fn check_items(each: &ForEach, scope: &Scope<'_>) -> Result<(), String> {
+    if !(1..=MAX_ITEMS).contains(&each.max_items) {
+        return Err(format!("for_each.max_items must be 1 to {MAX_ITEMS}"));
+    }
+    let items = each.items.as_str();
+    let found = references(items).map_err(|error| error.to_string())?;
+    let [path] = found.as_slice() else {
+        return Err("for_each.items must be one reference to a list".to_owned());
+    };
+    if items.trim() != format!("{{{{{path}}}}}") {
+        return Err("for_each.items must be one reference to a list, and nothing else".to_owned());
+    }
+    scope
+        .check_reference(path)
+        .map_err(|problem| format!("for_each.items: {problem}"))
+}
+
 fn check_step(
     step: &Step,
     scope: &Scope<'_>,
@@ -253,6 +317,13 @@ fn check_step(
             if from_a_step {
                 return Err("a message can't use a step's output: put that in context".to_owned());
             }
+            let uses_item = references(message)
+                .map_err(|error| error.to_string())?
+                .into_iter()
+                .any(|path| path == "item" || path.starts_with("item."));
+            if uses_item {
+                return Err("a message can't use the item: put that in context".to_owned());
+            }
             context
                 .as_ref()
                 .map_or(Ok(()), |text| scope.check_text(text))
@@ -275,14 +346,20 @@ pub fn check_workflow(
     let mut scope = Scope {
         inputs: input_names(&workflow.inputs),
         earlier: BTreeMap::new(),
+        item: false,
     };
     for step in &workflow.steps {
         let id = step.id();
         if scope.earlier.contains_key(id) {
             return Err(format!("two steps are named {id}"));
         }
-        check_step(step, &scope, tools, agents)
-            .map_err(|problem| format!("step {id}: {problem}"))?;
+        if let Some(each) = step.for_each() {
+            check_items(each, &scope).map_err(|problem| format!("step {id}: {problem}"))?;
+        }
+        scope.item = step.for_each().is_some();
+        let checked = check_step(step, &scope, tools, agents);
+        scope.item = false;
+        checked.map_err(|problem| format!("step {id}: {problem}"))?;
         scope.earlier.insert(id, step);
     }
     workflow

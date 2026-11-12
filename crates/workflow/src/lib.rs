@@ -14,7 +14,7 @@ mod probe;
 mod roster;
 mod template;
 
-pub use definition::{Agent, Step, Workflow, check_agent, check_workflow};
+pub use definition::{Agent, ForEach, MAX_ITEMS, Step, Workflow, check_agent, check_workflow};
 pub use engine::{
     DELEGATE_TOOL, Engine, EngineLimits, RunOutcome, StepReport, StepStatus, WorkflowError,
     WorkflowRun, check_workflow_run,

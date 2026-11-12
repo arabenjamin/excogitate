@@ -76,6 +76,36 @@ pass: text a step returned can contain `{{` and it stays as text.
 A value that's filled in can't be checked until the step runs, so a step's
 arguments go through the tool's schema again then, as every tool call does.
 
+## Once per item
+
+A tool or agent step with `for_each` runs once for each item of a list:
+
+```yaml
+  - type: tool
+    id: read
+    tool: http_request
+    arguments: {url: "{{item.url}}"}
+    for_each:
+      items: "{{steps.find.result.links}}"   # one reference, to a list
+      max_items: 20                          # 1 to 50; a longer list is cut
+      continue_on_failure: false             # the default
+```
+
+- Each run sees its item as `{{item}}`, with dots to go deeper. Only a step
+  with `for_each` has an item. An agent takes it in `context`, never in its
+  `message`.
+- Items run one after another, out of the step's money and time, so each gets
+  what the ones before it left.
+- The step's `result` (or `answer`) is a list, one entry per item that ran, in
+  order. `{{steps.read.fan_out}}` says how many items there were (`total`), how
+  many ran (`ran`), whether the list was cut (`cut`) and how many failed
+  (`failed`).
+- The first item that fails fails the step, unless `continue_on_failure` is
+  set; then its entry is null and the rest run.
+- In the run's result, the step has no receipt of its own. Each item has one,
+  under the step's `items`.
+- `items` that turns out not to be a list fails the step.
+
 ## Agents
 
 An agent is a chat with its own instructions and tools. It starts with nothing
@@ -155,4 +185,5 @@ a retry repeats what the earlier steps did.
 
 ## Not yet
 
-There's no branching, no loop, no `on_error` and no parallel step.
+There's no branching, no `on_error` and no parallel step. `for_each` is the
+one loop, bounded, and its items run one at a time.

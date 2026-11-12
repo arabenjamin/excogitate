@@ -17,7 +17,7 @@ use serde_json::{Value, json};
 use store::{DefinitionKey, DefinitionKind, Store, StoreError};
 
 use crate::template::{render_text, render_value};
-use crate::{Agent, Step, Workflow};
+use crate::{Agent, ForEach, MAX_ITEMS, Step, Workflow};
 
 /// What workflows are for, which decides whether they may pay.
 const PURPOSE: &str = "workflow";
@@ -68,8 +68,57 @@ pub struct StepReport {
     /// Why it failed.
     #[schemars(length(max = 1024))]
     pub detail: Option<String>,
-    /// What the step actually did.
+    /// What the step actually did. A step run once per item has one per
+    /// item instead, in `items`.
     pub receipt: Option<Receipt>,
+    /// For a step run once per item: each item's run, in order. Empty for
+    /// a step that ran once.
+    #[schemars(length(max = 50))]
+    pub items: Vec<ItemReport>,
+}
+
+/// One item's run, in a step run once per item.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
+#[schemars(deny_unknown_fields)]
+pub struct ItemReport {
+    /// Its place in the list, from 0.
+    pub index: u32,
+    /// Where it ended up.
+    pub status: StepStatus,
+    /// Why it failed.
+    #[schemars(length(max = 1024))]
+    pub detail: Option<String>,
+    /// What its run did.
+    pub receipt: Option<Receipt>,
+}
+
+/// How one step went, whether it ran once or once per item.
+struct Ran {
+    status: StepStatus,
+    detail: Option<String>,
+    receipt: Option<Receipt>,
+    items: Vec<ItemReport>,
+    /// What later steps see, if it ran.
+    output: Option<Value>,
+}
+
+impl Ran {
+    fn failed(detail: &str, items: Vec<ItemReport>) -> Self {
+        Self {
+            status: StepStatus::Failed,
+            detail: Some(bounded(detail)),
+            receipt: None,
+            items,
+            output: None,
+        }
+    }
+
+    fn cost(&self) -> u64 {
+        self.items
+            .iter()
+            .map(|item| cost_of(item.receipt.as_ref()))
+            .fold(cost_of(self.receipt.as_ref()), u64::saturating_add)
+    }
 }
 
 /// How a run ended.
@@ -349,6 +398,7 @@ impl Engine {
                     status: StepStatus::Skipped,
                     detail: None,
                     receipt: None,
+                    items: Vec::new(),
                 });
                 continue;
             }
@@ -356,29 +406,26 @@ impl Engine {
                 money: workflow.max_usd_micros.saturating_sub(spent),
                 time: self.limits.time_limit.saturating_sub(started.elapsed()),
             };
-            let (status, detail, receipt) = match self.run_step(step, &context, left).await {
-                Ok(done) => {
-                    if let Some(earlier) = context.get_mut("steps").and_then(Value::as_object_mut) {
-                        earlier.insert(id.clone(), done.output);
-                    }
-                    (StepStatus::Ran, None, Some(done.receipt))
-                }
-                Err(stopped) => {
-                    let detail = bounded(&stopped.detail);
-                    failure = Some(bounded(&format!("step {id}: {detail}")));
-                    (
-                        StepStatus::Failed,
-                        Some(detail),
-                        stopped.receipt.map(|kept| *kept),
-                    )
-                }
+            let ran = match step.for_each() {
+                None => self.run_once(step, &context, left).await,
+                Some(each) => self.fan_out(step, each, &context, left).await,
             };
-            spent = spent.saturating_add(cost_of(receipt.as_ref()));
+            if let Some(output) = ran.output.clone()
+                && let Some(earlier) = context.get_mut("steps").and_then(Value::as_object_mut)
+            {
+                earlier.insert(id.clone(), output);
+            }
+            if ran.status == StepStatus::Failed {
+                let detail = ran.detail.clone().unwrap_or_default();
+                failure = Some(bounded(&format!("step {id}: {detail}")));
+            }
+            spent = spent.saturating_add(ran.cost());
             steps.push(StepReport {
                 id,
-                status,
-                detail,
-                receipt,
+                status: ran.status,
+                detail: ran.detail,
+                receipt: ran.receipt,
+                items: ran.items,
             });
         }
         let (mut output, mut output_truncated) = (None, false);
@@ -409,6 +456,103 @@ impl Engine {
         }
     }
 
+    /// A step that runs once.
+    async fn run_once(&self, step: &Step, context: &Value, left: Left) -> Ran {
+        match self.run_step(step, context, left).await {
+            Ok(done) => Ran {
+                status: StepStatus::Ran,
+                detail: None,
+                receipt: Some(done.receipt),
+                items: Vec::new(),
+                output: Some(done.output),
+            },
+            Err(stopped) => Ran {
+                receipt: stopped.receipt.map(|kept| *kept),
+                ..Ran::failed(&stopped.detail, Vec::new())
+            },
+        }
+    }
+
+    /// A step run once per item, one after another, each held to what the
+    /// step has left. Its output is the items' outputs in a list, with a
+    /// `fan_out` summary saying how many there were and how many ran.
+    async fn fan_out(&self, step: &Step, each: &ForEach, context: &Value, left: Left) -> Ran {
+        let list = match render_value(&Value::String(each.items.clone()), context) {
+            Ok(Value::Array(list)) => list,
+            Ok(other) => {
+                let kind = match other {
+                    Value::Null => "nothing",
+                    Value::Object(_) => "an object",
+                    _ => "a single value",
+                };
+                return Ran::failed(&format!("for_each.items is {kind}, not a list"), Vec::new());
+            }
+            Err(error) => return Ran::failed(&format!("for_each.items: {error}"), Vec::new()),
+        };
+        let total = list.len();
+        let most = usize::try_from(each.max_items.min(MAX_ITEMS)).unwrap_or(usize::MAX);
+        let started = Instant::now();
+        let field = step.output_field();
+        let (mut outputs, mut items, mut spent) = (Vec::new(), Vec::new(), 0_u64);
+        let (mut failed, mut untrusted) = (0_usize, false);
+        for (index, item) in list.into_iter().take(most).enumerate() {
+            let mut scoped = context.clone();
+            if let Some(fields) = scoped.as_object_mut() {
+                fields.insert("item".to_owned(), item);
+            }
+            let item_left = Left {
+                money: left.money.saturating_sub(spent),
+                time: left.time.saturating_sub(started.elapsed()),
+            };
+            let index_of = u32::try_from(index).unwrap_or(u32::MAX);
+            match self.run_step(step, &scoped, item_left).await {
+                Ok(done) => {
+                    spent = spent.saturating_add(cost_of(Some(&done.receipt)));
+                    untrusted |= done.output.get("untrusted") == Some(&Value::Bool(true));
+                    outputs.push(done.output.get(field).cloned().unwrap_or(Value::Null));
+                    items.push(ItemReport {
+                        index: index_of,
+                        status: StepStatus::Ran,
+                        detail: None,
+                        receipt: Some(done.receipt),
+                    });
+                }
+                Err(stopped) => {
+                    let receipt = stopped.receipt.map(|kept| *kept);
+                    spent = spent.saturating_add(cost_of(receipt.as_ref()));
+                    let detail = bounded(&stopped.detail);
+                    failed += 1;
+                    items.push(ItemReport {
+                        index: index_of,
+                        status: StepStatus::Failed,
+                        detail: Some(detail.clone()),
+                        receipt,
+                    });
+                    if !each.continue_on_failure {
+                        return Ran::failed(&format!("item {index}: {detail}"), items);
+                    }
+                    outputs.push(Value::Null);
+                }
+            }
+        }
+        let mut output = serde_json::Map::new();
+        output.insert(field.to_owned(), Value::Array(outputs));
+        if untrusted {
+            output.insert("untrusted".to_owned(), Value::Bool(true));
+        }
+        output.insert(
+            "fan_out".to_owned(),
+            json!({ "total": total, "ran": items.len(), "cut": total > most, "failed": failed }),
+        );
+        Ran {
+            status: StepStatus::Ran,
+            detail: None,
+            receipt: None,
+            items,
+            output: Some(Value::Object(output)),
+        }
+    }
+
     async fn run_step(
         &self,
         step: &Step,
@@ -420,6 +564,7 @@ impl Engine {
                 id,
                 tool,
                 arguments,
+                ..
             } => {
                 let rendered =
                     render_value(arguments, context).map_err(|error| error.to_string())?;

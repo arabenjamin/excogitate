@@ -222,3 +222,84 @@ fn an_agents_tools_must_exist() {
     let found = check_agent(&agent(json!(["fetch", "nope"])), &tools()).unwrap_err();
     assert!(found.contains("nope"), "{found}");
 }
+
+fn each(items: &str, max_items: u32) -> Value {
+    json!({ "items": items, "max_items": max_items })
+}
+
+fn fetch_each(id: &str, items: &str, url: &str) -> Value {
+    json!({ "type": "tool", "id": id, "tool": "fetch", "arguments": { "url": url },
+            "for_each": each(items, 10) })
+}
+
+#[test]
+fn a_step_can_run_once_per_item() {
+    let steps = json!([
+        fetch("find"),
+        fetch_each("read", "{{steps.find.result.links}}", "{{item.url}}"),
+        { "type": "agent", "id": "sum", "agent": "helper", "message": "Sum them up",
+          "context": "{{steps.read.result}} ({{steps.read.fan_out.ran}} read)" },
+        { "type": "agent", "id": "each", "agent": "helper", "message": "Say one thing",
+          "context": "{{item}}", "for_each": each("{{steps.read.result}}", 5) }
+    ]);
+    check_workflow(&workflow(steps), &tools(), &agents()).unwrap();
+}
+
+#[test]
+fn only_a_step_with_for_each_has_an_item() {
+    let steps = json!([{ "type": "tool", "id": "a", "tool": "fetch",
+                         "arguments": { "url": "{{item}}" } }]);
+    assert_refused(steps, "only a step with for_each has an item");
+    let mut later = workflow(json!([fetch_each("a", "{{inputs.url}}", "{{item}}")]));
+    later.output = Some("{{item}}".to_owned());
+    let found = check_workflow(&later, &tools(), &agents()).unwrap_err();
+    assert!(found.contains("only a step with for_each"), "{found}");
+    assert_refused(
+        json!([fetch("a"), { "type": "tool", "id": "b", "tool": "fetch",
+              "arguments": { "url": "{{steps.a.fan_out}}" } }]),
+        "output is under .result",
+    );
+}
+
+#[test]
+fn the_items_are_one_reference_to_something_earlier() {
+    assert_refused(
+        json!([fetch_each("a", "{{inputs.url}} and more", "{{item}}")]),
+        "nothing else",
+    );
+    assert_refused(
+        json!([fetch_each("a", "{{inputs.url}}{{inputs.url}}", "{{item}}")]),
+        "one reference",
+    );
+    assert_refused(
+        json!([fetch_each("a", "{{steps.a.result}}", "{{item}}")]),
+        "hasn't run yet",
+    );
+    assert_refused(
+        json!([fetch_each("a", "{{item.list}}", "{{item}}")]),
+        "only a step with for_each",
+    );
+}
+
+#[test]
+fn an_agent_takes_its_item_in_context_only() {
+    let steps = json!([{ "type": "agent", "id": "a", "agent": "helper",
+        "message": "About {{item}}", "for_each": each("{{inputs.url}}", 3) }]);
+    assert_refused(steps, "can't use the item");
+}
+
+#[test]
+fn the_number_of_items_is_bounded() {
+    let zero = json!([{ "type": "tool", "id": "a", "tool": "fetch", "arguments": { "url": "{{item}}" },
+                        "for_each": each("{{inputs.url}}", 0) }]);
+    assert_refused(zero, "max_items must be 1 to 50");
+    let many = json!([{ "type": "tool", "id": "a", "tool": "fetch", "arguments": { "url": "{{item}}" },
+                        "for_each": each("{{inputs.url}}", 51) }]);
+    assert_refused(many.clone(), "max_items must be 1 to 50");
+    let validator = Validator::for_type::<Workflow>().unwrap();
+    assert!(
+        validator
+            .check(&json!({ "inputs": inputs(), "steps": many }))
+            .is_err()
+    );
+}
