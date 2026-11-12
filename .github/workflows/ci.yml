@@ -168,12 +168,45 @@ jobs:
       # the world.
       - run: cargo hack check --locked --workspace --each-feature
 
+  compat:
+    name: Compatible with the last release
+    needs: changes
+    if: needs.changes.outputs.rust == 'true'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0 # the release tags are the baseline
+      - run: rustup toolchain install
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          shared-key: dev
+          save-if: false
+      - uses: taiki-e/install-action@5488ac5a951645ce95062214902ac4b6bc1a1037 # v2.87.32
+        with:
+          tool: cargo-semver-checks@0.51.0
+      - name: The last release
+        id: baseline
+        run: echo "tag=$(git describe --tags --abbrev=0 --match 'v[0-9]*' HEAD)" >> "$GITHUB_OUTPUT"
+      # A break passes only when the version is bumped past the tag's (the
+      # minor before 1.0), and the changelog says so.
+      - name: The plugin contract (plugin-api)
+        run: cargo semver-checks -p plugin-api --baseline-rev "${{ steps.baseline.outputs.tag }}"
+      - name: The published schemas
+        env:
+          TAG: ${{ steps.baseline.outputs.tag }}
+        run: |
+          base="$RUNNER_TEMP/baseline"
+          mkdir -p "$base"
+          git archive "$TAG" schemas/v1 | tar -x -C "$base"
+          cargo run --locked -p schema-gen -- --against "$base/schemas/v1" --since "$TAG"
+
   gate:
     name: CI gate
     # The one required check. It passes when every job passed or was skipped
     # by the path filter, and fails when any failed or was cancelled.
     if: always()
-    needs: [changes, quick, clippy, test, docs, features]
+    needs: [changes, quick, clippy, test, docs, features, compat]
     runs-on: ubuntu-24.04
     steps:
       - name: Every job passed or was skipped

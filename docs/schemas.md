@@ -23,7 +23,35 @@ every schema a plugin declares when it registers:
 
 A test fails when a committed file differs from its type, when a type's
 schema isn't strict, or when a file has no type behind it. To publish a new
-schema, add its type to `fixed` in `crates/schema-gen/src/main.rs`.
+schema, add its type to `fixed` in `crates/schema-gen/src/main.rs`, and
+who reads it to `role`.
+
+## Compatibility
+
+CI checks every schema against the one the last release published (the
+newest `v*` tag). What breaks depends on who reads the schema, which
+`role` in `crates/schema-gen` names for each one:
+
+- **What Excogitate accepts** (configuration, definitions, requests, a
+  tool's arguments, a plugin's capability requests): the new schema must
+  accept everything the old one did. Removing a property, a value or a
+  type, requiring a property, or tightening a bound breaks it. Adding an
+  optional property or loosening a bound doesn't.
+- **What Excogitate produces** (responses, receipts, trajectories, a tool's
+  result, what a plugin is sent): everything it may now produce must still
+  pass the old schema. Adding a value to an enum or a kind of step, making a
+  property optional, or loosening a bound breaks it. Adding a property
+  doesn't: a reader built against the old schema ignores it.
+
+A removed schema is a break, and a changed `pattern`, `format` or condition
+is treated as one. A break passes only when the workspace version is past
+the tag's (the minor before 1.0, the major after), so it's declared. To run
+the check yourself:
+
+```bash
+mkdir -p /tmp/baseline && git archive v0.4.0 schemas/v1 | tar -x -C /tmp/baseline
+cargo run -p schema-gen -- --against /tmp/baseline/schemas/v1 --since v0.4.0
+```
 
 ## What's published
 

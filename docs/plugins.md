@@ -67,7 +67,9 @@ rest) are re-exported there.
   change in any release.
 
 From v0.4.0, a release that breaks the contract says so in its version and
-its changelog.
+its changelog. CI holds it to that: `cargo semver-checks` compares
+`plugin-api` with the last release, and the schema check compares the
+process protocol's schemas (see `docs/schemas.md`).
 
 ## Two ways to run
 
