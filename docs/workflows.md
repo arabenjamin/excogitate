@@ -116,6 +116,13 @@ first.
 refuses a `message` that refers to a step. `context` is labelled as data for the
 model, and the text inside it can't end that label. A `message` can use `inputs`.
 
+**An agent chooses what its memory reads.** `memory: {sources: [lake.notes]}`
+limits the `memory` tool, in that agent's runs, to the sources named; an empty
+list reads none, and left out, it reads every source the plugins offer, so a
+narrow agent isn't flooded by a large lake. A source named that no plugin
+offers stops the server, and so does naming sources without the `memory`
+tool. The front door's choice holds for the whole chat.
+
 An agent uses Excogitate's `budget` unless it sets its own. Either way, it can't
 use more than what's left of the run's money and time. Models are chosen with
 the purpose `workflow`, which is what a provider's `paid_for` matches.

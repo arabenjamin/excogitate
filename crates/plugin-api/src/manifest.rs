@@ -47,6 +47,48 @@ pub struct PluginManifest {
     pub capabilities: Vec<PluginCapability>,
     /// The record types and relations it keeps.
     pub records: Option<RecordDecls>,
+    /// What it offers memory to read. Needs the `sources` capability.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[schemars(length(max = 8))]
+    pub sources: Vec<SourceManifest>,
+}
+
+/// One source, as its plugin declares it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+#[non_exhaustive]
+pub struct SourceManifest {
+    /// Its name. Memory names it `plugin.name`.
+    #[schemars(length(min = 1, max = 32), regex(pattern = r"^[a-z][a-z0-9_]*$"))]
+    pub name: String,
+    /// What it holds, for whoever chooses an agent's sources.
+    #[schemars(length(max = 1024))]
+    pub description: String,
+    /// Whether its items may carry their own class. A source that isn't
+    /// public is private: every item it returns is.
+    #[serde(default)]
+    pub public: bool,
+    /// Whether it can be searched by words.
+    #[serde(default)]
+    pub words: bool,
+    /// The vectors it holds, if it can be searched by them.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub vectors: Option<SourceVectors>,
+}
+
+/// The vectors a source holds: the query's vector reaches it only when the
+/// runtime embedded the query with this model, at this width.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+#[non_exhaustive]
+pub struct SourceVectors {
+    /// The embedding model, as the deployment's model catalog names it or
+    /// as its provider does.
+    #[schemars(length(min = 1, max = 128))]
+    pub model: String,
+    /// The width of its vectors.
+    #[schemars(range(min = 1, max = 65_536))]
+    pub dimension: u32,
 }
 
 /// One tool, as its plugin declares it.
@@ -101,6 +143,8 @@ pub enum PluginCapability {
     Memory,
     /// Workflow runs started as jobs, and the state of the ones it started.
     Jobs,
+    /// Offering memory the sources its manifest declares.
+    Sources,
 }
 
 /// A manifest that can't be used.
@@ -169,7 +213,38 @@ impl PluginManifest {
                 }
             }
         }
-        self.check_records()
+        self.check_records()?;
+        self.check_sources()
+    }
+
+    fn check_sources(&self) -> Result<(), ManifestError> {
+        let wants = self.capabilities.contains(&PluginCapability::Sources);
+        match (wants, self.sources.is_empty()) {
+            (true, true) => {
+                return Err(invalid(
+                    "the sources capability needs declared sources".to_owned(),
+                ));
+            }
+            (false, false) => {
+                return Err(invalid(
+                    "declared sources need the sources capability".to_owned(),
+                ));
+            }
+            _ => {}
+        }
+        let mut names = HashSet::new();
+        for source in &self.sources {
+            if !names.insert(&source.name) {
+                return Err(invalid(format!("source {} repeats", source.name)));
+            }
+            if !source.words && source.vectors.is_none() {
+                return Err(invalid(format!(
+                    "source {} can be searched neither by words nor by vectors",
+                    source.name
+                )));
+            }
+        }
+        Ok(())
     }
 
     fn check_records(&self) -> Result<(), ManifestError> {
@@ -307,6 +382,45 @@ mod tests {
             let error = PluginManifest::from_yaml(&text).unwrap_err();
             assert!(error.to_string().contains("keeps for itself"), "{error}");
         }
+    }
+
+    fn sources(capability: bool, declared: &str) -> String {
+        let capabilities = if capability {
+            "capabilities: [sources]\n"
+        } else {
+            ""
+        };
+        format!("{capabilities}sources:\n{declared}")
+    }
+
+    #[test]
+    fn sources_load_with_their_capability() {
+        let declared = "  - {name: notes, description: d, words: true}\n  - name: lake\n    description: d\n    vectors: {model: m, dimension: 4}\n";
+        let loaded =
+            PluginManifest::from_yaml(&manifest("demo_tool", INPUT, &sources(true, declared)))
+                .unwrap();
+        assert_eq!(loaded.sources.len(), 2);
+        assert!(
+            loaded.sources.iter().all(|source| !source.public),
+            "private unless declared public"
+        );
+        let without = manifest("demo_tool", INPUT, &sources(false, declared));
+        assert!(PluginManifest::from_yaml(&without).is_err());
+        let empty = manifest("demo_tool", INPUT, "capabilities: [sources]\n");
+        assert!(PluginManifest::from_yaml(&empty).is_err());
+    }
+
+    #[test]
+    fn a_source_needs_a_way_to_be_searched_and_a_name_of_its_own() {
+        let neither = sources(true, "  - {name: lake, description: d}\n");
+        let error = PluginManifest::from_yaml(&manifest("demo_tool", INPUT, &neither)).unwrap_err();
+        assert!(error.to_string().contains("neither"), "{error}");
+        let twice = sources(
+            true,
+            "  - {name: a, description: d, words: true}\n  - {name: a, description: d, words: true}\n",
+        );
+        let error = PluginManifest::from_yaml(&manifest("demo_tool", INPUT, &twice)).unwrap_err();
+        assert!(error.to_string().contains("repeats"), "{error}");
     }
 
     #[test]

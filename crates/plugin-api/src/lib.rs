@@ -15,6 +15,8 @@ mod process;
 #[doc(hidden)]
 pub mod rpc;
 mod serve;
+mod serve_sources;
+mod source;
 mod tool;
 #[doc(hidden)]
 pub mod wire;
@@ -27,9 +29,14 @@ pub use capability::{
     RecordsCapability, RunWorkflow, check_batch,
 };
 pub use manifest::{
-    API_VERSION, ManifestError, PluginCapability, PluginManifest, RESERVED_NAMES, ToolManifest,
+    API_VERSION, ManifestError, PluginCapability, PluginManifest, RESERVED_NAMES, SourceManifest,
+    SourceVectors, ToolManifest,
 };
 pub use process::{serve_plugin, serve_plugin_stdio};
+pub use source::{
+    MAX_HIT_TEXT, MAX_ITEM_ID, MAX_ITEM_TEXT, MAX_ITEM_TITLE, MAX_ITEM_URL, MAX_SOURCE_HITS,
+    Source, SourceFound, SourceItem, SourceQuery,
+};
 // The runtime's side of MCP. It isn't part of the plugin contract and can
 // change in any release.
 #[doc(hidden)]

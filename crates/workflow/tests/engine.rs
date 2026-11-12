@@ -131,6 +131,7 @@ async fn harness(script: Vec<ChaosStep>, extra: Vec<Arc<Fake>>, log: Arc<Recorde
             time_limit: Duration::from_secs(20),
         },
         stop: dispatch::StopSignal::new(),
+        sources: workflow::SourceChoices::default(),
     };
     Harness {
         engine,
@@ -537,6 +538,7 @@ fn candidate(tools: &[&str]) -> workflow::Agent {
         tools: tools.iter().map(|tool| (*tool).to_owned()).collect(),
         budget: None,
         max_output_tokens: None,
+        memory: None,
     }
 }
 

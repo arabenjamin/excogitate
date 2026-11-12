@@ -8,6 +8,7 @@ use dispatch::{
     SessionConfig, StopSignal, ToolRegistry, harness_id,
 };
 use events::EventSink;
+use memory::{ChoiceHeld, SourceChoices};
 use model::{Gateway, Message, ToolCall};
 use protocol::{DataClass, RunId};
 use schema::{Validator, bounded};
@@ -274,6 +275,8 @@ pub struct Engine {
     /// Given when the runtime stops: every run it started ends early, with
     /// its receipt.
     pub stop: StopSignal,
+    /// The sources each agent's run may read, as its definition says.
+    pub sources: SourceChoices,
 }
 
 /// The workflow named, once `inputs` are checked against it.
@@ -707,6 +710,8 @@ impl Engine {
             subject,
             probe,
         )?;
+        // Held while it runs: its memory reads only the sources it names.
+        let _chosen = self.choose_sources(session.run(), agent);
         Ok(session
             .converse(
                 &self.gateway,
@@ -765,6 +770,16 @@ impl Engine {
         };
         self.converse_as(name, &subject, &agent, question, left, probe)
             .await
+    }
+
+    /// Limits `run`'s memory to the sources `agent` names, if it names any,
+    /// until what's returned is dropped.
+    #[must_use]
+    pub fn choose_sources(&self, run: RunId, agent: &Agent) -> Option<ChoiceHeld> {
+        agent
+            .memory
+            .as_ref()
+            .map(|memory| self.sources.choose(run, &memory.sources))
     }
 
     async fn run_agent(

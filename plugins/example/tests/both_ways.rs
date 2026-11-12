@@ -7,7 +7,10 @@ use std::sync::Arc;
 use dispatch::{Budget, CallStatus, Outcome, Session, SessionConfig, ToolRegistry};
 use events::MemorySink;
 use model::ToolCall;
-use plugin_api::{DataClass, FieldFilter, FieldOp, FieldValue, PageRequest, RecordQuery, RunId};
+use plugin_api::{
+    DataClass, FieldFilter, FieldOp, FieldValue, PageRequest, RecordQuery, RunId, SourceQuery,
+    ToolContext,
+};
 use plugin_example::{ExamplePlugin, MANIFEST};
 use plugin_host::{HostError, PluginHost, PluginsConfig, ServiceSpec};
 use serde_json::{Value, json};
@@ -28,7 +31,8 @@ fn config(text: &str) -> PluginsConfig {
     PluginsConfig::from_yaml(text).unwrap()
 }
 
-const GRANTED: &str = "version: 1\nplugins:\n  - {name: example, capabilities: [records]}\n";
+const GRANTED: &str =
+    "version: 1\nplugins:\n  - {name: example, capabilities: [records, sources]}\n";
 
 fn session(registry: ToolRegistry, offered: &[&str]) -> Session {
     Session::new(
@@ -256,4 +260,56 @@ async fn a_service_that_stops_answering_fails_visibly() {
     spec.command = "/bin/true".to_owned();
     let error = host.install_service(MANIFEST, &spec).await.unwrap_err();
     assert!(error.to_string().contains("stopped"), "{error}");
+}
+
+/// Searches and reads the glossary as memory would.
+async fn check_glossary(host: &PluginHost) {
+    let sources = host.sources();
+    let [glossary] = sources.as_slice() else {
+        panic!("one source, not {}", sources.len());
+    };
+    assert_eq!(glossary.id, "example.glossary");
+    assert!(glossary.declared.public && glossary.declared.words);
+    let context = ToolContext::new(RunId::generate(), DataClass::Private, 0);
+    let found = glossary
+        .source
+        .search(SourceQuery::new("what does a receipt say", 5), context)
+        .await
+        .unwrap();
+    let first = found.hits.first().unwrap();
+    assert_eq!(first.id, "receipt");
+    assert_eq!(first.data_class, DataClass::Public);
+    let read = glossary.source.get("trajectory", context).await.unwrap();
+    assert_eq!(read.hits.len(), 1);
+    let none = glossary.source.get("nothing", context).await.unwrap();
+    assert_eq!(none.hits.len(), 0);
+}
+
+#[tokio::test]
+async fn both_ways_its_glossary_answers_searches_and_reads() {
+    let mut compiled = PluginHost::new(
+        Arc::new(MemoryStore::new(3)) as Arc<dyn Store>,
+        config(GRANTED),
+        ToolRegistry::new(),
+    );
+    compiled.install_compiled(&ExamplePlugin).await.unwrap();
+    check_glossary(&compiled).await;
+
+    let mut service = service_host();
+    service
+        .install_service(MANIFEST, &service_spec())
+        .await
+        .unwrap();
+    check_glossary(&service).await;
+}
+
+#[tokio::test]
+async fn without_the_sources_grant_it_does_not_install() {
+    let mut host = PluginHost::new(
+        Arc::new(MemoryStore::new(3)) as Arc<dyn Store>,
+        config("version: 1\nplugins:\n  - {name: example, capabilities: [records]}\n"),
+        ToolRegistry::new(),
+    );
+    let error = host.install_compiled(&ExamplePlugin).await.unwrap_err();
+    assert!(error.to_string().contains("Sources"), "{error}");
 }

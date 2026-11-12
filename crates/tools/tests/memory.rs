@@ -99,6 +99,7 @@ impl Embedder for Metered {
         Ok(Embedding {
             vectors: inputs.iter().map(|_| vec![1.0, 0.0, 0.0]).collect(),
             cost_usd_micros: 9,
+            model: None,
         })
     }
 }
@@ -374,4 +375,63 @@ async fn results_of_only_the_owners_notes_are_trusted() {
     .await
     .unwrap();
     assert_eq!(mixed.trust, Trust::Untrusted);
+}
+
+/// A source with one item about everything.
+#[derive(Debug)]
+struct OneItem;
+
+#[async_trait]
+impl plugin_api::Source for OneItem {
+    fn name(&self) -> &'static str {
+        "one"
+    }
+
+    async fn search(
+        &self,
+        _: plugin_api::SourceQuery,
+        _: ToolContext,
+    ) -> Result<plugin_api::SourceFound, ToolFailure> {
+        let item = plugin_api::SourceItem::new("i", "Item", "about otters");
+        Ok(plugin_api::SourceFound::new(vec![item]))
+    }
+
+    async fn get(&self, _: &str, _: ToolContext) -> Result<plugin_api::SourceFound, ToolFailure> {
+        Ok(plugin_api::SourceFound::default())
+    }
+}
+
+#[tokio::test]
+async fn a_run_limited_to_no_sources_reads_none() {
+    let memory = memory();
+    memory
+        .attach_sources(vec![memory::LakeSource {
+            id: "demo.one".to_owned(),
+            public: false,
+            words: true,
+            vectors_from: std::collections::BTreeSet::new(),
+            dimension: None,
+            time_limit: std::time::Duration::from_secs(1),
+            source: Arc::new(OneItem),
+        }])
+        .unwrap();
+    let choices = memory::SourceChoices::default();
+    let tool = MemoryTool::new(memory).with_choices(choices.clone());
+    let search = json!({ "operation": "search", "query": "otters" });
+
+    let open_run = private();
+    let found = call(&tool, search.clone(), open_run).await.unwrap();
+    assert_eq!(found.value["sources"][0]["source"], "demo.one");
+    assert_eq!(found.trust, Trust::Untrusted);
+
+    let narrow_run = private();
+    let held = choices.choose(narrow_run.run, &[]);
+    let found = call(&tool, search.clone(), narrow_run).await.unwrap();
+    assert_eq!(found.value["sources"], json!([]));
+    drop(held);
+    let found = call(&tool, search, narrow_run).await.unwrap();
+    assert_eq!(
+        found.value["sources"][0]["id"], "i",
+        "the choice ends with its run"
+    );
 }

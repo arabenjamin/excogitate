@@ -728,6 +728,96 @@ pub fn error_of(code: i64, message: &str) -> CapabilityError {
     }
 }
 
+/// The JSON-RPC method the host searches a process's source with.
+pub const SOURCE_SEARCH_METHOD: &str = "sources/search";
+/// The JSON-RPC method the host reads one item of a process's source with.
+pub const SOURCE_GET_METHOD: &str = "sources/get";
+
+/// A search of one source, as the host sends it. The call's context travels
+/// in `_meta`, as a tool call's does.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[allow(missing_docs, reason = "the fields are SourceQuery's")]
+pub struct WireSourceSearch {
+    /// The source's name.
+    #[schemars(length(max = 32))]
+    pub source: String,
+    #[schemars(length(max = 1024))]
+    pub text: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(length(max = 65_536))]
+    pub vector: Option<Vec<f32>>,
+    #[schemars(range(min = 1, max = crate::MAX_SOURCE_HITS))]
+    pub limit: u32,
+}
+
+/// A read of one item of a source, as the host sends it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct WireSourceGet {
+    /// The source's name.
+    #[schemars(length(max = 32))]
+    pub source: String,
+    /// The item's id.
+    #[schemars(length(max = crate::MAX_ITEM_ID))]
+    pub id: String,
+}
+
+/// One item of a source, on the wire.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[allow(missing_docs, reason = "the fields are SourceItem's")]
+pub struct WireSourceItem {
+    pub id: String,
+    pub title: String,
+    pub text: String,
+    /// True if the source says the item is public.
+    #[serde(default)]
+    pub public: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_url: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub updated_at: Option<DateTime<Utc>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub similarity: Option<f32>,
+}
+
+impl From<crate::SourceItem> for WireSourceItem {
+    fn from(item: crate::SourceItem) -> Self {
+        Self {
+            id: item.id,
+            title: item.title,
+            text: item.text,
+            public: item.data_class == DataClass::Public,
+            source_url: item.source_url,
+            updated_at: item.updated_at,
+            similarity: item.similarity,
+        }
+    }
+}
+
+impl From<WireSourceItem> for crate::SourceItem {
+    fn from(item: WireSourceItem) -> Self {
+        let class = if item.public {
+            DataClass::Public
+        } else {
+            DataClass::Private
+        };
+        let mut built = Self::new(item.id, item.title, item.text).with_data_class(class);
+        built.source_url = item.source_url;
+        built.updated_at = item.updated_at;
+        built.similarity = item.similarity;
+        built
+    }
+}
+
+/// What a search of a source found, or the one item read, on the wire.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[allow(missing_docs, reason = "the fields are SourceFound's")]
+pub struct WireSourceFound {
+    #[schemars(length(max = crate::MAX_SOURCE_HITS))]
+    pub hits: Vec<WireSourceItem>,
+    #[serde(default)]
+    pub cost_usd_micros: u64,
+}
+
 /// The context a tool call carries to a plugin process, in `_meta`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]

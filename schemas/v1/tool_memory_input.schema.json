@@ -6,7 +6,8 @@
         "search",
         "get",
         "update",
-        "delete"
+        "delete",
+        "open"
       ],
       "type": "string"
     }
@@ -114,6 +115,36 @@
       "if": {
         "properties": {
           "operation": {
+            "const": "open"
+          }
+        },
+        "required": [
+          "operation"
+        ]
+      },
+      "then": {
+        "properties": {
+          "item": {
+            "not": {
+              "type": "null"
+            }
+          },
+          "source": {
+            "not": {
+              "type": "null"
+            }
+          }
+        },
+        "required": [
+          "source",
+          "item"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "operation": {
             "const": "update"
           }
         },
@@ -140,6 +171,15 @@
     "id": {
       "description": "The note to read, change or delete.",
       "format": "uuid",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "item": {
+      "description": "For `open`: the item's id, as a search gave it.",
+      "maxLength": 256,
+      "minLength": 1,
       "type": [
         "string",
         "null"
@@ -172,6 +212,15 @@
     "query": {
       "description": "What to search for.",
       "maxLength": 1024,
+      "minLength": 1,
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "source": {
+      "description": "For `open`: the source the item is in, as a search named it.",
+      "maxLength": 64,
       "minLength": 1,
       "type": [
         "string",

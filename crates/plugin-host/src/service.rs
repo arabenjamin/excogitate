@@ -13,11 +13,15 @@ use async_trait::async_trait;
 use dispatch::{Tool, ToolContext, ToolDefinition, ToolFailure, ToolOutput};
 use plugin_api::rpc::{self, INVALID_PARAMS, METHOD_NOT_FOUND, Peer, RpcError, failure, success};
 use plugin_api::wire::{
-    CAPABILITY_METHOD, CONTEXT_META, CapabilityCall, CapabilityRequest, WireContext,
-    WireHttpResponse, WireModelReply, error_code, error_message, page_of, query_of, wire_page,
+    CAPABILITY_METHOD, CONTEXT_META, CapabilityCall, CapabilityRequest, SOURCE_GET_METHOD,
+    SOURCE_SEARCH_METHOD, WireContext, WireHttpResponse, WireModelReply, WireSourceFound,
+    WireSourceGet, WireSourceSearch, error_code, error_message, page_of, query_of, wire_page,
     wire_record,
 };
-use plugin_api::{Capabilities, CapabilityError, HttpRequest, MCP_VERSION, PluginManifest};
+use plugin_api::{
+    Capabilities, CapabilityError, HttpRequest, MCP_VERSION, PluginManifest, Source, SourceFound,
+    SourceItem, SourceQuery,
+};
 use protocol::{DataClass, Trust};
 use schema::{Validator, bounded};
 use serde_json::{Value, json};
@@ -515,14 +519,18 @@ impl Drop for EndCall<'_> {
     }
 }
 
+/// What a started process offers: its tools and its sources.
+pub(crate) type Offered = (Vec<Arc<dyn Tool>>, Vec<Arc<dyn Source>>);
+
 /// Starts the process and checks it against the manifest. Returns one tool
-/// per declared tool. The manifest is the authority: a server can't offer
-/// more than it declares, or loosen a declared schema.
+/// per declared tool, and one source per declared source. The manifest is
+/// the authority: a server can't offer more than it declares, or loosen a
+/// declared schema.
 pub(crate) async fn start(
     manifest: &PluginManifest,
     spec: &ServiceSpec,
     capabilities: Capabilities,
-) -> Result<Vec<Arc<dyn Tool>>, ServiceError> {
+) -> Result<Offered, ServiceError> {
     let connection = Arc::new(Connection::open(spec, capabilities)?);
     let params = json!({
         "protocolVersion": MCP_VERSION,
@@ -558,7 +566,86 @@ pub(crate) async fn start(
             "it serves tools its manifest doesn't declare".to_owned(),
         ));
     }
-    Ok(tools)
+    let sources = manifest
+        .sources
+        .iter()
+        .map(|declared| {
+            Arc::new(ServiceSource {
+                name: declared.name.clone(),
+                connection: Arc::clone(&connection),
+            }) as Arc<dyn Source>
+        })
+        .collect();
+    Ok((tools, sources))
+}
+
+/// A source in a plugin's process, reached over its connection.
+#[derive(Debug)]
+struct ServiceSource {
+    name: String,
+    connection: Arc<Connection>,
+}
+
+impl ServiceSource {
+    /// Sends `params` with the call's context, as a tool call does, so the
+    /// process may use its capabilities for it while it runs.
+    async fn ask(
+        &self,
+        method: &str,
+        mut params: Value,
+        context: ToolContext,
+    ) -> Result<SourceFound, ToolFailure> {
+        let serving = self.connection.host.begin(context);
+        let sent = WireContext {
+            run: context.run.as_uuid(),
+            public: context.data_class == DataClass::Public,
+            budget_usd_micros: context.budget_usd_micros,
+            call: serving.token(),
+        };
+        if let Some(fields) = params.as_object_mut() {
+            fields.insert("_meta".to_owned(), json!({ CONTEXT_META: sent }));
+        }
+        let reply = self.connection.request(method, params).await;
+        drop(serving);
+        let reply = reply.map_err(|error| ToolFailure::new(bounded(&error.to_string())))?;
+        let found: WireSourceFound = serde_json::from_value(reply)
+            .map_err(|error| ToolFailure::new(bounded(&format!("the source's answer: {error}"))))?;
+        Ok(
+            SourceFound::new(found.hits.into_iter().map(SourceItem::from).collect())
+                .with_cost(found.cost_usd_micros),
+        )
+    }
+}
+
+#[async_trait]
+impl Source for ServiceSource {
+    fn name(&self) -> &str {
+        &self.name
+    }
+
+    async fn search(
+        &self,
+        query: SourceQuery,
+        context: ToolContext,
+    ) -> Result<SourceFound, ToolFailure> {
+        let asked = WireSourceSearch {
+            source: self.name.clone(),
+            text: query.text,
+            vector: query.vector,
+            limit: query.limit,
+        };
+        let params = serde_json::to_value(asked).map_err(|error| error.to_string())?;
+        self.ask(SOURCE_SEARCH_METHOD, params, context).await
+    }
+
+    async fn get(&self, id: &str, context: ToolContext) -> Result<SourceFound, ToolFailure> {
+        let asked = WireSourceGet {
+            source: self.name.clone(),
+            id: id.to_owned(),
+        };
+        let params = serde_json::to_value(asked).map_err(|error| error.to_string())?;
+        self.ask(SOURCE_GET_METHOD, params, context).await
+    }
 }
 
 #[derive(Debug)]

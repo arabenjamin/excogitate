@@ -9,6 +9,7 @@
 //! Messages are read and written concurrently, so a tool waiting on the
 //! host's answer doesn't stop that answer being read.
 
+use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use async_trait::async_trait;
@@ -18,6 +19,7 @@ use store::{Direction, Page, PageRequest, Record, RecordId, RecordQuery};
 use tokio::io::{AsyncRead, AsyncWrite};
 
 use crate::rpc::{self, Peer, RpcError};
+use crate::serve_sources::PluginHandler;
 use crate::wire::{
     CAPABILITY_METHOD, CapabilityCall, CapabilityRequest, WireHttpResponse, WireModelReply,
     WirePage, WireRecord, error_of, http_call, page_from, query_call, record_of,
@@ -302,6 +304,8 @@ fn remote_capabilities(manifest: &PluginManifest, link: &Arc<Link>) -> Capabilit
             PluginCapability::Jobs => {
                 capabilities.jobs = Some(Arc::new(RemoteJobs(Arc::clone(link))));
             }
+            // Offered, not asked for: there's nothing to call back.
+            PluginCapability::Sources => {}
         }
     }
     capabilities
@@ -324,7 +328,24 @@ where
     let tools = plugin
         .tools(&remote_capabilities(&manifest, &link))
         .map_err(std::io::Error::other)?;
-    let handler = Arc::new(McpHandler::new(&manifest.name, &manifest.version, tools)?);
+    let capabilities = remote_capabilities(&manifest, &link);
+    let sources = plugin
+        .sources(&capabilities)
+        .map_err(std::io::Error::other)?;
+    let declared: BTreeSet<&str> = manifest.sources.iter().map(|s| s.name.as_str()).collect();
+    let built: BTreeSet<&str> = sources.iter().map(|source| source.name()).collect();
+    if declared != built || built.len() != sources.len() {
+        return Err(std::io::Error::other(
+            "its sources aren't the ones its manifest declares",
+        ));
+    }
+    let handler = Arc::new(PluginHandler {
+        mcp: McpHandler::new(&manifest.name, &manifest.version, tools)?,
+        sources: sources
+            .iter()
+            .map(|source| (source.name().to_owned(), Arc::clone(source)))
+            .collect(),
+    });
     peer.run(io, reader, writer, handler).await
 }
 

@@ -2,6 +2,7 @@
 //! this uses only each chunk's rank.
 
 use std::collections::HashMap;
+use std::hash::Hash;
 
 use store::{ChunkHit, ChunkId};
 
@@ -19,30 +20,46 @@ pub struct FusedChunk {
 
 /// Reciprocal rank fusion, best first, with ties broken by chunk id.
 #[must_use]
+pub fn fuse(lists: &[&[ChunkHit]]) -> Vec<FusedChunk> {
+    let mut hits: HashMap<ChunkId, &ChunkHit> = HashMap::new();
+    let keys: Vec<Vec<ChunkId>> = lists
+        .iter()
+        .map(|list| {
+            list.iter()
+                .map(|hit| {
+                    hits.entry(hit.chunk.id).or_insert(hit);
+                    hit.chunk.id
+                })
+                .collect()
+        })
+        .collect();
+    fuse_keys(&keys)
+        .into_iter()
+        .filter_map(|(id, score)| {
+            hits.get(&id).map(|hit| FusedChunk {
+                hit: (*hit).clone(),
+                score,
+            })
+        })
+        .collect()
+}
+
+/// Reciprocal rank fusion of lists of anything with an identity, best
+/// first, with ties broken by that identity.
+#[must_use]
 #[expect(
     clippy::cast_precision_loss,
     reason = "ranks are far below f32's exact range"
 )]
-pub fn fuse(lists: &[&[ChunkHit]]) -> Vec<FusedChunk> {
-    let mut merged: HashMap<ChunkId, FusedChunk> = HashMap::new();
+pub(crate) fn fuse_keys<K: Clone + Eq + Hash + Ord>(lists: &[Vec<K>]) -> Vec<(K, f32)> {
+    let mut merged: HashMap<K, f32> = HashMap::new();
     for list in lists {
-        for (rank, hit) in list.iter().enumerate() {
-            let score = 1.0 / (RRF_K + rank as f32 + 1.0);
-            merged
-                .entry(hit.chunk.id)
-                .and_modify(|fused| fused.score += score)
-                .or_insert_with(|| FusedChunk {
-                    hit: hit.clone(),
-                    score,
-                });
+        for (rank, key) in list.iter().enumerate() {
+            *merged.entry(key.clone()).or_insert(0.0) += 1.0 / (RRF_K + rank as f32 + 1.0);
         }
     }
-    let mut ranked: Vec<FusedChunk> = merged.into_values().collect();
-    ranked.sort_by(|a, b| {
-        b.score
-            .total_cmp(&a.score)
-            .then_with(|| a.hit.chunk.id.cmp(&b.hit.chunk.id))
-    });
+    let mut ranked: Vec<(K, f32)> = merged.into_iter().collect();
+    ranked.sort_by(|(a, one), (b, other)| other.total_cmp(one).then_with(|| a.cmp(b)));
     ranked
 }
 

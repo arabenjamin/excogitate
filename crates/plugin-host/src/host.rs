@@ -2,14 +2,16 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
+use std::time::Duration;
 
 use dispatch::{RegistryError, ToolRegistry};
 use plugin_api::{
-    Capabilities, ManifestError, Plugin, PluginCapability, PluginError, PluginManifest, Tool,
+    Capabilities, ManifestError, Plugin, PluginCapability, PluginError, PluginManifest, Source,
+    SourceManifest, Tool,
 };
 use store::{Store, StoreError};
 
-use crate::guarded::{CapabilityMeter, CapabilitySource, GuardedTool};
+use crate::guarded::{CapabilityMeter, CapabilitySource, GuardedSource, GuardedTool};
 use crate::service::{self, ServiceError, ServiceSpec};
 use crate::{PluginsConfig, ScopedRecords};
 
@@ -87,6 +89,46 @@ pub struct PluginHost {
     registry: ToolRegistry,
     installed: BTreeSet<String>,
     source: Option<Arc<dyn CapabilitySource>>,
+    sources: Vec<PluginSource>,
+}
+
+/// A source a plugin offers memory, as installed.
+#[derive(Debug, Clone)]
+#[non_exhaustive]
+pub struct PluginSource {
+    /// What memory calls it: `plugin.name`.
+    pub id: String,
+    /// What its manifest declares about it.
+    pub declared: SourceManifest,
+    /// How long one search of it may take.
+    pub time_limit: Duration,
+    /// The source.
+    pub source: Arc<dyn Source>,
+}
+
+fn compare_sources(
+    manifest: &PluginManifest,
+    sources: &[Arc<dyn Source>],
+) -> Result<(), HostError> {
+    let declared: BTreeSet<&str> = manifest
+        .sources
+        .iter()
+        .map(|source| source.name.as_str())
+        .collect();
+    let built: BTreeSet<&str> = sources.iter().map(|source| source.name()).collect();
+    if declared == built && built.len() == sources.len() {
+        return Ok(());
+    }
+    Err(HostError::ToolMismatch {
+        plugin: manifest.name.clone(),
+        problem: format!(
+            "it declares the sources {declared:?} and built {:?}",
+            sources
+                .iter()
+                .map(|source| source.name())
+                .collect::<Vec<_>>()
+        ),
+    })
 }
 
 /// What a plugin is handed, and how its tools must be guarded.
@@ -158,6 +200,7 @@ impl PluginHost {
             registry,
             installed: BTreeSet::new(),
             source: None,
+            sources: Vec::new(),
         }
     }
 
@@ -230,6 +273,8 @@ impl PluginHost {
                     let meter = Arc::clone(meter.get_or_insert_with(Arc::default));
                     capabilities.jobs = Some(source.jobs(&manifest.name, meter));
                 }
+                // Offered, not handed out: its sources are checked when built.
+                PluginCapability::Sources => {}
                 _ => return Err(not_available(capability)),
             }
         }
@@ -245,13 +290,39 @@ impl PluginHost {
         })
     }
 
-    fn register_tools(
+    fn register(
         &mut self,
         manifest: &PluginManifest,
         tools: Vec<Arc<dyn Tool>>,
+        sources: Vec<Arc<dyn Source>>,
+        granted: &Granted,
     ) -> Result<(), HostError> {
-        for tool in tools {
+        for tool in guard(tools, granted) {
             self.registry.register(tool)?;
+        }
+        let time_limit = self.config.source_time_limit(&manifest.name);
+        for inner in sources {
+            let Some(declared) = manifest
+                .sources
+                .iter()
+                .find(|declared| declared.name == inner.name())
+            else {
+                continue;
+            };
+            let source: Arc<dyn Source> = if granted.guarded {
+                Arc::new(GuardedSource {
+                    inner,
+                    meter: granted.meter.clone(),
+                })
+            } else {
+                inner
+            };
+            self.sources.push(PluginSource {
+                id: format!("{}.{}", manifest.name, declared.name),
+                declared: declared.clone(),
+                time_limit,
+                source,
+            });
         }
         self.installed.insert(manifest.name.clone());
         Ok(())
@@ -273,9 +344,15 @@ impl PluginHost {
                 source,
             })?;
         compare_tools(&manifest, &tools)?;
-        let tools = guard(tools, &granted);
+        let sources = plugin
+            .sources(&granted.capabilities)
+            .map_err(|source| HostError::Setup {
+                plugin: manifest.name.clone(),
+                source,
+            })?;
+        compare_sources(&manifest, &sources)?;
         self.declare_records(&manifest).await?;
-        self.register_tools(&manifest, tools)
+        self.register(&manifest, tools, sources, &granted)
     }
 
     async fn declare_records(&self, manifest: &PluginManifest) -> Result<(), HostError> {
@@ -308,21 +385,27 @@ impl PluginHost {
         self.claim_name(&manifest)?;
         let granted = self.capabilities(&manifest)?;
         self.declare_records(&manifest).await?;
-        let tools = service::start(&manifest, spec, granted.capabilities.clone())
+        let (tools, sources) = service::start(&manifest, spec, granted.capabilities.clone())
             .await
             .map_err(|source| HostError::Service {
                 plugin: manifest.name.clone(),
                 source,
             })?;
         compare_tools(&manifest, &tools)?;
-        let tools = guard(tools, &granted);
-        self.register_tools(&manifest, tools)
+        compare_sources(&manifest, &sources)?;
+        self.register(&manifest, tools, sources, &granted)
     }
 
     /// The names installed.
     #[must_use]
     pub fn installed(&self) -> Vec<String> {
         self.installed.iter().cloned().collect()
+    }
+
+    /// The sources the plugins offer memory, in the order installed.
+    #[must_use]
+    pub fn sources(&self) -> Vec<PluginSource> {
+        self.sources.clone()
     }
 
     /// The finished registry, ready for sessions.

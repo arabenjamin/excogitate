@@ -36,6 +36,9 @@ pub struct Embedding {
     pub vectors: Vec<Vec<f32>>,
     /// What it cost, in millionths of a dollar.
     pub cost_usd_micros: u64,
+    /// The model that made them, as the catalog names it, if known. A
+    /// source takes the query's vector only from a model it declares.
+    pub model: Option<String>,
 }
 
 /// Turns text into vectors.
@@ -109,6 +112,7 @@ impl Embedder for GatewayEmbedder {
             .map(|embedded| Embedding {
                 vectors: embedded.vectors,
                 cost_usd_micros: embedded.cost_usd_micros,
+                model: Some(embedded.model),
             })
             .map_err(|error| EmbedError {
                 try_shorter: may_be_length(&error),

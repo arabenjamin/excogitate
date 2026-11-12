@@ -6,10 +6,10 @@ use std::time::Duration;
 
 use dispatch::{StopSignal, ToolRegistry};
 use events::EventSink;
-use memory::{ChunkConfig, Embedder, GatewayEmbedder, Memory};
+use memory::{ChunkConfig, Embedder, GatewayEmbedder, LakeSource, Memory, SourceChoices};
 use model::{Capability, Catalog, Gateway, OpenAiClient};
 use plugin_api::{Plugin, PluginManifest, Tool};
-use plugin_host::{HostError, PluginHost, PluginsConfig, ProcessConfig, ServiceSpec};
+use plugin_host::{HostError, PluginHost, PluginSource, PluginsConfig, ProcessConfig, ServiceSpec};
 use store::Store;
 use tools::{HttpConfigError, HttpRequestTool, MemoryTool};
 use workflow::{DELEGATE_TOOL, Engine, EngineLimits};
@@ -98,6 +98,72 @@ pub struct Runtime {
     pub(crate) changing: Arc<tokio::sync::Mutex<()>>,
     /// The plugins installed, by name.
     pub(crate) plugins: Arc<Vec<String>>,
+    /// The sources memory reads, as `plugin.name`.
+    pub(crate) sources: Arc<Vec<String>>,
+}
+
+/// The parts made before plugins are installed.
+struct Bundled {
+    gateway: Arc<Gateway>,
+    registry: ToolRegistry,
+    http: Arc<HttpRequestTool>,
+    memory: Memory,
+    choices: SourceChoices,
+}
+
+/// The catalog's embedding models, as `(name, wire model, width)`.
+fn embedders(catalog: &Catalog) -> Vec<(String, String, usize)> {
+    catalog
+        .models()
+        .iter()
+        .filter(|model| model.can(Capability::Embeddings))
+        .filter_map(|model| {
+            let width = model.embedding_dimension?;
+            Some((model.name.clone(), model.wire_model.clone(), width))
+        })
+        .collect()
+}
+
+/// A plugin's source as memory reads it: the catalog models whose vectors it
+/// takes are those named as it names its model, at its width. A source that
+/// takes vectors no model here makes, and can't be searched by words, is
+/// refused, so it doesn't sit there looking healthy and finding nothing.
+fn lake_source(
+    offered: PluginSource,
+    embedders: &[(String, String, usize)],
+) -> Result<LakeSource, RuntimeError> {
+    let wanted = offered.declared.vectors.as_ref();
+    let dimension = wanted.and_then(|vectors| usize::try_from(vectors.dimension).ok());
+    let vectors_from = wanted
+        .map(|vectors| {
+            embedders
+                .iter()
+                .filter(|(name, wire, width)| {
+                    (*name == vectors.model || *wire == vectors.model) && Some(*width) == dimension
+                })
+                .map(|(name, ..)| name.clone())
+                .collect()
+        })
+        .unwrap_or_default();
+    if let Some(vectors) = wanted
+        && !offered.declared.words
+        && std::collections::BTreeSet::is_empty(&vectors_from)
+    {
+        return Err(RuntimeError::Config(format!(
+            "source {} is searched only by vectors from {} at width {}, and no embedding model \
+             in the catalog makes them",
+            offered.id, vectors.model, vectors.dimension
+        )));
+    }
+    Ok(LakeSource {
+        id: offered.id,
+        public: offered.declared.public,
+        words: offered.declared.words,
+        vectors_from,
+        dimension,
+        time_limit: offered.time_limit,
+        source: offered.source,
+    })
 }
 
 /// The width of the vectors, if the catalog has an embedding model.
@@ -130,8 +196,8 @@ impl Runtime {
         config: Config,
         secret_of: &dyn Fn(&str) -> Option<String>,
     ) -> Result<Self, RuntimeError> {
-        let (gateway, registry, _, _) = Self::bundled(&store, catalog, &config, secret_of)?;
-        Self::finish(store, sink, gateway, registry, config)
+        let parts = Self::bundled(&store, catalog, &config, secret_of)?;
+        Self::finish(store, sink, parts, config)
     }
 
     /// Puts the parts together with plugins installed. Each is checked
@@ -149,12 +215,13 @@ impl Runtime {
         secret_of: &dyn Fn(&str) -> Option<String>,
         plugins: Plugins,
     ) -> Result<Self, RuntimeError> {
-        let (gateway, registry, http, memory) = Self::bundled(&store, catalog, &config, secret_of)?;
+        let embedders = embedders(&catalog);
+        let mut parts = Self::bundled(&store, catalog, &config, secret_of)?;
         let source = RuntimeCapabilities {
-            http,
-            gateway: Arc::clone(&gateway),
+            http: Arc::clone(&parts.http),
+            gateway: Arc::clone(&parts.gateway),
             max_output_tokens: config.max_output_tokens,
-            memory,
+            memory: parts.memory.clone(),
             store: Arc::clone(&store),
         };
         let processes: Vec<(String, ProcessConfig)> = plugins
@@ -163,6 +230,7 @@ impl Runtime {
             .iter()
             .filter_map(|plugin| Some((plugin.name.clone(), plugin.process.clone()?)))
             .collect();
+        let registry = std::mem::take(&mut parts.registry);
         let mut host = PluginHost::new(Arc::clone(&store), plugins.grants, registry)
             .with_capabilities(Arc::new(source));
         for plugin in &plugins.compiled {
@@ -172,8 +240,20 @@ impl Runtime {
             install_process(&mut host, &name, &process).await?;
         }
         let installed = host.installed();
-        let mut runtime = Self::finish(store, sink, gateway, host.into_registry(), config)?;
+        let lake = host
+            .sources()
+            .into_iter()
+            .map(|offered| lake_source(offered, &embedders))
+            .collect::<Result<Vec<_>, _>>()?;
+        let source_ids = lake.iter().map(|source| source.id.clone()).collect();
+        parts
+            .memory
+            .attach_sources(lake)
+            .map_err(|error| RuntimeError::Config(error.to_string()))?;
+        parts.registry = host.into_registry();
+        let mut runtime = Self::finish(store, sink, parts, config)?;
         runtime.plugins = Arc::new(installed);
+        runtime.sources = Arc::new(source_ids);
         Ok(runtime)
     }
 
@@ -184,7 +264,7 @@ impl Runtime {
         catalog: Catalog,
         config: &Config,
         secret_of: &dyn Fn(&str) -> Option<String>,
-    ) -> Result<(Arc<Gateway>, ToolRegistry, Arc<HttpRequestTool>, Memory), RuntimeError> {
+    ) -> Result<Bundled, RuntimeError> {
         let dimension = embedding_dimension(&catalog);
         let client =
             OpenAiClient::new().map_err(|error| RuntimeError::Client(error.to_string()))?;
@@ -201,21 +281,35 @@ impl Runtime {
             )) as Arc<dyn Embedder>
         });
         let memory = Memory::new(Arc::clone(store), embedder, ChunkConfig::default());
+        let choices = SourceChoices::default();
         let mut registry = ToolRegistry::new();
-        registry.register(Arc::new(MemoryTool::new(memory.clone())))?;
+        registry.register(Arc::new(
+            MemoryTool::new(memory.clone()).with_choices(choices.clone()),
+        ))?;
         let http = Arc::new(HttpRequestTool::new(&config.http, secret_of)?);
         registry.register(Arc::clone(&http) as Arc<dyn Tool>)?;
-        Ok((gateway, registry, http, memory))
+        Ok(Bundled {
+            gateway,
+            registry,
+            http,
+            memory,
+            choices,
+        })
     }
 
     /// The rest, once every tool is in the registry.
     fn finish(
         store: Arc<dyn Store>,
         sink: Arc<dyn EventSink>,
-        gateway: Arc<Gateway>,
-        registry: ToolRegistry,
+        parts: Bundled,
         config: Config,
     ) -> Result<Self, RuntimeError> {
+        let Bundled {
+            gateway,
+            registry,
+            choices,
+            ..
+        } = parts;
         let mut names: Vec<String> = registry
             .definitions()
             .into_iter()
@@ -257,6 +351,7 @@ impl Runtime {
                 limits,
                 stop: stop.clone(),
                 probe_reads: config.harness.probe_reads.iter().cloned().collect(),
+                sources: choices.clone(),
             };
             if let Err(error) = registry.register(Arc::new(delegate)) {
                 refused = Some(error);
@@ -273,6 +368,7 @@ impl Runtime {
             store,
             limits,
             stop,
+            sources: choices,
         };
         Ok(Self {
             registry,
@@ -283,6 +379,7 @@ impl Runtime {
             definitions: None,
             changing: Arc::new(tokio::sync::Mutex::new(())),
             plugins: Arc::new(Vec::new()),
+            sources: Arc::new(Vec::new()),
         })
     }
 

@@ -112,6 +112,7 @@ impl Embedder for MeaningEmbedder {
         Ok(Embedding {
             vectors: inputs.iter().map(|text| self.vector(text)).collect(),
             cost_usd_micros: 0,
+            model: None,
         })
     }
 }

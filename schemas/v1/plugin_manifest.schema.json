@@ -92,6 +92,11 @@
           "const": "jobs",
           "description": "Workflow runs started as jobs, and the state of the ones it started.",
           "type": "string"
+        },
+        {
+          "const": "sources",
+          "description": "Offering memory the sources its manifest declares.",
+          "type": "string"
         }
       ]
     },
@@ -180,6 +185,74 @@
       ],
       "type": "object"
     },
+    "SourceManifest": {
+      "additionalProperties": false,
+      "description": "One source, as its plugin declares it.",
+      "properties": {
+        "description": {
+          "description": "What it holds, for whoever chooses an agent's sources.",
+          "maxLength": 1024,
+          "type": "string"
+        },
+        "name": {
+          "description": "Its name. Memory names it `plugin.name`.",
+          "maxLength": 32,
+          "minLength": 1,
+          "pattern": "^[a-z][a-z0-9_]*$",
+          "type": "string"
+        },
+        "public": {
+          "default": false,
+          "description": "Whether its items may carry their own class. A source that isn't\npublic is private: every item it returns is.",
+          "type": "boolean"
+        },
+        "vectors": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SourceVectors"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The vectors it holds, if it can be searched by them."
+        },
+        "words": {
+          "default": false,
+          "description": "Whether it can be searched by words.",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "name",
+        "description"
+      ],
+      "type": "object"
+    },
+    "SourceVectors": {
+      "additionalProperties": false,
+      "description": "The vectors a source holds: the query's vector reaches it only when the\nruntime embedded the query with this model, at this width.",
+      "properties": {
+        "dimension": {
+          "description": "The width of its vectors.",
+          "format": "uint32",
+          "maximum": 65536,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "model": {
+          "description": "The embedding model, as the deployment's model catalog names it or\nas its provider does.",
+          "maxLength": 128,
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "model",
+        "dimension"
+      ],
+      "type": "object"
+    },
     "ToolManifest": {
       "additionalProperties": false,
       "description": "One tool, as its plugin declares it.",
@@ -261,6 +334,14 @@
         }
       ],
       "description": "The record types and relations it keeps."
+    },
+    "sources": {
+      "description": "What it offers memory to read. Needs the `sources` capability.",
+      "items": {
+        "$ref": "#/$defs/SourceManifest"
+      },
+      "maxItems": 8,
+      "type": "array"
     },
     "tools": {
       "description": "Its tools.",

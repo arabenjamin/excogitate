@@ -11,6 +11,6 @@ mod service;
 
 pub use config::{PluginConfig, PluginsConfig, ProcessConfig};
 pub use guarded::{CapabilityMeter, CapabilitySource};
-pub use host::{HostError, PluginHost};
+pub use host::{HostError, PluginHost, PluginSource};
 pub use records::ScopedRecords;
 pub use service::{ServiceError, ServiceSpec};

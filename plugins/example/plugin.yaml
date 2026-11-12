@@ -1,10 +1,18 @@
-# The compiled-in form: it keeps records, so it asks for that capability.
+# The compiled-in form: it keeps records, so it asks for that capability,
+# and it offers memory a source, so it asks for that too.
 api_version: 1
 name: example
 version: 0.0.0
-description: Counts words and keeps bookmarks. Copy this to start a plugin.
+description: Counts words, keeps bookmarks and offers a tiny glossary. Copy this to start a plugin.
 
-capabilities: [records]
+capabilities: [records, sources]
+
+# What memory reads beside its own notes. A real one would be a data lake.
+sources:
+  - name: glossary
+    description: A few words the runtime uses, and what they mean.
+    public: true
+    words: true
 
 records:
   types:

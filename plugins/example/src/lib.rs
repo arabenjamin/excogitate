@@ -6,8 +6,9 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use plugin_api::{
-    Capabilities, Plugin, PluginError, PluginManifest, RecordsCapability, Tool, ToolContext,
-    ToolDefinition, ToolFailure, ToolOutput, Trust,
+    Capabilities, DataClass, Plugin, PluginError, PluginManifest, RecordsCapability, Source,
+    SourceFound, SourceItem, SourceQuery, Tool, ToolContext, ToolDefinition, ToolFailure,
+    ToolOutput, Trust,
 };
 
 use serde_json::{Value, json};
@@ -83,6 +84,78 @@ impl Tool for BookmarkAdd {
     }
 }
 
+/// The glossary: a source small enough to read in full. A real source would
+/// search a lake; this one ranks its entries by the query's words they hold.
+const GLOSSARY: [(&str, &str, &str); 4] = [
+    (
+        "receipt",
+        "Receipt",
+        "What a run did and spent: its tool calls, model calls, cost and outcome.",
+    ),
+    (
+        "trajectory",
+        "Trajectory",
+        "Every step of a run, in order, as Harness² reads it to improve an agent.",
+    ),
+    (
+        "capability",
+        "Capability",
+        "Something a plugin asks the runtime for, such as records or HTTP, granted by name.",
+    ),
+    (
+        "source",
+        "Source",
+        "Something a plugin offers memory to read, searched beside memory's own notes.",
+    ),
+];
+
+/// The glossary as a source.
+#[derive(Debug)]
+pub struct Glossary;
+
+fn entry((id, title, text): (&str, &str, &str)) -> SourceItem {
+    SourceItem::new(id, title, text).with_data_class(DataClass::Public)
+}
+
+#[async_trait]
+impl Source for Glossary {
+    fn name(&self) -> &'static str {
+        "glossary"
+    }
+
+    async fn search(&self, query: SourceQuery, _: ToolContext) -> Result<SourceFound, ToolFailure> {
+        let words: Vec<String> = query
+            .text
+            .split(|c: char| !c.is_alphanumeric())
+            .filter(|word| word.chars().count() >= 3)
+            .map(str::to_lowercase)
+            .collect();
+        let mut ranked: Vec<(usize, SourceItem)> = GLOSSARY
+            .into_iter()
+            .map(|found| {
+                let text = format!("{} {}", found.1, found.2).to_lowercase();
+                let shared = words.iter().filter(|word| text.contains(*word)).count();
+                (shared, entry(found))
+            })
+            .filter(|(shared, _)| *shared > 0)
+            .collect();
+        ranked.sort_by(|(a, _), (b, _)| b.cmp(a));
+        let most = usize::try_from(query.limit).unwrap_or(usize::MAX);
+        Ok(SourceFound::new(
+            ranked
+                .into_iter()
+                .take(most)
+                .map(|(_, item)| item)
+                .collect(),
+        ))
+    }
+
+    async fn get(&self, id: &str, _: ToolContext) -> Result<SourceFound, ToolFailure> {
+        let found = GLOSSARY.into_iter().find(|(own, ..)| *own == id);
+        Ok(SourceFound::new(found.map(entry).into_iter().collect()))
+    }
+}
+
 /// The compiled-in form.
 #[derive(Debug)]
 pub struct ExamplePlugin;
@@ -100,5 +173,9 @@ impl Plugin for ExamplePlugin {
                 records: capabilities.records()?,
             }),
         ])
+    }
+
+    fn sources(&self, _: &Capabilities) -> Result<Vec<Arc<dyn Source>>, PluginError> {
+        Ok(vec![Arc::new(Glossary)])
     }
 }

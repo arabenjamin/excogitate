@@ -47,7 +47,7 @@ fn tool_listing(tools: &HashMap<String, Served>) -> Value {
 /// The call's context, as the host sent it in `_meta`. Without one, it's a
 /// call from a client that isn't the host: a run of its own, private, with
 /// nothing to spend.
-fn context_of(params: &Value) -> ToolContext {
+pub(crate) fn context_of(params: &Value) -> ToolContext {
     let sent = params
         .get("_meta")
         .and_then(|meta| meta.get(CONTEXT_META))

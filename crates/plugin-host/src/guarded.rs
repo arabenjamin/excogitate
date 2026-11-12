@@ -7,8 +7,8 @@ use std::sync::{Arc, Mutex, PoisonError};
 
 use async_trait::async_trait;
 use plugin_api::{
-    CapabilityUse, HttpCapability, JobsCapability, MemoryCapability, ModelCapability, Tool,
-    ToolContext, ToolDefinition, ToolFailure, ToolOutput,
+    CapabilityUse, HttpCapability, JobsCapability, MemoryCapability, ModelCapability, Source,
+    SourceFound, SourceQuery, Tool, ToolContext, ToolDefinition, ToolFailure, ToolOutput,
 };
 use protocol::{RunId, Trust};
 use serde_json::Value;
@@ -143,6 +143,62 @@ impl Tool for GuardedTool {
             Err(failure) => {
                 let cost = failure.cost_usd_micros().max(tally.spent);
                 Err(failure.with_cost(cost).with_uses(tally.uses))
+            }
+        }
+    }
+}
+
+/// A source of a plugin that holds metered capabilities: what its capability
+/// calls cost goes on the search, even if the plugin reports less, and isn't
+/// left pending for the run's next tool call.
+#[derive(Debug)]
+pub(crate) struct GuardedSource {
+    pub(crate) inner: Arc<dyn Source>,
+    pub(crate) meter: Option<Arc<CapabilityMeter>>,
+}
+
+impl GuardedSource {
+    fn spent(&self, run: RunId) -> u64 {
+        self.meter.as_ref().map_or(0, |meter| meter.take(run).spent)
+    }
+}
+
+#[async_trait]
+impl Source for GuardedSource {
+    fn name(&self) -> &str {
+        self.inner.name()
+    }
+
+    async fn search(
+        &self,
+        query: SourceQuery,
+        context: ToolContext,
+    ) -> Result<SourceFound, ToolFailure> {
+        let outcome = self.inner.search(query, context).await;
+        let spent = self.spent(context.run);
+        match outcome {
+            Ok(found) => {
+                let cost = found.cost_usd_micros.max(spent);
+                Ok(found.with_cost(cost))
+            }
+            Err(failure) => {
+                let cost = failure.cost_usd_micros().max(spent);
+                Err(failure.with_cost(cost))
+            }
+        }
+    }
+
+    async fn get(&self, id: &str, context: ToolContext) -> Result<SourceFound, ToolFailure> {
+        let outcome = self.inner.get(id, context).await;
+        let spent = self.spent(context.run);
+        match outcome {
+            Ok(found) => {
+                let cost = found.cost_usd_micros.max(spent);
+                Ok(found.with_cost(cost))
+            }
+            Err(failure) => {
+                let cost = failure.cost_usd_micros().max(spent);
+                Err(failure.with_cost(cost))
             }
         }
     }
