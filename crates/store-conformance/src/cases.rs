@@ -97,16 +97,45 @@ pub async fn update_checks_the_version(store: &dyn Store) {
     assert_eq!((stored.body.as_str(), stored.version), ("changed", 2));
 }
 
-/// The lookup behind "the same content returns the existing note".
+/// The lookup behind "the same content returns the existing note", within
+/// one privacy class only.
 pub async fn find_note_by_hash_finds_the_copy(store: &dyn Store) {
     let n = note("x");
     store
         .apply(WriteOp::CreateNote(n.clone()).into())
         .await
         .unwrap();
-    let found = store.find_note_by_hash(&n.content_hash).await.unwrap();
+    let found = store
+        .find_note_by_hash(&n.content_hash, DataClass::Private)
+        .await
+        .unwrap();
     assert_eq!(found.map(|f| f.id), Some(n.id));
-    assert_eq!(store.find_note_by_hash("other").await.unwrap(), None);
+    assert_eq!(
+        store
+            .find_note_by_hash("other", DataClass::Private)
+            .await
+            .unwrap(),
+        None
+    );
+    // The same content in the other class is neither found nor in the way.
+    assert_eq!(
+        store
+            .find_note_by_hash(&n.content_hash, DataClass::Public)
+            .await
+            .unwrap(),
+        None
+    );
+    let mut public = note("x");
+    public.provenance.data_class = DataClass::Public;
+    store
+        .apply(WriteOp::CreateNote(public.clone()).into())
+        .await
+        .unwrap();
+    let found = store
+        .find_note_by_hash(&n.content_hash, DataClass::Public)
+        .await
+        .unwrap();
+    assert_eq!(found.map(|f| f.id), Some(public.id));
 }
 
 /// Deleted notes leave nothing searchable behind.

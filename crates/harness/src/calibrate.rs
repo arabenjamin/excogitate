@@ -108,9 +108,9 @@ fn cases() -> Vec<Case> {
 }
 
 impl Judges<'_> {
-    /// Runs the known-answer test on whichever model the composer's calls
-    /// route to.
-    pub async fn calibrate(&self, budget_usd_micros: u64) -> Calibration {
+    /// Runs the known-answer test on `model`, the composer's: every case is
+    /// pinned to it, so a fallback elsewhere can't stand in for it.
+    pub async fn calibrate(&self, model: &str, budget_usd_micros: u64) -> Calibration {
         let brief = Brief {
             instructions: INSTRUCTIONS,
             tools: &[],
@@ -128,7 +128,9 @@ impl Judges<'_> {
         for case in cases() {
             let left = budget_usd_micros.saturating_sub(calibration.cost_usd_micros);
             let runs = [&case.reference, &case.candidate];
-            let judged = self.compose(&brief, &runs, &[("A", BETTER)], left).await;
+            let judged = self
+                .compose_on(&brief, &runs, &[("A", BETTER)], left, Some(model))
+                .await;
             let detail = match judged {
                 Err(error) => {
                     calibration.cost_usd_micros = calibration
@@ -140,14 +142,11 @@ impl Judges<'_> {
                     calibration.cost_usd_micros = calibration
                         .cost_usd_micros
                         .saturating_add(judged.cost_usd_micros);
-                    match &calibration.model {
-                        model if !model.is_empty() && *model != judged.model => {
-                            Some(format!("answered by {}, not {model}", judged.model))
-                        }
-                        _ => {
-                            calibration.model.clone_from(&judged.model);
-                            check(&case, &judged.value, &runs)
-                        }
+                    if judged.model == model {
+                        calibration.model.clone_from(&judged.model);
+                        check(&case, &judged.value, &runs)
+                    } else {
+                        Some(format!("answered by {}, not {model}", judged.model))
                     }
                 }
             };

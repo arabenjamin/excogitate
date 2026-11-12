@@ -13,7 +13,10 @@ Each chunk is embedded through the model gateway, so routing, privacy and spend
 caps apply. If a chunk can't be embedded, the note is still stored. The chunk
 can then only be found by keyword, and `unembedded_chunks` says how many.
 
-The same content returns the note that already has it.
+The same content returns the note that already has it, within one privacy
+class. A public run storing words a private note already holds gets a note of
+its own: it never learns the private one exists, and a private note never
+depends on one public runs can change or delete.
 
 Embedding is charged to the run that asked for it. The cost is on the result,
 and each retry can spend only what the attempts before it left.

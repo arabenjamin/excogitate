@@ -192,6 +192,7 @@ impl Judges<'_> {
         user: String,
         name: &str,
         budget_usd_micros: u64,
+        only_model: Option<&str>,
     ) -> Result<Judged<T>, StructuredError> {
         let policy = RoutePolicy {
             capabilities: vec![Capability::Investigative],
@@ -199,6 +200,7 @@ impl Judges<'_> {
             purpose: PURPOSE.to_owned(),
             budget_usd_micros: Some(budget_usd_micros),
             embedding_dimension: None,
+            only_model: only_model.map(str::to_owned),
         };
         let request = ChatRequest {
             messages: vec![Message::system(system), Message::user(user)],
@@ -228,7 +230,7 @@ impl Judges<'_> {
     ) -> Result<Judged<EditorReply>, StructuredError> {
         let mut user = brief.blocks();
         user.push_str(&reference.block());
-        self.ask(EDITOR, user, "harness_editor", budget_usd_micros)
+        self.ask(EDITOR, user, "harness_editor", budget_usd_micros, None)
             .await
     }
 
@@ -244,6 +246,19 @@ impl Judges<'_> {
         candidates: &[(&str, &str)],
         budget_usd_micros: u64,
     ) -> Result<Judged<ComposerReply>, StructuredError> {
+        self.compose_on(brief, runs, candidates, budget_usd_micros, None)
+            .await
+    }
+
+    /// The composer's decision, from `only_model` when it's named.
+    pub(crate) async fn compose_on(
+        &self,
+        brief: &Brief<'_>,
+        runs: &[&Rendered],
+        candidates: &[(&str, &str)],
+        budget_usd_micros: u64,
+        only_model: Option<&str>,
+    ) -> Result<Judged<ComposerReply>, StructuredError> {
         let mut user = brief.blocks();
         for (label, prompt) in candidates {
             user.push_str(&block(&format!("CANDIDATE {label} INSTRUCTIONS"), prompt));
@@ -251,7 +266,13 @@ impl Judges<'_> {
         for run in runs {
             user.push_str(&run.block());
         }
-        self.ask(COMPOSER, user, "harness_composer", budget_usd_micros)
-            .await
+        self.ask(
+            COMPOSER,
+            user,
+            "harness_composer",
+            budget_usd_micros,
+            only_model,
+        )
+        .await
     }
 }

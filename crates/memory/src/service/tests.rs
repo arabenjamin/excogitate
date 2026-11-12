@@ -147,10 +147,40 @@ async fn the_same_content_returns_the_existing_note() {
     assert!(!second.created);
     assert!(
         store
-            .find_note_by_hash(&content_hash("cat facts"))
+            .find_note_by_hash(&content_hash("cat facts"), DataClass::Private)
             .await
             .unwrap()
             .is_some()
+    );
+}
+
+#[tokio::test]
+async fn the_same_content_in_the_other_class_is_a_note_of_its_own() {
+    let (memory, _) = memory_with(Some(Arc::new(Fake::default())));
+    let secret = memory
+        .store(note("the launch date"), private(), None, now())
+        .await
+        .unwrap();
+    // A public run storing the same words learns nothing of the private
+    // note, and its own note is kept where public runs can find it.
+    let public = memory
+        .store(
+            note("the launch date"),
+            origin(DataClass::Public, Trust::Trusted),
+            None,
+            now(),
+        )
+        .await
+        .unwrap();
+    assert!(public.created);
+    assert_ne!(public.id, secret.id);
+    let found = memory
+        .search("launch date", ClassFilter::PublicOnly, SCOPE_PUBLIC, 5)
+        .await
+        .unwrap();
+    assert_eq!(
+        found.hits.iter().map(|hit| hit.note_id).collect::<Vec<_>>(),
+        [public.id]
     );
 }
 

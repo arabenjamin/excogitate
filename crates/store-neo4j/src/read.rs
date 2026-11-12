@@ -3,6 +3,7 @@
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use neo4rs::query;
+use protocol::DataClass;
 use store::{
     Chunk, ChunkHit, ClassFilter, Definition, DefinitionKey, DefinitionKind, DefinitionReader,
     Note, NoteId, NoteReader, Page, PageRequest, StoreError, Task, TaskId, TaskQuery, TaskReader,
@@ -10,8 +11,8 @@ use store::{
 };
 
 use crate::codec::{
-    self, CHUNK, DEFINITION, HIT_PROVENANCE, TASK, WORKING, at, definition_kind_name, get,
-    task_status_name,
+    self, CHUNK, DEFINITION, HIT_PROVENANCE, TASK, WORKING, at, data_class_name,
+    definition_kind_name, get, task_status_name,
 };
 use crate::{Neo4jStore, page_clause, page_of};
 
@@ -56,14 +57,20 @@ impl NoteReader for Neo4jStore {
         rows.first().map(codec::note).transpose()
     }
 
-    async fn find_note_by_hash(&self, hash: &str) -> Result<Option<Note>, StoreError> {
+    async fn find_note_by_hash(
+        &self,
+        hash: &str,
+        class: DataClass,
+    ) -> Result<Option<Note>, StoreError> {
         let rows = self
             .rows(
                 query(&format!(
-                    "MATCH (n:Note {{content_hash: $hash}}) RETURN {} ORDER BY n.id LIMIT 1",
+                    "MATCH (n:Note {{content_hash: $hash, data_class: $class}}) \
+                     RETURN {} ORDER BY n.id LIMIT 1",
                     codec::note_columns()
                 ))
-                .param("hash", hash),
+                .param("hash", hash)
+                .param("class", data_class_name(class)),
             )
             .await?;
         rows.first().map(codec::note).transpose()

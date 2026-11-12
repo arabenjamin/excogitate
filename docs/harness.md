@@ -93,8 +93,10 @@ every rule below holds. The attempt's `adoption` says what happened and why.
 - **The judge passed its known-answer test.** Before a composer's decision can
   change an agent, the model it ran on judges three cases whose answers are
   known: a candidate that fixed a run, one that broke it, and one that changed
-  nothing. A wrong answer or a citation that doesn't hold fails it. A pass is
-  trusted for 7 days, and each test is kept (`harness.calibration` records).
+  nothing. A wrong answer or a citation that doesn't hold fails it. The test
+  is pinned to the composer's model, so when the composer answered on a
+  fallback, that fallback is what's tested. A pass is trusted for 7 days, and
+  each test is kept (`harness.calibration` records).
 - **The agent didn't change while it was being improved.**
 - **At most one change per agent per day.**
 - **The owner's word is final.** An agent the owner reverted, held or edited by

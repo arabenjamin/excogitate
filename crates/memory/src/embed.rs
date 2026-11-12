@@ -99,6 +99,7 @@ impl Embedder for GatewayEmbedder {
             purpose: self.purpose.clone(),
             budget_usd_micros: scope.budget_usd_micros,
             embedding_dimension: Some(self.dimension),
+            only_model: None,
         };
         self.gateway
             .embed(&policy, inputs)
