@@ -26,6 +26,11 @@ a [workflow](workflows.md), and one that stops at a failed step is a failed job.
 A `harness` job is one [Harness²](harness.md) attempt, and a `harness_pick` job
 chooses what to attempt.
 
+A worker claims only the kinds it has a handler for, so a job meant for
+another process waits for one that runs it. A schedule naming a kind nothing
+here runs is refused when it loads, and the API only makes jobs of kinds it
+runs.
+
 Jobs move through `JobTransport`. The store is the default, and another queue
 can take its place without changing the workers.
 
@@ -37,7 +42,7 @@ example: `definitions/schedules/morning-brief.yaml.example`).
 
 ```yaml
 cron: "0 8 * * *"           # five fields, or six with seconds first
-timezone: America/Detroit   # UTC if left out
+timezone: America/New_York   # UTC if left out
 kind: chat
 payload:
   message: What should I follow up on today?
@@ -55,6 +60,8 @@ no "last run" to lose.
 
 **If Excogitate was down,** it runs the latest missed slot, if that's within
 `catch_up_seconds`. Older slots are skipped, and a schedule never runs a backlog.
+It's at least 10 seconds, twice the scheduler's tick, so no slot falls between
+two looks. A cron finer than the tick still fires at most once per tick.
 
 A schedule defaults to one attempt, because a retry can spend money or repeat
 what the first attempt did.

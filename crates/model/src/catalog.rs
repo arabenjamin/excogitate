@@ -6,7 +6,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use reqwest::Url;
-use schema::{Refusal, Validator, bounded};
+use schema::{Refusal, YamlError};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -231,11 +231,11 @@ impl Catalog {
         text: &str,
         env: impl Fn(&str) -> Option<String>,
     ) -> Result<Self, ConfigError> {
-        let raw: serde_json::Value = serde_saphyr::from_str(text)
-            .map_err(|error| ConfigError::Yaml(bounded(&error.to_string())))?;
-        let validator = Validator::for_type::<ModelsConfig>()
-            .map_err(|error| ConfigError::Invalid(error.to_string()))?;
-        let config: ModelsConfig = validator.parse(raw)?;
+        let config: ModelsConfig = schema::parse_yaml(text).map_err(|error| match error {
+            YamlError::NotYaml(problem) => ConfigError::Yaml(problem),
+            YamlError::Schema(refusal) => ConfigError::Schema(refusal),
+            other => ConfigError::Invalid(other.to_string()),
+        })?;
         Self::from_config(config, env)
     }
 

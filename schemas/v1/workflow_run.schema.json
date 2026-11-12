@@ -37,6 +37,11 @@
           "const": "time",
           "description": "Time.",
           "type": "string"
+        },
+        {
+          "const": "stopped",
+          "description": "The runtime was stopping, so the run ended early.",
+          "type": "string"
         }
       ]
     },
@@ -362,6 +367,13 @@
         "by_harness": {
           "description": "True if the harness made this call, and the model didn't ask for it.",
           "type": "boolean"
+        },
+        "capability_calls": {
+          "default": 0,
+          "description": "How many calls a plugin's tool made through its capabilities. Each\ncounts as a tool call, and each is on the trajectory.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
         },
         "cost_usd_micros": {
           "description": "What it spent, in millionths of a dollar.",

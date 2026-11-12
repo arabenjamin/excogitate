@@ -10,10 +10,10 @@ use serde_json::{Value, json};
 use workflow::{Agent, Workflow, check_agent, check_workflow};
 
 fn tools() -> BTreeMap<String, ToolDefinition> {
-    let tool = ToolDefinition {
-        name: "fetch".to_owned(),
-        description: "fetches".to_owned(),
-        input_schema: json!({
+    let tool = ToolDefinition::new(
+        "fetch".to_owned(),
+        "fetches".to_owned(),
+        json!({
             "type": "object",
             "additionalProperties": false,
             "required": ["url"],
@@ -22,9 +22,9 @@ fn tools() -> BTreeMap<String, ToolDefinition> {
                 "limit": { "type": "integer" }
             }
         }),
-        output_schema: json!({ "type": "object", "additionalProperties": false }),
-        effect: Effect::Read,
-    };
+        json!({ "type": "object", "additionalProperties": false }),
+        Effect::Read,
+    );
     BTreeMap::from([("fetch".to_owned(), tool)])
 }
 

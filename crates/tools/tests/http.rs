@@ -16,11 +16,7 @@ use serde_json::{Value, json};
 use tools::{Credential, HttpConfig, HttpConfigError, HttpRequestTool, Method};
 
 fn context() -> ToolContext {
-    ToolContext {
-        run: RunId::generate(),
-        data_class: DataClass::Private,
-        budget_usd_micros: 0,
-    }
+    ToolContext::new(RunId::generate(), DataClass::Private, 0)
 }
 
 const SECRET: &str = "s3cr3t-key-value";
@@ -157,7 +153,7 @@ async fn fetch(tool: &HttpRequestTool, url: &str) -> Value {
 }
 
 async fn refused(tool: &HttpRequestTool, args: Value) -> String {
-    call(tool, args).await.unwrap_err().0
+    call(tool, args).await.unwrap_err().message().to_owned()
 }
 
 #[test]
@@ -573,4 +569,46 @@ fn debug_output_does_not_show_a_key() {
     };
     let tool = tool_with(&config);
     assert!(!format!("{tool:?}").contains(SECRET));
+}
+
+#[tokio::test]
+async fn a_plugins_request_comes_back_typed_and_raw() {
+    let server = serve_on("127.0.0.1:0", site()).await;
+    let tool = tool();
+    let page = tool
+        .request_for_plugin(plugin_api::HttpRequest::get(server.url("/page")))
+        .await
+        .unwrap();
+    assert_eq!(page.status, 200);
+    assert!(page.body.contains("<nav>menu</nav>"), "{}", page.body);
+    assert!(!page.truncated);
+    assert_eq!(page.note, None);
+    let missing = tool
+        .request_for_plugin(plugin_api::HttpRequest::get(server.url("/missing")))
+        .await
+        .unwrap();
+    assert_eq!(missing.status, 404);
+    let image = tool
+        .request_for_plugin(plugin_api::HttpRequest::get(server.url("/png")))
+        .await
+        .unwrap();
+    assert_eq!(image.body, "");
+    assert!(image.note.unwrap().contains("image/png"));
+}
+
+#[tokio::test]
+async fn a_plugins_request_meets_the_same_schema_and_rules_as_a_models() {
+    let server = serve_on("127.0.0.1:0", site()).await;
+    let tool = tool();
+    let mut crowded = plugin_api::HttpRequest::get(server.url("/page"));
+    for n in 0..17 {
+        crowded = crowded.with_header(format!("x-{n}"), "v");
+    }
+    assert!(tool.request_for_plugin(crowded).await.is_err());
+    let identity =
+        plugin_api::HttpRequest::get(server.url("/page")).with_header("Host", "elsewhere");
+    assert!(tool.request_for_plugin(identity).await.is_err());
+    let blocked = plugin_api::HttpRequest::get("http://169.254.169.254/latest/meta-data");
+    assert!(tool.request_for_plugin(blocked).await.is_err());
+    assert_eq!(server.hits(), 0);
 }

@@ -87,6 +87,7 @@ pub struct RelationDecl {
 
 /// A plugin's stored item.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct Record {
     /// Its type, as declared.
     pub record_type: String,
@@ -96,6 +97,24 @@ pub struct Record {
     pub data: Value,
     /// Where it came from.
     pub provenance: Provenance,
+}
+
+impl Record {
+    /// A record as a store read it.
+    #[must_use]
+    pub const fn new(
+        record_type: String,
+        id: RecordId,
+        data: Value,
+        provenance: Provenance,
+    ) -> Self {
+        Self {
+            record_type,
+            id,
+            data,
+            provenance,
+        }
+    }
 }
 
 /// How a filter compares.
@@ -130,6 +149,7 @@ pub enum FieldValue {
 
 /// One condition on a declared field.
 #[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
 pub struct FieldFilter {
     /// The field, which must be declared filterable.
     pub field: String,
@@ -139,8 +159,21 @@ pub struct FieldFilter {
     pub value: FieldValue,
 }
 
+impl FieldFilter {
+    /// `field op value`.
+    #[must_use]
+    pub fn new(field: impl Into<String>, op: FieldOp, value: FieldValue) -> Self {
+        Self {
+            field: field.into(),
+            op,
+            value,
+        }
+    }
+}
+
 /// Which records to read. All filters must hold.
 #[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
 pub struct RecordQuery {
     /// The type to read.
     pub record_type: String,
@@ -148,6 +181,32 @@ pub struct RecordQuery {
     pub filters: Vec<FieldFilter>,
     /// Which slice to return, in id order.
     pub page: PageRequest,
+}
+
+impl RecordQuery {
+    /// Every record of a type, a page at a time.
+    #[must_use]
+    pub fn new(record_type: impl Into<String>, page: PageRequest) -> Self {
+        Self {
+            record_type: record_type.into(),
+            filters: Vec::new(),
+            page,
+        }
+    }
+
+    /// The same query with these conditions as well.
+    #[must_use]
+    pub fn with_filters(mut self, filters: impl IntoIterator<Item = FieldFilter>) -> Self {
+        self.filters.extend(filters);
+        self
+    }
+
+    /// The same query with one more condition.
+    #[must_use]
+    pub fn with_filter(mut self, field: impl Into<String>, op: FieldOp, value: FieldValue) -> Self {
+        self.filters.push(FieldFilter::new(field, op, value));
+        self
+    }
 }
 
 /// Which way to follow a relation.

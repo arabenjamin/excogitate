@@ -1,0 +1,467 @@
+{
+  "$defs": {
+    "CapabilityCall": {
+      "description": "What a plugin asks, by operation.",
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "description": "`RecordsCapability::put`.",
+          "properties": {
+            "data": {
+              "description": "Its data.",
+              "x-extension": "checked against the record type's own schema"
+            },
+            "id": {
+              "description": "The id to replace, or none for a new record.",
+              "format": "uuid",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "op": {
+              "const": "records_put",
+              "type": "string"
+            },
+            "record_type": {
+              "description": "The type.",
+              "maxLength": 128,
+              "minLength": 1,
+              "type": "string"
+            }
+          },
+          "required": [
+            "op",
+            "record_type",
+            "data"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "`RecordsCapability::get`.",
+          "properties": {
+            "id": {
+              "description": "The id.",
+              "format": "uuid",
+              "type": "string"
+            },
+            "op": {
+              "const": "records_get",
+              "type": "string"
+            },
+            "record_type": {
+              "description": "The type.",
+              "maxLength": 128,
+              "minLength": 1,
+              "type": "string"
+            }
+          },
+          "required": [
+            "op",
+            "record_type",
+            "id"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "`RecordsCapability::query`.",
+          "properties": {
+            "filters": {
+              "description": "The conditions, all of which must hold.",
+              "items": {
+                "$ref": "#/$defs/WireFilter"
+              },
+              "maxItems": 32,
+              "type": "array"
+            },
+            "limit": {
+              "description": "The most to return.",
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "offset": {
+              "description": "How many to skip.",
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "op": {
+              "const": "records_query",
+              "type": "string"
+            },
+            "record_type": {
+              "description": "The type.",
+              "maxLength": 128,
+              "minLength": 1,
+              "type": "string"
+            }
+          },
+          "required": [
+            "op",
+            "record_type",
+            "filters",
+            "limit",
+            "offset"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "`RecordsCapability::delete`.",
+          "properties": {
+            "id": {
+              "description": "The id.",
+              "format": "uuid",
+              "type": "string"
+            },
+            "op": {
+              "const": "records_delete",
+              "type": "string"
+            },
+            "record_type": {
+              "description": "The type.",
+              "maxLength": 128,
+              "minLength": 1,
+              "type": "string"
+            }
+          },
+          "required": [
+            "op",
+            "record_type",
+            "id"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "`RecordsCapability::link`.",
+          "properties": {
+            "from": {
+              "description": "The record it links from.",
+              "format": "uuid",
+              "type": "string"
+            },
+            "op": {
+              "const": "records_link",
+              "type": "string"
+            },
+            "relation": {
+              "description": "The relation.",
+              "maxLength": 128,
+              "minLength": 1,
+              "type": "string"
+            },
+            "to": {
+              "description": "The record it links to.",
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          "required": [
+            "op",
+            "relation",
+            "from",
+            "to"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "`RecordsCapability::neighbors`.",
+          "properties": {
+            "direction": {
+              "$ref": "#/$defs/WireDirection",
+              "description": "`outgoing` or `incoming`."
+            },
+            "id": {
+              "description": "The record to start from.",
+              "format": "uuid",
+              "type": "string"
+            },
+            "limit": {
+              "description": "The most to return.",
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "offset": {
+              "description": "How many to skip.",
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "op": {
+              "const": "records_neighbors",
+              "type": "string"
+            },
+            "relation": {
+              "description": "The relation.",
+              "maxLength": 128,
+              "minLength": 1,
+              "type": "string"
+            }
+          },
+          "required": [
+            "op",
+            "relation",
+            "id",
+            "direction",
+            "limit",
+            "offset"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "`HttpCapability::request`.",
+          "properties": {
+            "body": {
+              "description": "The body.",
+              "maxLength": 64000,
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "headers": {
+              "description": "Headers, as name and value.",
+              "items": {
+                "$ref": "#/$defs/WireHeader"
+              },
+              "maxItems": 16,
+              "type": "array"
+            },
+            "method": {
+              "description": "The method.",
+              "maxLength": 16,
+              "minLength": 1,
+              "type": "string"
+            },
+            "op": {
+              "const": "http",
+              "type": "string"
+            },
+            "url": {
+              "description": "The URL.",
+              "maxLength": 2048,
+              "minLength": 1,
+              "type": "string"
+            }
+          },
+          "required": [
+            "op",
+            "method",
+            "url",
+            "headers"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "`ModelCapability::complete`.",
+          "properties": {
+            "op": {
+              "const": "model",
+              "type": "string"
+            },
+            "prompt": {
+              "description": "What to ask.",
+              "maxLength": 200000,
+              "minLength": 1,
+              "type": "string"
+            }
+          },
+          "required": [
+            "op",
+            "prompt"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "WireDirection": {
+      "description": "A direction on the wire.",
+      "enum": [
+        "outgoing",
+        "incoming"
+      ],
+      "type": "string"
+    },
+    "WireFilter": {
+      "additionalProperties": false,
+      "description": "A filter on the wire.",
+      "properties": {
+        "field": {
+          "description": "The field.",
+          "maxLength": 128,
+          "minLength": 1,
+          "type": "string"
+        },
+        "op": {
+          "$ref": "#/$defs/WireOp",
+          "description": "`eq`, `lt`, `lte`, `gt` or `gte`."
+        },
+        "value": {
+          "$ref": "#/$defs/WireValue",
+          "description": "The value, typed."
+        }
+      },
+      "required": [
+        "field",
+        "op",
+        "value"
+      ],
+      "type": "object"
+    },
+    "WireHeader": {
+      "additionalProperties": false,
+      "description": "A header, as name and value.",
+      "properties": {
+        "name": {
+          "description": "Its name.",
+          "maxLength": 64,
+          "minLength": 1,
+          "type": "string"
+        },
+        "value": {
+          "description": "Its value.",
+          "maxLength": 1024,
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "value"
+      ],
+      "type": "object"
+    },
+    "WireOp": {
+      "description": "A comparison on the wire.",
+      "enum": [
+        "eq",
+        "lt",
+        "lte",
+        "gt",
+        "gte"
+      ],
+      "type": "string"
+    },
+    "WireValue": {
+      "description": "A value on the wire, tagged with its type.",
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "type": {
+              "const": "text",
+              "type": "string"
+            },
+            "value": {
+              "maxLength": 4096,
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "value"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "type": {
+              "const": "integer",
+              "type": "string"
+            },
+            "value": {
+              "format": "int64",
+              "type": "integer"
+            }
+          },
+          "required": [
+            "type",
+            "value"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "type": {
+              "const": "number",
+              "type": "string"
+            },
+            "value": {
+              "format": "double",
+              "type": "number"
+            }
+          },
+          "required": [
+            "type",
+            "value"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "type": {
+              "const": "bool",
+              "type": "string"
+            },
+            "value": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "type",
+            "value"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "type": {
+              "const": "timestamp",
+              "type": "string"
+            },
+            "value": {
+              "format": "date-time",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "value"
+          ],
+          "type": "object"
+        }
+      ]
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "The parameters of a `capabilities/call` request.",
+  "properties": {
+    "call": {
+      "$ref": "#/$defs/CapabilityCall",
+      "description": "What it asks."
+    },
+    "token": {
+      "description": "The token of the tool call it's made for, from that call's context.",
+      "format": "uuid",
+      "type": "string"
+    }
+  },
+  "required": [
+    "token",
+    "call"
+  ],
+  "title": "CapabilityRequest",
+  "type": "object"
+}

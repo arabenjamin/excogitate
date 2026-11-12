@@ -88,6 +88,10 @@ pub struct ToolEntry {
     pub duration_ms: u64,
     /// What it spent, in millionths of a dollar.
     pub cost_usd_micros: u64,
+    /// How many calls a plugin's tool made through its capabilities. Each
+    /// counts as a tool call, and each is on the trajectory.
+    #[serde(default)]
+    pub capability_calls: u32,
     /// What went wrong, when something did.
     #[schemars(length(max = 512))]
     pub detail: Option<String>,

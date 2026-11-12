@@ -65,10 +65,18 @@ pub fn note_with_text(note: &Note, text: &str, embedding: Option<[f32; 3]>) -> U
         })
 }
 
+/// The job kinds a fixture worker runs.
+pub fn kinds() -> Vec<String> {
+    vec![JOB_KIND.to_owned()]
+}
+
+/// The kind every fixture job has.
+pub const JOB_KIND: &str = "test";
+
 pub fn job(priority: i32, run_at: i64) -> Job {
     Job {
         id: JobId::generate(),
-        kind: "test".to_owned(),
+        kind: JOB_KIND.to_owned(),
         payload: json!({ "n": 1 }),
         priority,
         status: JobStatus::Queued,
@@ -126,12 +134,12 @@ pub fn decls() -> RecordDecls {
 }
 
 pub fn record(record_type: &str, data: serde_json::Value) -> Record {
-    Record {
-        record_type: record_type.to_owned(),
-        id: RecordId::generate(),
+    Record::new(
+        record_type.to_owned(),
+        RecordId::generate(),
         data,
-        provenance: provenance(DataClass::Private, Trust::Untrusted),
-    }
+        provenance(DataClass::Private, Trust::Untrusted),
+    )
 }
 
 pub fn item(name: &str, size: i64) -> Record {

@@ -13,6 +13,7 @@ mod calibrate;
 mod change;
 mod cite;
 mod guard;
+mod lesson;
 mod pick;
 mod records;
 mod render;
@@ -28,6 +29,9 @@ pub use change::{
 };
 pub use cite::Cite;
 pub use guard::{MAX_GROWTH_CHARS, check_instructions};
+pub use lesson::{
+    LESSON_TYPE, Lesson, LessonStatus, MAX_SHOWN, lesson_id, lessons_for, situation, status_filter,
+};
 pub use pick::{MIN_REPEATS, Pick, Recent, failure, pick, task};
 pub use records::{
     ATTEMPT_TYPE, CALIBRATION_TYPE, CHANGE_TYPE, HOLD_TYPE, declarations, hold_id, record,

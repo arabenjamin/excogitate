@@ -5,10 +5,10 @@
   "properties": {
     "catch_up_seconds": {
       "default": 3600,
-      "description": "How late a run may start after the runtime was down. An older run is\nskipped.",
+      "description": "How late a run may start after the runtime was down. An older run is\nskipped. At least [`MIN_CATCH_UP_SECONDS`], so a slot can't fall\nbetween two of the scheduler's looks.",
       "format": "uint32",
       "maximum": 604800,
-      "minimum": 0,
+      "minimum": 10,
       "type": "integer"
     },
     "cron": {
@@ -47,7 +47,7 @@
       "type": "integer"
     },
     "timezone": {
-      "description": "The IANA time zone it's written in, such as `America/Detroit`. UTC if\nleft out.",
+      "description": "The IANA time zone it's written in, such as `America/New_York`. UTC if\nleft out.",
       "maxLength": 64,
       "minLength": 1,
       "type": [

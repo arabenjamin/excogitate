@@ -1,0 +1,82 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "What came back. A 404 is a successful call that reports a 404.",
+  "properties": {
+    "body": {
+      "description": "The content.",
+      "maxLength": 200000,
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "content_type": {
+      "description": "The response's content type.",
+      "maxLength": 256,
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "decoding_errors": {
+      "description": "True if some bytes weren't valid UTF-8 and were replaced.",
+      "type": "boolean"
+    },
+    "omitted_reason": {
+      "description": "Why there's no `body`.",
+      "maxLength": 512,
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "redirect_not_followed": {
+      "description": "Why a redirect wasn't followed.",
+      "maxLength": 512,
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "redirects": {
+      "description": "How many redirects were followed.",
+      "format": "uint32",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "status": {
+      "description": "The status code.",
+      "format": "uint16",
+      "maximum": 65535,
+      "minimum": 0,
+      "type": "integer"
+    },
+    "title": {
+      "description": "The page's title.",
+      "maxLength": 512,
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "truncated": {
+      "description": "True if there was more than `body` holds.",
+      "type": "boolean"
+    },
+    "url": {
+      "description": "The address that answered, after any redirects.",
+      "maxLength": 2048,
+      "type": "string"
+    }
+  },
+  "required": [
+    "status",
+    "url",
+    "truncated",
+    "decoding_errors",
+    "redirects"
+  ],
+  "title": "HttpResult",
+  "type": "object"
+}

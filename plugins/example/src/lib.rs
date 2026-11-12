@@ -7,9 +7,9 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use plugin_api::{
     Capabilities, Plugin, PluginError, PluginManifest, RecordsCapability, Tool, ToolContext,
-    ToolDefinition, ToolFailure, ToolOutput,
+    ToolDefinition, ToolFailure, ToolOutput, Trust,
 };
-use protocol::Trust;
+
 use serde_json::{Value, json};
 
 /// The manifest, which both ways of running use.
@@ -50,11 +50,10 @@ impl Tool for WordCount {
 
     async fn run(&self, arguments: Value, _: ToolContext) -> Result<ToolOutput, ToolFailure> {
         let text = arguments.get("text").and_then(Value::as_str).unwrap_or("");
-        Ok(ToolOutput {
-            value: json!({ "words": text.split_whitespace().count() }),
-            trust: Trust::Trusted,
-            cost_usd_micros: 0,
-        })
+        Ok(ToolOutput::new(
+            json!({ "words": text.split_whitespace().count() }),
+            Trust::Trusted,
+        ))
     }
 }
 
@@ -76,12 +75,11 @@ impl Tool for BookmarkAdd {
             .records
             .put(BOOKMARK, None, arguments, context)
             .await
-            .map_err(|error| ToolFailure(error.to_string()))?;
-        Ok(ToolOutput {
-            value: json!({ "id": id.to_string() }),
-            trust: Trust::Trusted,
-            cost_usd_micros: 0,
-        })
+            .map_err(ToolFailure::from)?;
+        Ok(ToolOutput::new(
+            json!({ "id": id.to_string() }),
+            Trust::Trusted,
+        ))
     }
 }
 

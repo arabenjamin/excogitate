@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "A model's reply on the wire.",
+  "properties": {
+    "cost_usd_micros": {
+      "format": "uint64",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "model": {
+      "maxLength": 128,
+      "type": "string"
+    },
+    "text": {
+      "maxLength": 1000000,
+      "type": "string"
+    }
+  },
+  "required": [
+    "text",
+    "model",
+    "cost_usd_micros"
+  ],
+  "title": "WireModelReply",
+  "type": "object"
+}

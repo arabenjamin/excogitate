@@ -122,10 +122,12 @@ pub trait JobQueue {
         page: PageRequest,
     ) -> Result<Page<Job>, StoreError>;
 
-    /// Atomically claims the next runnable job: highest priority, then
-    /// earliest `run_at`, then lowest id. A job whose lease has lapsed is
-    /// runnable again, or dead if it's out of attempts. Each claim counts as
-    /// an attempt.
+    /// Atomically claims the next runnable job of one of `kinds`: highest
+    /// priority, then earliest `run_at`, then lowest id. A job of another
+    /// kind is left for a worker that can run it, and no kinds claims
+    /// nothing. A job whose lease has lapsed is runnable again, or dead if
+    /// it's out of attempts, whatever its kind. Each claim counts as an
+    /// attempt.
     ///
     /// # Errors
     ///
@@ -134,11 +136,15 @@ pub trait JobQueue {
     async fn claim_job(
         &self,
         worker: &str,
+        kinds: &[String],
         now: DateTime<Utc>,
         lease_until: DateTime<Utc>,
     ) -> Result<Option<Job>, StoreError>;
 
-    /// Marks a claimed job finished, and keeps what it produced.
+    /// Marks a claimed job finished, and keeps what it produced. The worker
+    /// named in its lease may finish it while it's still claimed, even past
+    /// the lease's end: until another claim takes it again or, on its last
+    /// attempt, marks it dead.
     ///
     /// # Errors
     ///

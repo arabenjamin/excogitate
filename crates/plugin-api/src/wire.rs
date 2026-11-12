@@ -8,6 +8,7 @@
 
 use chrono::{DateTime, Utc};
 use protocol::{Actor, DataClass, Trust};
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use store::{
@@ -16,7 +17,7 @@ use store::{
 };
 use uuid::Uuid;
 
-use crate::{CapabilityError, HttpRequest, HttpResponse, ModelReply};
+use crate::{CapabilityError, HttpRequest, HttpResponse, ModelReply, PluginCapability};
 
 /// The JSON-RPC method a capability call uses.
 pub const CAPABILITY_METHOD: &str = "capabilities/call";
@@ -28,22 +29,58 @@ pub const NOT_GRANTED_CODE: i64 = -32002;
 /// The host couldn't do it.
 pub const FAILED_CODE: i64 = -32003;
 
+/// The longest type, relation, field or actor name on the wire.
+pub const NAME: usize = 128;
+/// The most conditions in one query.
+pub const MAX_FILTERS: usize = 32;
+/// The longest text a filter compares with.
+pub const MAX_TEXT_VALUE: usize = 4096;
+/// The longest prompt a plugin can send.
+pub const MAX_PROMPT: usize = 200_000;
+/// The longest text that comes back in an answer.
+pub const MAX_ANSWER: usize = 1_000_000;
+
+/// A header, as name and value.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct WireHeader {
+    /// Its name.
+    #[schemars(length(min = 1, max = 64))]
+    pub name: String,
+    /// Its value.
+    #[schemars(length(max = 1024))]
+    pub value: String,
+}
+
+/// The parameters of a `capabilities/call` request.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct CapabilityRequest {
+    /// The token of the tool call it's made for, from that call's context.
+    pub token: Uuid,
+    /// What it asks.
+    pub call: CapabilityCall,
+}
+
 /// What a plugin asks, by operation.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "op", rename_all = "snake_case", deny_unknown_fields)]
 pub enum CapabilityCall {
     /// `RecordsCapability::put`.
     RecordsPut {
         /// The type.
+        #[schemars(length(min = 1, max = NAME))]
         record_type: String,
         /// The id to replace, or none for a new record.
         id: Option<Uuid>,
         /// Its data.
+        #[schemars(extend("x-extension" = "checked against the record type's own schema"))]
         data: Value,
     },
     /// `RecordsCapability::get`.
     RecordsGet {
         /// The type.
+        #[schemars(length(min = 1, max = NAME))]
         record_type: String,
         /// The id.
         id: Uuid,
@@ -51,8 +88,10 @@ pub enum CapabilityCall {
     /// `RecordsCapability::query`.
     RecordsQuery {
         /// The type.
+        #[schemars(length(min = 1, max = NAME))]
         record_type: String,
         /// The conditions, all of which must hold.
+        #[schemars(length(max = MAX_FILTERS))]
         filters: Vec<WireFilter>,
         /// The most to return.
         limit: u32,
@@ -62,6 +101,7 @@ pub enum CapabilityCall {
     /// `RecordsCapability::delete`.
     RecordsDelete {
         /// The type.
+        #[schemars(length(min = 1, max = NAME))]
         record_type: String,
         /// The id.
         id: Uuid,
@@ -69,6 +109,7 @@ pub enum CapabilityCall {
     /// `RecordsCapability::link`.
     RecordsLink {
         /// The relation.
+        #[schemars(length(min = 1, max = NAME))]
         relation: String,
         /// The record it links from.
         from: Uuid,
@@ -78,6 +119,7 @@ pub enum CapabilityCall {
     /// `RecordsCapability::neighbors`.
     RecordsNeighbors {
         /// The relation.
+        #[schemars(length(min = 1, max = NAME))]
         relation: String,
         /// The record to start from.
         id: Uuid,
@@ -91,26 +133,32 @@ pub enum CapabilityCall {
     /// `HttpCapability::request`.
     Http {
         /// The method.
+        #[schemars(length(min = 1, max = 16))]
         method: String,
         /// The URL.
+        #[schemars(length(min = 1, max = 2048))]
         url: String,
         /// Headers, as name and value.
-        headers: Vec<(String, String)>,
+        #[schemars(length(max = 16))]
+        headers: Vec<WireHeader>,
         /// The body.
+        #[schemars(length(max = 64_000))]
         body: Option<String>,
     },
     /// `ModelCapability::complete`.
     Model {
         /// What to ask.
+        #[schemars(length(min = 1, max = MAX_PROMPT))]
         prompt: String,
     },
 }
 
 /// A filter on the wire.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct WireFilter {
     /// The field.
+    #[schemars(length(min = 1, max = NAME))]
     pub field: String,
     /// `eq`, `lt`, `lte`, `gt` or `gte`.
     pub op: WireOp,
@@ -119,7 +167,7 @@ pub struct WireFilter {
 }
 
 /// A comparison on the wire.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 #[allow(missing_docs, reason = "the variants are FieldOp's")]
 pub enum WireOp {
@@ -131,11 +179,16 @@ pub enum WireOp {
 }
 
 /// A value on the wire, tagged with its type.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(tag = "type", content = "value", rename_all = "snake_case")]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(
+    tag = "type",
+    content = "value",
+    rename_all = "snake_case",
+    deny_unknown_fields
+)]
 #[allow(missing_docs, reason = "the variants are FieldValue's")]
 pub enum WireValue {
-    Text(String),
+    Text(#[schemars(length(max = MAX_TEXT_VALUE))] String),
     Integer(i64),
     Number(f64),
     Bool(bool),
@@ -143,7 +196,7 @@ pub enum WireValue {
 }
 
 /// A direction on the wire.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 #[allow(missing_docs, reason = "the variants are Direction's")]
 pub enum WireDirection {
@@ -152,30 +205,36 @@ pub enum WireDirection {
 }
 
 /// A record on the wire.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct WireRecord {
     /// Its type.
+    #[schemars(length(min = 1, max = NAME))]
     pub record_type: String,
     /// Its id.
     pub id: Uuid,
     /// Its data.
+    #[schemars(extend("x-extension" = "data meeting the record type's own schema"))]
     pub data: Value,
     /// `private` or `public`.
+    #[schemars(length(max = 16))]
     pub data_class: String,
     /// `trusted` or `untrusted`.
+    #[schemars(length(max = 16))]
     pub trust: String,
     /// Who stored it.
+    #[schemars(length(max = NAME))]
     pub stored_by: String,
     /// When.
     pub stored_at: DateTime<Utc>,
 }
 
 /// A page of records on the wire.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct WirePage {
     /// The records.
+    #[schemars(length(max = 1000))]
     pub items: Vec<WireRecord>,
     /// Whether there are more.
     pub has_more: bool,
@@ -277,18 +336,12 @@ pub fn query_of(
     limit: u32,
     offset: u32,
 ) -> Result<RecordQuery, CapabilityError> {
-    Ok(RecordQuery {
-        record_type,
-        filters: filters
-            .into_iter()
-            .map(|filter| FieldFilter {
-                field: filter.field,
-                op: filter.op.into(),
-                value: filter.value.into(),
-            })
-            .collect(),
-        page: page_of(limit, offset)?,
-    })
+    let mut query = RecordQuery::new(record_type, page_of(limit, offset)?);
+    query.filters = filters
+        .into_iter()
+        .map(|filter| FieldFilter::new(filter.field, filter.op.into(), filter.value.into()))
+        .collect();
+    Ok(query)
 }
 
 /// A page request from the wire.
@@ -342,17 +395,17 @@ pub fn record_of(wire: WireRecord) -> Result<Record, CapabilityError> {
         "untrusted" => Trust::Untrusted,
         other => return Err(CapabilityError::Failed(format!("unknown trust {other}"))),
     };
-    Ok(Record {
-        record_type: wire.record_type,
-        id: RecordId::from_uuid(wire.id),
-        data: wire.data,
-        provenance: Provenance {
+    Ok(Record::new(
+        wire.record_type,
+        RecordId::from_uuid(wire.id),
+        wire.data,
+        Provenance {
             data_class,
             trust,
             stored_by: Actor::new(wire.stored_by),
             stored_at: wire.stored_at,
         },
-    })
+    ))
 }
 
 /// A page for the wire.
@@ -386,19 +439,25 @@ pub fn http_call(request: HttpRequest) -> CapabilityCall {
     CapabilityCall::Http {
         method: request.method,
         url: request.url,
-        headers: request.headers,
+        headers: request
+            .headers
+            .into_iter()
+            .map(|(name, value)| WireHeader { name, value })
+            .collect(),
         body: request.body,
     }
 }
 
 /// An HTTP response on the wire.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 #[allow(missing_docs, reason = "the fields are HttpResponse's")]
 pub struct WireHttpResponse {
     pub status: u16,
+    #[schemars(length(max = MAX_ANSWER))]
     pub body: String,
     pub truncated: bool,
+    #[schemars(length(max = 1024))]
     pub note: Option<String>,
 }
 
@@ -425,11 +484,13 @@ impl From<WireHttpResponse> for HttpResponse {
 }
 
 /// A model's reply on the wire.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 #[allow(missing_docs, reason = "the fields are ModelReply's")]
 pub struct WireModelReply {
+    #[schemars(length(max = MAX_ANSWER))]
     pub text: String,
+    #[schemars(length(max = NAME))]
     pub model: String,
     pub cost_usd_micros: u64,
 }
@@ -464,18 +525,37 @@ pub const fn error_code(error: &CapabilityError) -> i64 {
     }
 }
 
+/// The message a capability error travels with: its detail, without the
+/// prefix its kind adds, since the code carries the kind.
+#[must_use]
+pub fn error_message(error: &CapabilityError) -> String {
+    match error {
+        CapabilityError::NotGranted(capability) => serde_json::to_value(capability)
+            .ok()
+            .and_then(|name| name.as_str().map(str::to_owned))
+            .unwrap_or_default(),
+        CapabilityError::Refused(detail) | CapabilityError::Failed(detail) => detail.clone(),
+    }
+}
+
 /// A capability error from a JSON-RPC error. The message is the host's
 /// own, already bounded.
 #[must_use]
 pub fn error_of(code: i64, message: &str) -> CapabilityError {
+    let not_granted =
+        || serde_json::from_value::<PluginCapability>(Value::String(message.to_owned())).ok();
     match code {
         REFUSED_CODE => CapabilityError::Refused(message.to_owned()),
+        NOT_GRANTED_CODE => not_granted().map_or_else(
+            || CapabilityError::Failed(message.to_owned()),
+            CapabilityError::NotGranted,
+        ),
         _ => CapabilityError::Failed(message.to_owned()),
     }
 }
 
 /// The context a tool call carries to a plugin process, in `_meta`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct WireContext {
     /// The run.
@@ -484,7 +564,146 @@ pub struct WireContext {
     pub public: bool,
     /// What's left of the run's budget.
     pub budget_usd_micros: u64,
+    /// The host's token for this tool call. A capability call made for it
+    /// must carry it back, and it's good only while the call runs.
+    pub call: Uuid,
 }
 
 /// The `_meta` key a tool call's context travels under.
 pub const CONTEXT_META: &str = "context";
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, reason = "a test: a panic is how it fails")]
+mod tests {
+    use chrono::TimeZone;
+
+    use super::*;
+
+    /// Through JSON and back, as it crosses the connection.
+    fn across<T: Serialize + serde::de::DeserializeOwned>(value: &T) -> T {
+        serde_json::from_str(&serde_json::to_string(value).unwrap()).unwrap()
+    }
+
+    fn record(data_class: DataClass, trust: Trust) -> Record {
+        Record::new(
+            "demo.a".to_owned(),
+            RecordId::generate(),
+            serde_json::json!({ "a": 1 }),
+            Provenance {
+                data_class,
+                trust,
+                stored_by: Actor::new("plugin:demo"),
+                stored_at: Utc.with_ymd_and_hms(2026, 11, 11, 12, 0, 0).unwrap(),
+            },
+        )
+    }
+
+    #[test]
+    fn a_record_and_its_labels_survive_the_trip() {
+        for (class, trust) in [
+            (DataClass::Private, Trust::Untrusted),
+            (DataClass::Public, Trust::Trusted),
+        ] {
+            let sent = record(class, trust);
+            let page = Page {
+                items: vec![sent.clone()],
+                has_more: true,
+            };
+            assert_eq!(page_from(across(&wire_page(page.clone()))).unwrap(), page);
+            assert_eq!(record_of(across(&wire_record(sent.clone()))).unwrap(), sent);
+        }
+    }
+
+    #[test]
+    fn a_record_with_a_label_it_doesnt_know_is_refused() {
+        let mut wire = wire_record(record(DataClass::Private, Trust::Untrusted));
+        wire.trust = "sort of".to_owned();
+        assert!(record_of(wire.clone()).is_err());
+        wire.trust = "trusted".to_owned();
+        wire.data_class = "secret".to_owned();
+        assert!(record_of(wire).is_err());
+    }
+
+    #[test]
+    fn a_query_survives_the_trip_with_every_kind_of_value() {
+        let at = Utc.with_ymd_and_hms(2026, 1, 2, 3, 4, 5).unwrap();
+        let query = RecordQuery::new("demo.a", PageRequest::new(20, 40).unwrap())
+            .with_filter("name", FieldOp::Eq, FieldValue::Text("x".to_owned()))
+            .with_filter("size", FieldOp::Lt, FieldValue::Integer(3))
+            .with_filter("score", FieldOp::Gte, FieldValue::Number(0.5))
+            .with_filter("done", FieldOp::Lte, FieldValue::Bool(true))
+            .with_filter("at", FieldOp::Gt, FieldValue::Timestamp(at));
+        let CapabilityCall::RecordsQuery {
+            record_type,
+            filters,
+            limit,
+            offset,
+        } = across(&query_call(query.clone()))
+        else {
+            panic!("not a query");
+        };
+        assert_eq!(
+            query_of(record_type, filters, limit, offset).unwrap(),
+            query
+        );
+    }
+
+    #[test]
+    fn a_page_out_of_bounds_is_refused() {
+        assert!(matches!(page_of(0, 0), Err(CapabilityError::Refused(_))));
+        assert!(matches!(
+            query_of("demo.a".to_owned(), Vec::new(), 100_000, 0),
+            Err(CapabilityError::Refused(_))
+        ));
+    }
+
+    #[test]
+    fn http_and_model_answers_survive_the_trip() {
+        let response = HttpResponse::new(206, "part")
+            .with_truncated(true)
+            .with_note(Some("cut".to_owned()));
+        let back: HttpResponse = across(&WireHttpResponse::from(response.clone())).into();
+        assert_eq!(back, response);
+        let reply = ModelReply::new("hi", "m", 12);
+        let back: ModelReply = across(&WireModelReply::from(reply.clone())).into();
+        assert_eq!(back, reply);
+        let request = HttpRequest::get("https://example.com/")
+            .with_header("accept", "text/plain")
+            .with_body("b");
+        assert_eq!(
+            across(&http_call(request)),
+            CapabilityCall::Http {
+                method: "GET".to_owned(),
+                url: "https://example.com/".to_owned(),
+                headers: vec![WireHeader {
+                    name: "accept".to_owned(),
+                    value: "text/plain".to_owned()
+                }],
+                body: Some("b".to_owned()),
+            }
+        );
+    }
+
+    #[test]
+    fn each_kind_of_capability_error_keeps_its_kind_and_detail() {
+        for error in [
+            CapabilityError::NotGranted(PluginCapability::Http),
+            CapabilityError::Refused("not yours".to_owned()),
+            CapabilityError::Failed("store down".to_owned()),
+        ] {
+            let back = error_of(error_code(&error), &error_message(&error));
+            assert_eq!(back, error);
+        }
+        // An unknown code is a failure, whatever it says.
+        assert_eq!(
+            error_of(-1, "odd"),
+            CapabilityError::Failed("odd".to_owned())
+        );
+    }
+
+    #[test]
+    fn a_call_with_a_key_it_doesnt_know_is_refused() {
+        let call = serde_json::json!({ "op": "model", "prompt": "hi", "model": "big" });
+        assert!(serde_json::from_value::<CapabilityCall>(call).is_err());
+    }
+}

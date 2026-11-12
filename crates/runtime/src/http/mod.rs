@@ -33,7 +33,9 @@ use work::{JobTransport, StoreTransport};
 
 use crate::Runtime;
 
-pub use harness::{AttemptList, AttemptView, ChangeList, ChangeView, HoldList, HoldRequest};
+pub use harness::{
+    AttemptList, AttemptView, ChangeList, ChangeView, HoldList, HoldRequest, LessonList,
+};
 pub use openai::OpenAiRequest;
 pub use rest::{
     DefinitionList, DefinitionView, JobList, JobStatusView, JobView, RunRequest, RunStarted,

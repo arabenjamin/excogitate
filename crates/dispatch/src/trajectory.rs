@@ -70,6 +70,9 @@ impl From<Role> for Speaker {
     }
 }
 
+/// The longest description of a capability call kept.
+const MAX_WHAT: usize = 512;
+
 /// One thing in a trajectory.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
@@ -144,6 +147,24 @@ pub enum Step {
         /// How long it ran.
         duration_ms: u64,
     },
+    /// A call a plugin's tool made through a capability, under that tool
+    /// call.
+    Capability {
+        /// The tool call's place among the run's tool calls.
+        tool_index: u32,
+        /// `http` or `model`.
+        #[schemars(length(max = 32))]
+        capability: String,
+        /// The method and address, or the model that answered.
+        #[schemars(length(max = MAX_WHAT))]
+        what: String,
+        /// Whether it worked.
+        ok: bool,
+        /// What it cost, in millionths of a dollar.
+        cost_usd_micros: u64,
+        /// How long it took.
+        duration_ms: u64,
+    },
     /// The run ended.
     Ended {
         /// How.
@@ -156,6 +177,23 @@ pub enum Step {
 }
 
 impl Step {
+    /// The step for a capability call made in the tool call at `tool_index`.
+    #[must_use]
+    pub fn capability(tool_index: u32, used: &plugin_api::CapabilityUse) -> Self {
+        let capability = serde_json::to_value(used.capability)
+            .ok()
+            .and_then(|name| name.as_str().map(str::to_owned))
+            .unwrap_or_default();
+        Self::Capability {
+            tool_index,
+            capability,
+            what: used.what.chars().take(MAX_WHAT).collect(),
+            ok: used.ok,
+            cost_usd_micros: used.cost_usd_micros,
+            duration_ms: used.duration_ms,
+        }
+    }
+
     /// The sink's kind for this step.
     #[must_use]
     pub const fn kind(&self) -> EventKind {
@@ -163,7 +201,7 @@ impl Step {
             Self::Started { .. } => EventKind::RunStarted,
             Self::Message { .. } => EventKind::Message,
             Self::Model { .. } => EventKind::ModelCall,
-            Self::Tool { .. } => EventKind::ToolCall,
+            Self::Tool { .. } | Self::Capability { .. } => EventKind::ToolCall,
             Self::Ended { .. } => EventKind::RunEnded,
         }
     }

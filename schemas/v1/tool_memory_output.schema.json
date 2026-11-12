@@ -1,0 +1,243 @@
+{
+  "$defs": {
+    "Hit": {
+      "additionalProperties": false,
+      "description": "One note a search found.",
+      "properties": {
+        "id": {
+          "description": "The note.",
+          "format": "uuid",
+          "type": "string"
+        },
+        "score": {
+          "description": "Its score, comparable only within this search.",
+          "format": "float",
+          "type": "number"
+        },
+        "similarity": {
+          "description": "How close it is in meaning to the query, if vector search found it.",
+          "format": "float",
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "source_url": {
+          "description": "The URL it came from.",
+          "maxLength": 2048,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "tags": {
+          "description": "Its tags.",
+          "items": {
+            "maxLength": 64,
+            "type": "string"
+          },
+          "maxItems": 16,
+          "type": "array"
+        },
+        "text": {
+          "description": "The part of it that matched best.",
+          "maxLength": 100000,
+          "type": "string"
+        },
+        "title": {
+          "description": "Its title.",
+          "maxLength": 256,
+          "type": "string"
+        },
+        "trust": {
+          "$ref": "#/$defs/TrustLabel",
+          "description": "Whether it may be treated as instructions."
+        }
+      },
+      "required": [
+        "id",
+        "title",
+        "text",
+        "tags",
+        "trust",
+        "score"
+      ],
+      "type": "object"
+    },
+    "TrustLabel": {
+      "description": "Whether a note may be treated as instructions.",
+      "enum": [
+        "trusted",
+        "untrusted"
+      ],
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "What the tool did.",
+  "oneOf": [
+    {
+      "additionalProperties": false,
+      "description": "The note was stored or changed.",
+      "properties": {
+        "chunks": {
+          "description": "How many chunks it has.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "created": {
+          "description": "False if it already existed, or was changed.",
+          "type": "boolean"
+        },
+        "id": {
+          "description": "The note.",
+          "format": "uuid",
+          "type": "string"
+        },
+        "result": {
+          "const": "stored",
+          "type": "string"
+        },
+        "unembedded_chunks": {
+          "description": "How many of them only a keyword search can find.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "result",
+        "id",
+        "created",
+        "chunks",
+        "unembedded_chunks"
+      ],
+      "type": "object"
+    },
+    {
+      "additionalProperties": false,
+      "description": "What a search found.",
+      "properties": {
+        "has_more": {
+          "description": "True when more notes matched than are listed.",
+          "type": "boolean"
+        },
+        "hits": {
+          "description": "The notes, best first.",
+          "items": {
+            "$ref": "#/$defs/Hit"
+          },
+          "maxItems": 50,
+          "type": "array"
+        },
+        "keyword_only_because": {
+          "description": "Set when vectors weren't used, with why.",
+          "maxLength": 512,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "not_close_enough": {
+          "default": 0,
+          "description": "Notes that matched and were left out for being less similar\nthan `min_similarity`.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "result": {
+          "const": "found",
+          "type": "string"
+        }
+      },
+      "required": [
+        "result",
+        "hits",
+        "has_more"
+      ],
+      "type": "object"
+    },
+    {
+      "additionalProperties": false,
+      "description": "One note.",
+      "properties": {
+        "id": {
+          "description": "The note.",
+          "format": "uuid",
+          "type": "string"
+        },
+        "result": {
+          "const": "note",
+          "type": "string"
+        },
+        "source_url": {
+          "description": "The URL it came from.",
+          "maxLength": 2048,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "tags": {
+          "description": "Its tags.",
+          "items": {
+            "maxLength": 64,
+            "type": "string"
+          },
+          "maxItems": 16,
+          "type": "array"
+        },
+        "text": {
+          "description": "Its text.",
+          "maxLength": 100000,
+          "type": "string"
+        },
+        "title": {
+          "description": "Its title.",
+          "maxLength": 256,
+          "type": "string"
+        },
+        "truncated": {
+          "description": "True if the note is longer than `text`.",
+          "type": "boolean"
+        },
+        "trust": {
+          "$ref": "#/$defs/TrustLabel",
+          "description": "Whether it may be treated as instructions."
+        }
+      },
+      "required": [
+        "result",
+        "id",
+        "title",
+        "text",
+        "truncated",
+        "tags",
+        "trust"
+      ],
+      "type": "object"
+    },
+    {
+      "additionalProperties": false,
+      "description": "The note is gone.",
+      "properties": {
+        "id": {
+          "description": "The note.",
+          "format": "uuid",
+          "type": "string"
+        },
+        "result": {
+          "const": "deleted",
+          "type": "string"
+        }
+      },
+      "required": [
+        "result",
+        "id"
+      ],
+      "type": "object"
+    }
+  ],
+  "title": "MemoryResult"
+}

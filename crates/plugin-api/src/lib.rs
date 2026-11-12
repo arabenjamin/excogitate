@@ -12,17 +12,34 @@
 mod capability;
 mod manifest;
 mod process;
+#[doc(hidden)]
+pub mod rpc;
 mod serve;
 mod tool;
+#[doc(hidden)]
 pub mod wire;
 
 pub use capability::{
     Capabilities, CapabilityError, HttpCapability, HttpRequest, HttpResponse, ModelCapability,
     ModelReply, RecordsCapability,
 };
-pub use manifest::{API_VERSION, ManifestError, PluginCapability, PluginManifest, ToolManifest};
+pub use manifest::{
+    API_VERSION, ManifestError, PluginCapability, PluginManifest, RESERVED_NAMES, ToolManifest,
+};
 pub use process::{serve_plugin, serve_plugin_stdio};
+// The runtime's side of MCP. It isn't part of the plugin contract and can
+// change in any release.
+#[doc(hidden)]
 pub use serve::{MAX_LINE_BYTES, MCP_VERSION, McpHandler, read_line, serve, serve_stdio};
 pub use tool::{
-    Effect, Plugin, PluginError, Tool, ToolContext, ToolDefinition, ToolFailure, ToolOutput,
+    CapabilityUse, Effect, Plugin, PluginError, Tool, ToolContext, ToolDefinition, ToolFailure,
+    ToolOutput,
+};
+
+/// The store's vocabulary a plugin works in, so a plugin needs only this
+/// crate.
+pub use protocol::{DataClass, RunId, Trust};
+pub use store::{
+    Direction, FieldFilter, FieldOp, FieldValue, Page, PageRequest, Provenance, Record,
+    RecordDecls, RecordId, RecordQuery,
 };

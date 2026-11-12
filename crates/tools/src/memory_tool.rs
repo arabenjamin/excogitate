@@ -178,6 +178,10 @@ enum MemoryResult {
         keyword_only_because: Option<String>,
         /// True when more notes matched than are listed.
         has_more: bool,
+        /// Notes that matched and were left out for being less similar
+        /// than `min_similarity`.
+        #[serde(default)]
+        not_close_enough: u32,
     },
     /// One note.
     Note {
@@ -227,10 +231,6 @@ fn hit(found: NoteHit) -> Hit {
     }
 }
 
-fn close_enough(found: &NoteHit, min_similarity: Option<f32>) -> bool {
-    min_similarity.is_none_or(|min| found.similarity.is_some_and(|close| close >= min))
-}
-
 fn stored(note: &StoredNote) -> MemoryResult {
     MemoryResult::Stored {
         id: note.id.as_uuid(),
@@ -241,11 +241,11 @@ fn stored(note: &StoredNote) -> MemoryResult {
 }
 
 fn failure(error: &MemoryError) -> ToolFailure {
-    ToolFailure(schema::bounded(&error.to_string()))
+    ToolFailure::new(schema::bounded(&error.to_string()))
 }
 
 fn missing(what: &str) -> ToolFailure {
-    ToolFailure(format!("this operation needs `{what}`"))
+    ToolFailure::new(format!("this operation needs `{what}`"))
 }
 
 /// The first line of `text`, as a title.
@@ -275,6 +275,15 @@ impl MemoryTool {
     #[must_use]
     pub const fn new(memory: Memory) -> Self {
         Self { memory }
+    }
+
+    /// The tool's input and output schemas, as published.
+    #[must_use]
+    pub fn schemas() -> (Value, Value) {
+        (
+            schema::schema_of::<MemoryArgs>(),
+            schema::schema_of::<MemoryResult>(),
+        )
     }
 
     async fn store(
@@ -315,19 +324,16 @@ impl MemoryTool {
         };
         let results = self
             .memory
-            .search(
+            .search_close(
                 &query,
                 classes_for(context.data_class),
                 scope,
                 args.limit.unwrap_or(DEFAULT_LIMIT),
+                args.min_similarity,
             )
             .await
             .map_err(|error| failure(&error))?;
-        let kept: Vec<NoteHit> = results
-            .hits
-            .into_iter()
-            .filter(|found| close_enough(found, args.min_similarity))
-            .collect();
+        let kept: Vec<NoteHit> = results.hits;
         let all_trusted = !kept.is_empty()
             && kept
                 .iter()
@@ -341,6 +347,7 @@ impl MemoryTool {
                 hits: kept.into_iter().map(hit).collect(),
                 keyword_only_because,
                 has_more: results.has_more,
+                not_close_enough: results.not_close_enough,
             },
             if all_trusted {
                 Trust::Trusted
@@ -357,7 +364,7 @@ impl MemoryTool {
             .get(id, classes_for(context.data_class))
             .await
             .map_err(|error| failure(&error))?
-            .ok_or_else(|| ToolFailure(format!("no note {id} is visible to this run")))
+            .ok_or_else(|| ToolFailure::new(format!("no note {id} is visible to this run")))
     }
 
     /// The note, if this run may change it. A prompt injection must not be
@@ -365,7 +372,7 @@ impl MemoryTool {
     async fn changeable(&self, id: NoteId, context: ToolContext) -> Result<(), ToolFailure> {
         let note = self.visible_note(id, context).await?;
         if note.provenance.trust == Trust::Trusted {
-            return Err(ToolFailure(format!(
+            return Err(ToolFailure::new(format!(
                 "note {id} was written by the owner and can't be changed by a tool"
             )));
         }
@@ -407,7 +414,7 @@ impl MemoryTool {
             tags: args.tags,
         };
         if edit.title.is_none() && edit.body.is_none() && edit.tags.is_none() {
-            return Err(ToolFailure(
+            return Err(ToolFailure::new(
                 "nothing to change: give `title`, `text` or `tags`".to_owned(),
             ));
         }
@@ -460,7 +467,7 @@ impl Tool for MemoryTool {
 
     async fn run(&self, arguments: Value, context: ToolContext) -> Result<ToolOutput, ToolFailure> {
         let args: MemoryArgs = serde_json::from_value(arguments)
-            .map_err(|error| ToolFailure(schema::bounded(&error.to_string())))?;
+            .map_err(|error| ToolFailure::new(schema::bounded(&error.to_string())))?;
         let id = args.id.map(NoteId::from_uuid);
         let (result, trust, cost_usd_micros) = match args.operation {
             Operation::Store => self.store(args, context).await?,
@@ -476,11 +483,7 @@ impl Tool for MemoryTool {
             }
         };
         let value = serde_json::to_value(result)
-            .map_err(|error| ToolFailure(schema::bounded(&error.to_string())))?;
-        Ok(ToolOutput {
-            value,
-            trust,
-            cost_usd_micros,
-        })
+            .map_err(|error| ToolFailure::new(schema::bounded(&error.to_string())))?;
+        Ok(ToolOutput::new(value, trust).with_cost(cost_usd_micros))
     }
 }

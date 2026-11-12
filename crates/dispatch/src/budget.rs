@@ -49,4 +49,6 @@ pub enum BudgetKind {
     RequestSize,
     /// Time.
     Time,
+    /// The runtime was stopping, so the run ended early.
+    Stopped,
 }

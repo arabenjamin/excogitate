@@ -76,8 +76,8 @@ fn a_slot_too_old_is_skipped() {
 #[test]
 fn a_schedule_runs_in_its_own_time_zone() {
     let mut daily = schedule("0 8 * * *");
-    daily.timezone = Some("America/Detroit".to_owned());
-    // 8:00 in Detroit on this date is 13:00 UTC, because DST starts the 14th.
+    daily.timezone = Some("America/New_York".to_owned());
+    // 8:00 in New York on this date is 13:00 UTC, because DST starts the 14th.
     assert_eq!(daily.due_slot("s", at(13, 5)).unwrap(), Some(at(13, 0)));
     assert_eq!(daily.due_slot("s", at(8, 5)).unwrap(), None);
 }
@@ -123,10 +123,16 @@ async fn each_slot_fires_and_the_job_says_who_asked() {
     put(rig.store.as_ref(), "hourly", &hourly, "t").await;
     assert_eq!(rig.scheduler.tick(at(8, 0)).await.unwrap(), ["hourly"]);
     assert_eq!(rig.scheduler.tick(at(9, 0)).await.unwrap(), ["hourly"]);
-    let job = store::JobQueue::claim_job(rig.store.as_ref(), "w", at(9, 1), at(10, 0))
-        .await
-        .unwrap()
-        .unwrap();
+    let job = store::JobQueue::claim_job(
+        rig.store.as_ref(),
+        "w",
+        &["chat".to_owned()],
+        at(9, 1),
+        at(10, 0),
+    )
+    .await
+    .unwrap()
+    .unwrap();
     assert_eq!(job.requested_by.as_str(), "schedule:hourly");
     assert_eq!(job.max_attempts, 3);
     assert_eq!(job.priority, 7);
@@ -319,4 +325,13 @@ fn the_example_file_is_valid() {
     let parsed: Schedule = serde_json::from_value(raw).unwrap();
     assert_eq!(parsed.kind, "chat");
     assert!(parsed.due_slot("example", at(8, 0)).is_ok());
+}
+
+#[tokio::test]
+async fn a_catch_up_window_shorter_than_the_tick_is_refused() {
+    let dir = Temp::new("catch-up");
+    dir.write("morning.yaml", &format!("{GOOD}catch_up_seconds: 0\n"));
+    let store = MemoryStore::new(3);
+    let error = sync(&store, dir.root()).await.unwrap_err();
+    assert!(error.to_string().contains("catch_up_seconds"), "{error}");
 }

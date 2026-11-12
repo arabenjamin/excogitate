@@ -48,13 +48,13 @@ fn open_object() -> Value {
 #[async_trait]
 impl Tool for Fake {
     fn definition(&self) -> ToolDefinition {
-        ToolDefinition {
-            name: self.name.to_owned(),
-            description: "a fake".to_owned(),
-            input_schema: open_object(),
-            output_schema: open_object(),
-            effect: self.effect,
-        }
+        ToolDefinition::new(
+            self.name.to_owned(),
+            "a fake".to_owned(),
+            open_object(),
+            open_object(),
+            self.effect,
+        )
     }
 
     async fn run(&self, arguments: Value, context: ToolContext) -> Result<ToolOutput, ToolFailure> {
@@ -65,12 +65,8 @@ impl Tool for Fake {
             .unwrap()
             .push((arguments, context.budget_usd_micros));
         match &self.reply {
-            Ok(value) => Ok(ToolOutput {
-                value: value.clone(),
-                trust: Trust::Untrusted,
-                cost_usd_micros: self.cost,
-            }),
-            Err(why) => Err(ToolFailure((*why).to_owned())),
+            Ok(value) => Ok(ToolOutput::new(value.clone(), Trust::Untrusted).with_cost(self.cost)),
+            Err(why) => Err(ToolFailure::new((*why).to_owned())),
         }
     }
 }
@@ -134,6 +130,7 @@ async fn harness(script: Vec<ChaosStep>, extra: Vec<Arc<Fake>>, log: Arc<Recorde
             agent_output_tokens: 50,
             time_limit: Duration::from_secs(20),
         },
+        stop: dispatch::StopSignal::new(),
     };
     Harness {
         engine,

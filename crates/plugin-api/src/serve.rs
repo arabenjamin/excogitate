@@ -5,11 +5,13 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use async_trait::async_trait;
 use protocol::{DataClass, RunId};
 use schema::Validator;
 use serde_json::{Value, json};
-use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncRead, AsyncWrite, AsyncWriteExt, BufReader};
+use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncRead, AsyncWrite};
 
+use crate::rpc::{self, INVALID_PARAMS, METHOD_NOT_FOUND, Peer, failure, success};
 use crate::wire::{CONTEXT_META, WireContext};
 use crate::{Tool, ToolContext};
 
@@ -18,18 +20,6 @@ pub const MCP_VERSION: &str = "2025-06-18";
 
 /// The longest line read in either direction. Over this, the connection ends.
 pub const MAX_LINE_BYTES: u64 = 8 * 1024 * 1024;
-
-const PARSE_ERROR: i64 = -32700;
-const METHOD_NOT_FOUND: i64 = -32601;
-const INVALID_PARAMS: i64 = -32602;
-
-fn success(id: &Value, result: &Value) -> String {
-    json!({ "jsonrpc": "2.0", "id": id, "result": result }).to_string()
-}
-
-fn failure(id: &Value, code: i64, message: &str) -> String {
-    json!({ "jsonrpc": "2.0", "id": id, "error": { "code": code, "message": message } }).to_string()
-}
 
 /// A tool, and the check its arguments must pass.
 struct Served {
@@ -63,24 +53,25 @@ fn context_of(params: &Value) -> ToolContext {
         .and_then(|meta| meta.get(CONTEXT_META))
         .and_then(|context| serde_json::from_value::<WireContext>(context.clone()).ok());
     match sent {
-        Some(context) => ToolContext {
-            run: RunId::from_uuid(context.run),
-            data_class: if context.public {
+        Some(sent) => {
+            let data_class = if sent.public {
                 DataClass::Public
             } else {
                 DataClass::Private
-            },
-            budget_usd_micros: context.budget_usd_micros,
-        },
-        None => ToolContext {
-            run: RunId::generate(),
-            data_class: DataClass::Private,
-            budget_usd_micros: 0,
-        },
+            };
+            let mut context = ToolContext::new(
+                RunId::from_uuid(sent.run),
+                data_class,
+                sent.budget_usd_micros,
+            );
+            context.call = Some(sent.call);
+            context
+        }
+        None => ToolContext::new(RunId::generate(), DataClass::Private, 0),
     }
 }
 
-async fn call_tool(tools: &HashMap<String, Served>, id: &Value, params: &Value) -> String {
+async fn call_tool(tools: &HashMap<String, Served>, id: &Value, params: &Value) -> Value {
     let name = params.get("name").and_then(Value::as_str);
     let Some(Served { tool, input }) = name.and_then(|name| tools.get(name)) else {
         return failure(id, INVALID_PARAMS, "no such tool");
@@ -104,7 +95,7 @@ async fn call_tool(tools: &HashMap<String, Served>, id: &Value, params: &Value) 
             "isError": false,
         }),
         Err(failure) => json!({
-            "content": [{ "type": "text", "text": failure.0 }],
+            "content": [{ "type": "text", "text": failure.message() }],
             "isError": true,
         }),
     };
@@ -152,7 +143,7 @@ impl McpHandler {
     }
 
     /// The reply to one message. A notification gets none.
-    pub async fn handle(&self, message: &Value) -> Option<String> {
+    pub async fn handle(&self, message: &Value) -> Option<Value> {
         // A message without an id is a notification, and gets no reply.
         let id = message.get("id")?;
         let params = message.get("params").cloned().unwrap_or_else(|| json!({}));
@@ -170,6 +161,13 @@ impl McpHandler {
             Some("tools/call") => call_tool(&self.tools, id, &params).await,
             _ => failure(id, METHOD_NOT_FOUND, "no such method"),
         })
+    }
+}
+
+#[async_trait]
+impl rpc::Handler for McpHandler {
+    async fn handle(&self, message: Value) -> Option<Value> {
+        McpHandler::handle(self, &message).await
     }
 }
 
@@ -204,26 +202,15 @@ pub async fn serve<R, W>(
     version: &str,
     tools: Vec<Arc<dyn Tool>>,
     reader: R,
-    mut writer: W,
+    writer: W,
 ) -> std::io::Result<()>
 where
     R: AsyncRead + Unpin,
     W: AsyncWrite + Unpin,
 {
-    let handler = McpHandler::new(name, version, tools)?;
-    let mut reader = BufReader::new(reader);
-    while let Some(line) = read_line(&mut reader).await? {
-        let reply = match serde_json::from_slice::<Value>(&line) {
-            Ok(message) => handler.handle(&message).await,
-            Err(_) => Some(failure(&Value::Null, PARSE_ERROR, "not JSON")),
-        };
-        if let Some(reply) = reply {
-            writer.write_all(reply.as_bytes()).await?;
-            writer.write_all(b"\n").await?;
-            writer.flush().await?;
-        }
-    }
-    Ok(())
+    let handler = Arc::new(McpHandler::new(name, version, tools)?);
+    let (peer, io) = Peer::new(rpc::Limits::default());
+    peer.run(io, reader, writer, handler).await
 }
 
 /// Serves `tools` on this process's stdin and stdout. Call it from a plugin
@@ -261,27 +248,23 @@ mod tests {
     #[async_trait]
     impl Tool for Echo {
         fn definition(&self) -> ToolDefinition {
-            ToolDefinition {
-                name: "demo_echo".to_owned(),
-                description: "d".to_owned(),
-                input_schema: json!({
+            ToolDefinition::new(
+                "demo_echo".to_owned(),
+                "d".to_owned(),
+                json!({
                     "type": "object",
                     "properties": { "tight": { "type": "integer" } }
                 }),
-                output_schema: json!({ "type": "object", "additionalProperties": false }),
-                effect: Effect::Read,
-            }
+                json!({ "type": "object", "additionalProperties": false }),
+                Effect::Read,
+            )
         }
 
         async fn run(&self, arguments: Value, _: ToolContext) -> Result<ToolOutput, ToolFailure> {
             if arguments.get("fail").is_some() {
-                return Err(ToolFailure("nope".to_owned()));
+                return Err(ToolFailure::new("nope"));
             }
-            Ok(ToolOutput {
-                value: arguments,
-                trust: Trust::Untrusted,
-                cost_usd_micros: 0,
-            })
+            Ok(ToolOutput::new(arguments, Trust::Untrusted))
         }
     }
 
@@ -296,11 +279,14 @@ mod tests {
         )
         .await
         .unwrap();
-        String::from_utf8(output)
+        // Requests are served at once, so replies come in any order.
+        let mut replies: Vec<Value> = String::from_utf8(output)
             .unwrap()
             .lines()
             .map(|line| serde_json::from_str(line).unwrap())
-            .collect()
+            .collect();
+        replies.sort_by_key(|reply| reply["id"].as_i64());
+        replies
     }
 
     #[tokio::test]
@@ -371,7 +357,7 @@ mod tests {
         assert_eq!(
             codes[..3],
             [
-                json!(PARSE_ERROR),
+                json!(rpc::PARSE_ERROR),
                 json!(METHOD_NOT_FOUND),
                 json!(INVALID_PARAMS)
             ]

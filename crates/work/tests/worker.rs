@@ -193,13 +193,17 @@ async fn a_failing_job_retries_and_then_says_why_it_died() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn a_job_nothing_handles_dies_and_says_so() {
-    let rig = Rig::start(vec![Fixture::new(Does::Succeed)], quick());
-    let queued = job("nobody", json!({}), 1);
-    rig.add(&queued).await;
-    let done = rig.settled(queued.id).await;
-    assert_eq!(done.status, JobStatus::Dead);
-    assert!(done.last_error.unwrap().contains("nobody"));
+async fn a_job_this_worker_doesnt_run_is_left_for_one_that_does() {
+    let handler = Fixture::new(Does::Succeed);
+    let rig = Rig::start(vec![handler.clone()], quick());
+    let elsewhere = job("nobody", json!({}), 1);
+    let ours = job("test", json!({ "n": 1 }), 1);
+    rig.add(&elsewhere).await;
+    rig.add(&ours).await;
+    assert_eq!(rig.settled(ours.id).await.status, JobStatus::Succeeded);
+    let waiting = rig.store.get_job(elsewhere.id).await.unwrap().unwrap();
+    assert_eq!(waiting.status, JobStatus::Queued);
+    assert_eq!(waiting.attempts, 0);
     rig.stop().await;
 }
 

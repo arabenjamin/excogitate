@@ -19,6 +19,9 @@ mod converse;
 
 pub use converse::{ChatResult, Conversation};
 
+use plugin_api::CapabilityUse;
+
+use crate::StopSignal;
 use crate::tool::Registered;
 use crate::trajectory::{RunSubject, Step};
 use crate::{
@@ -63,6 +66,9 @@ pub struct SessionConfig {
 pub struct Probe {
     /// The read tools that really run. Anything else is stubbed.
     pub reads: BTreeSet<String>,
+    /// Tools that run in a probe because they probe in turn, as `delegate`
+    /// does: told it's a probe, the agent it hands to runs as one too.
+    pub nested: BTreeSet<String>,
 }
 
 /// What a probed run is told in place of a result.
@@ -150,6 +156,7 @@ pub struct Session {
     offered: BTreeSet<String>,
     config: SessionConfig,
     started: Instant,
+    stop: Option<StopSignal>,
     hit: Option<BudgetKind>,
     totals: Totals,
     model_calls: Vec<ModelEntry>,
@@ -206,6 +213,7 @@ impl Session {
             sink,
             config,
             started: Instant::now(),
+            stop: None,
             hit: None,
             totals: Totals::default(),
             model_calls: Vec::new(),
@@ -238,9 +246,48 @@ impl Session {
         self.hit
     }
 
+    /// The same session, ended early when `stop` is given.
+    #[must_use]
+    pub fn with_stop(mut self, stop: StopSignal) -> Self {
+        self.stop = Some(stop);
+        self
+    }
+
+    fn stopping(&self) -> bool {
+        self.stop.as_ref().is_some_and(StopSignal::is_stopped)
+    }
+
     fn time_left(&self) -> Duration {
+        if self.stopping() {
+            return Duration::ZERO;
+        }
         Duration::from_millis(self.config.budget.max_duration_ms)
             .saturating_sub(self.started.elapsed())
+    }
+
+    /// Waits for `work` within the time left, unless the run is stopped
+    /// first.
+    async fn within<F: Future>(&self, work: F) -> Waited<F::Output> {
+        let stop = self.stop.clone();
+        let stopped = async move {
+            match stop {
+                Some(stop) => stop.stopped().await,
+                None => std::future::pending().await,
+            }
+        };
+        tokio::select! {
+            done = timeout(self.time_left(), work) => done.map_or(Waited::OutOfTime, Waited::Done),
+            () = stopped => Waited::Stopped,
+        }
+    }
+
+    /// The limit to record when a wait didn't finish.
+    const fn cut_short(waited_for_stop: bool) -> BudgetKind {
+        if waited_for_stop {
+            BudgetKind::Stopped
+        } else {
+            BudgetKind::Time
+        }
     }
 
     fn mark_hit(&mut self, kind: BudgetKind) -> BudgetKind {
@@ -249,6 +296,9 @@ impl Session {
 
     /// The limit that stops work now, if one does.
     fn stopped(&mut self) -> Option<BudgetKind> {
+        if self.hit.is_none() && self.stopping() {
+            self.mark_hit(BudgetKind::Stopped);
+        }
         if self.hit.is_none() && self.time_left().is_zero() {
             self.mark_hit(BudgetKind::Time);
         }
@@ -340,9 +390,18 @@ impl Session {
         };
 
         self.totals.rounds += 1;
-        let Ok(result) = timeout(self.time_left(), gateway.chat(&policy, &request)).await else {
-            self.record_model_failure("timed out against the run's time budget".to_owned(), 0);
-            return Err(ModelStop::Budget(self.mark_hit(BudgetKind::Time)));
+        let result = match self.within(gateway.chat(&policy, &request)).await {
+            Waited::Done(result) => result,
+            cut => {
+                let stopped = matches!(cut, Waited::Stopped);
+                let why = if stopped {
+                    "stopped because the runtime is stopping"
+                } else {
+                    "timed out against the run's time budget"
+                };
+                self.record_model_failure(why.to_owned(), 0);
+                return Err(ModelStop::Budget(self.mark_hit(Self::cut_short(stopped))));
+            }
         };
         match result {
             Ok(completion) => {
@@ -501,6 +560,7 @@ impl Session {
             self.totals.writes += 1;
         }
         if let Some(probe) = &self.config.probe
+            && !probe.nested.contains(&name)
             && (effect == crate::Effect::Write || !probe.reads.contains(&name))
         {
             return self.stub(call, name, effect).await;
@@ -522,6 +582,7 @@ impl Session {
             by_harness: self.by_harness,
             duration_ms: 0,
             cost_usd_micros: 0,
+            capability_calls: 0,
             detail: None,
         });
         let content = json!({ "stubbed": true, "detail": STUB_REPLY }).to_string();
@@ -595,6 +656,7 @@ impl Session {
             by_harness: self.by_harness,
             duration_ms: 0,
             cost_usd_micros: 0,
+            capability_calls: 0,
             detail: Some(detail.clone()),
         });
         self.emit(Step::Tool {
@@ -616,6 +678,74 @@ impl Session {
         )
     }
 
+    /// The context a tool call gets: none of it from the model.
+    fn tool_context(&self) -> ToolContext {
+        ToolContext::new(
+            self.config.run,
+            self.config.data_class,
+            self.config
+                .budget
+                .max_usd_micros
+                .saturating_sub(self.totals.cost_usd_micros),
+        )
+        .with_tool_calls_left(
+            self.config
+                .budget
+                .max_tool_calls
+                .saturating_sub(self.totals.tool_calls),
+        )
+        .with_time_left_ms(u64::try_from(self.time_left().as_millis()).unwrap_or(u64::MAX))
+        .with_probing(self.config.probe.is_some())
+    }
+
+    /// How a tool call that was waited for went.
+    fn finished(
+        &mut self,
+        joined: Waited<
+            Result<Result<crate::ToolOutput, crate::ToolFailure>, tokio::task::JoinError>,
+        >,
+        registered: &Registered,
+    ) -> Finished {
+        match joined {
+            Waited::OutOfTime | Waited::Stopped => {
+                let stopped = matches!(joined, Waited::Stopped);
+                self.mark_hit(Self::cut_short(stopped));
+                let why = if stopped {
+                    "the runtime is stopping, so the tool was stopped"
+                } else {
+                    "the tool ran out of time"
+                };
+                Finished::failed(CallStatus::TimedOut, why.to_owned())
+            }
+            Waited::Done(Err(_)) => {
+                Finished::failed(CallStatus::Failed, "the tool crashed".to_owned())
+            }
+            Waited::Done(Ok(Err(failure))) => {
+                Finished::failed(CallStatus::Failed, bounded(failure.message()))
+                    .costing(failure.cost_usd_micros())
+                    .using(failure.uses().to_vec())
+            }
+            Waited::Done(Ok(Ok(output))) => match registered.output.check(&output.value) {
+                Ok(()) => Finished::ran(
+                    &output.value,
+                    output.trust,
+                    self.config.max_result_chars,
+                    output.cost_usd_micros,
+                )
+                .using(output.uses),
+                Err(refusal) => Finished::failed(
+                    CallStatus::Failed,
+                    format!(
+                        "the tool's result failed its schema: {}",
+                        bounded(&refusal.to_string())
+                    ),
+                )
+                .costing(output.cost_usd_micros)
+                .using(output.uses),
+            },
+        }
+    }
+
     async fn run_tool(
         &mut self,
         call: &ToolCall,
@@ -624,53 +754,27 @@ impl Session {
         effect: crate::Effect,
         arguments: Value,
     ) -> ToolReply {
-        let context = ToolContext {
-            run: self.config.run,
-            data_class: self.config.data_class,
-            budget_usd_micros: self
-                .config
-                .budget
-                .max_usd_micros
-                .saturating_sub(self.totals.cost_usd_micros),
-        };
+        let context = self.tool_context();
         let begun = Instant::now();
         let tool = Arc::clone(&registered.tool);
         // A task of its own, so a panicking tool doesn't take the run with it.
         let task = tokio::spawn(async move { tool.run(arguments, context).await });
         let abort = task.abort_handle();
-        let joined = timeout(self.time_left(), task).await;
+        let joined = self.within(task).await;
         let duration_ms = millis(begun.elapsed());
 
-        let finished = match joined {
-            Err(_) => {
-                abort.abort();
-                self.mark_hit(BudgetKind::Time);
-                Finished::failed(CallStatus::TimedOut, "the tool ran out of time".to_owned())
-            }
-            Ok(Err(_)) => Finished::failed(CallStatus::Failed, "the tool crashed".to_owned()),
-            Ok(Ok(Err(failure))) => Finished::failed(CallStatus::Failed, bounded(&failure.0)),
-            Ok(Ok(Ok(output))) => match registered.output.check(&output.value) {
-                Ok(()) => {
-                    self.totals.cost_usd_micros = self
-                        .totals
-                        .cost_usd_micros
-                        .saturating_add(output.cost_usd_micros);
-                    Finished::ran(
-                        &output.value,
-                        output.trust,
-                        self.config.max_result_chars,
-                        output.cost_usd_micros,
-                    )
-                }
-                Err(refusal) => Finished::failed(
-                    CallStatus::Failed,
-                    format!(
-                        "the tool's result failed its schema: {}",
-                        bounded(&refusal.to_string())
-                    ),
-                ),
-            },
-        };
+        if matches!(joined, Waited::OutOfTime | Waited::Stopped) {
+            abort.abort();
+        }
+        let finished = self.finished(joined, registered);
+        // What it spent counts whether or not it worked, and each call a
+        // plugin made through a capability counts as a tool call.
+        self.totals.cost_usd_micros = self
+            .totals
+            .cost_usd_micros
+            .saturating_add(finished.cost_usd_micros);
+        let capability_calls = u32::try_from(finished.uses.len()).unwrap_or(u32::MAX);
+        self.totals.tool_calls = self.totals.tool_calls.saturating_add(capability_calls);
         let index = self.call_index();
         self.tool_calls.push(ToolEntry {
             tool: name.clone(),
@@ -682,6 +786,7 @@ impl Session {
             by_harness: self.by_harness,
             duration_ms,
             cost_usd_micros: finished.cost_usd_micros,
+            capability_calls,
             detail: finished.detail,
         });
         self.emit(Step::Tool {
@@ -696,6 +801,9 @@ impl Session {
             duration_ms,
         })
         .await;
+        for used in &finished.uses {
+            self.emit(Step::capability(index, used)).await;
+        }
         ToolReply {
             call_id: call.id.clone(),
             content: finished.content,
@@ -751,6 +859,13 @@ fn refusal_json(kind: RefusalKind, detail: &str, extra: &Value) -> String {
     json!({ "status": "refused", "kind": kind, "detail": detail, "info": extra }).to_string()
 }
 
+/// How a wait for a model or tool call ended.
+enum Waited<T> {
+    Done(T),
+    OutOfTime,
+    Stopped,
+}
+
 /// How a started tool call went.
 struct Finished {
     status: CallStatus,
@@ -758,6 +873,7 @@ struct Finished {
     truncated: bool,
     untrusted: bool,
     cost_usd_micros: u64,
+    uses: Vec<CapabilityUse>,
     detail: Option<String>,
 }
 
@@ -769,8 +885,21 @@ impl Finished {
             truncated: false,
             untrusted: false,
             cost_usd_micros: 0,
+            uses: Vec::new(),
             detail: Some(detail),
         }
+    }
+
+    /// The same outcome, with what the call spent.
+    const fn costing(mut self, cost_usd_micros: u64) -> Self {
+        self.cost_usd_micros = cost_usd_micros;
+        self
+    }
+
+    /// The same outcome, with the capability calls it made.
+    fn using(mut self, uses: Vec<CapabilityUse>) -> Self {
+        self.uses = uses;
+        self
     }
 
     fn ran(value: &Value, trust: Trust, max_chars: usize, cost_usd_micros: u64) -> Self {
@@ -797,6 +926,7 @@ impl Finished {
             truncated,
             untrusted,
             cost_usd_micros,
+            uses: Vec::new(),
             detail: None,
         }
     }

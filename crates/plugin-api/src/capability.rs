@@ -46,22 +46,35 @@ pub trait RecordsCapability: Send + Sync + std::fmt::Debug {
     /// # Errors
     ///
     /// [`CapabilityError`] if it's refused or fails.
-    async fn get(&self, record_type: &str, id: RecordId)
-    -> Result<Option<Record>, CapabilityError>;
+    async fn get(
+        &self,
+        record_type: &str,
+        id: RecordId,
+        context: ToolContext,
+    ) -> Result<Option<Record>, CapabilityError>;
 
     /// Records meeting typed filters.
     ///
     /// # Errors
     ///
     /// [`CapabilityError`] if it's refused or fails.
-    async fn query(&self, query: RecordQuery) -> Result<Page<Record>, CapabilityError>;
+    async fn query(
+        &self,
+        query: RecordQuery,
+        context: ToolContext,
+    ) -> Result<Page<Record>, CapabilityError>;
 
     /// Removes a record and its links.
     ///
     /// # Errors
     ///
     /// [`CapabilityError`] if it's refused or fails.
-    async fn delete(&self, record_type: &str, id: RecordId) -> Result<(), CapabilityError>;
+    async fn delete(
+        &self,
+        record_type: &str,
+        id: RecordId,
+        context: ToolContext,
+    ) -> Result<(), CapabilityError>;
 
     /// Links two records by a declared relation.
     ///
@@ -73,6 +86,7 @@ pub trait RecordsCapability: Send + Sync + std::fmt::Debug {
         relation: &str,
         from: RecordId,
         to: RecordId,
+        context: ToolContext,
     ) -> Result<(), CapabilityError>;
 
     /// The records a relation links to or from `id`.
@@ -86,11 +100,13 @@ pub trait RecordsCapability: Send + Sync + std::fmt::Debug {
         id: RecordId,
         direction: Direction,
         page: PageRequest,
+        context: ToolContext,
     ) -> Result<Page<Record>, CapabilityError>;
 }
 
 /// An HTTP request, which the runtime makes under its own network rules.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct HttpRequest {
     /// The method.
     pub method: String,
@@ -102,8 +118,42 @@ pub struct HttpRequest {
     pub body: Option<String>,
 }
 
+impl HttpRequest {
+    /// A request with no headers or body.
+    #[must_use]
+    pub fn new(method: impl Into<String>, url: impl Into<String>) -> Self {
+        Self {
+            method: method.into(),
+            url: url.into(),
+            headers: Vec::new(),
+            body: None,
+        }
+    }
+
+    /// A `GET` of `url`.
+    #[must_use]
+    pub fn get(url: impl Into<String>) -> Self {
+        Self::new("GET", url)
+    }
+
+    /// The same request with one more header.
+    #[must_use]
+    pub fn with_header(mut self, name: impl Into<String>, value: impl Into<String>) -> Self {
+        self.headers.push((name.into(), value.into()));
+        self
+    }
+
+    /// The same request with a body.
+    #[must_use]
+    pub fn with_body(mut self, body: impl Into<String>) -> Self {
+        self.body = Some(body.into());
+        self
+    }
+}
+
 /// An HTTP response.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct HttpResponse {
     /// The status code.
     pub status: u16,
@@ -113,6 +163,33 @@ pub struct HttpResponse {
     pub truncated: bool,
     /// Why the body is missing, such as a type that isn't text.
     pub note: Option<String>,
+}
+
+impl HttpResponse {
+    /// A whole response.
+    #[must_use]
+    pub fn new(status: u16, body: impl Into<String>) -> Self {
+        Self {
+            status,
+            body: body.into(),
+            truncated: false,
+            note: None,
+        }
+    }
+
+    /// The same response, marked as cut or not.
+    #[must_use]
+    pub const fn with_truncated(mut self, truncated: bool) -> Self {
+        self.truncated = truncated;
+        self
+    }
+
+    /// The same response, saying why its body is missing.
+    #[must_use]
+    pub fn with_note(mut self, note: Option<String>) -> Self {
+        self.note = note;
+        self
+    }
 }
 
 /// HTTP through the runtime, under the same network rules as the
@@ -134,6 +211,7 @@ pub trait HttpCapability: Send + Sync + std::fmt::Debug {
 
 /// A model's answer, and what it cost.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct ModelReply {
     /// The text it returned.
     pub text: String,
@@ -142,6 +220,18 @@ pub struct ModelReply {
     /// What the call cost, in millionths of a dollar. The host charges it to
     /// the run whatever the plugin reports.
     pub cost_usd_micros: u64,
+}
+
+impl ModelReply {
+    /// An answer from `model`, and what it cost.
+    #[must_use]
+    pub fn new(text: impl Into<String>, model: impl Into<String>, cost_usd_micros: u64) -> Self {
+        Self {
+            text: text.into(),
+            model: model.into(),
+            cost_usd_micros,
+        }
+    }
 }
 
 /// One-shot model calls, routed and charged by the runtime.
@@ -162,6 +252,7 @@ pub trait ModelCapability: Send + Sync + std::fmt::Debug {
 
 /// The capabilities handed to a plugin: those it declared and was granted.
 #[derive(Debug, Clone, Default)]
+#[non_exhaustive]
 pub struct Capabilities {
     /// Its own records, if granted.
     pub records: Option<Arc<dyn RecordsCapability>>,
@@ -172,6 +263,27 @@ pub struct Capabilities {
 }
 
 impl Capabilities {
+    /// The same set, with the records capability.
+    #[must_use]
+    pub fn with_records(mut self, records: Arc<dyn RecordsCapability>) -> Self {
+        self.records = Some(records);
+        self
+    }
+
+    /// The same set, with the HTTP capability.
+    #[must_use]
+    pub fn with_http(mut self, http: Arc<dyn HttpCapability>) -> Self {
+        self.http = Some(http);
+        self
+    }
+
+    /// The same set, with the model capability.
+    #[must_use]
+    pub fn with_model(mut self, model: Arc<dyn ModelCapability>) -> Self {
+        self.model = Some(model);
+        self
+    }
+
     /// The records capability.
     ///
     /// # Errors

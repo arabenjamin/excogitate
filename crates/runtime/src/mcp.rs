@@ -12,10 +12,8 @@ use protocol::{DataClass, RunId, Trust};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
-use std::fmt::Write as _;
 use std::sync::Arc;
-use store::{DefinitionKind, PageRequest};
-use workflow::{Agent, DELEGATE_TOOL};
+use workflow::DELEGATE_TOOL;
 
 use crate::{Config, Runtime};
 
@@ -38,7 +36,7 @@ const CHAT_DESCRIPTION: &str = "Ask the assistant something. It can read URLs an
 memory, and it returns its answer with a receipt of what actually ran.";
 
 fn setup_failed(error: &SessionError) -> ToolFailure {
-    ToolFailure(schema::bounded(&error.to_string()))
+    ToolFailure::new(schema::bounded(&error.to_string()))
 }
 
 /// What decides how a chat behaves, for its harness id. A client's own
@@ -96,6 +94,7 @@ fn session_with(
             probe: None,
         },
     )
+    .map(|session| session.with_stop(runtime.workflows.stop.clone()))
     .map_err(|error| setup_failed(&error))
 }
 
@@ -166,6 +165,9 @@ pub(crate) struct ChatInput {
     pub(crate) temperature: Option<f32>,
     /// The longest each reply may be.
     pub(crate) max_output_tokens: u32,
+    /// The most time the run may take, when something outside it, such as
+    /// a job's limit, would stop it sooner than its own budget.
+    pub(crate) time_cap_ms: Option<u64>,
 }
 
 /// What a client asks.
@@ -219,26 +221,25 @@ impl Tool for ChatTool {
 
     async fn run(&self, arguments: Value, _: ToolContext) -> Result<ToolOutput, ToolFailure> {
         let args: ChatArgs = serde_json::from_value(arguments)
-            .map_err(|error| ToolFailure(schema::bounded(&error.to_string())))?;
-        let result = self.0.chat(args.message, CHAT_PURPOSE).await?;
+            .map_err(|error| ToolFailure::new(schema::bounded(&error.to_string())))?;
+        let result = self.0.chat(args.message, CHAT_PURPOSE, None).await?;
         let cost_usd_micros = result.receipt.totals.cost_usd_micros;
         let reply = ChatReply::from(result);
-        Ok(ToolOutput {
-            value: serde_json::to_value(reply)
-                .map_err(|error| ToolFailure(schema::bounded(&error.to_string())))?,
-            // A model wrote the answer, after reading whatever it fetched.
-            trust: Trust::Untrusted,
-            cost_usd_micros,
-        })
+        let value = serde_json::to_value(reply)
+            .map_err(|error| ToolFailure::new(schema::bounded(&error.to_string())))?;
+        // A model wrote the answer, after reading whatever it fetched.
+        Ok(ToolOutput::new(value, Trust::Untrusted).with_cost(cost_usd_micros))
     }
 }
 
 impl Runtime {
-    /// Runs one chat, as its own run, on behalf of `purpose`.
+    /// Runs one chat, as its own run, on behalf of `purpose`, in at most
+    /// `time_cap_ms` if that's given.
     pub(crate) async fn chat(
         &self,
         question: String,
         purpose: &str,
+        time_cap_ms: Option<u64>,
     ) -> Result<ChatResult, ToolFailure> {
         let input = ChatInput {
             extra_system: None,
@@ -246,6 +247,7 @@ impl Runtime {
             question,
             temperature: None,
             max_output_tokens: self.config.max_output_tokens,
+            time_cap_ms,
         };
         self.chat_with(input, purpose).await
     }
@@ -262,9 +264,10 @@ impl Runtime {
             question,
             temperature,
             max_output_tokens,
+            time_cap_ms,
         } = input;
         let (mut session, instructions) = if let Some(name) = &self.config.front_door {
-            self.front_door(name, purpose).await?
+            self.front_door(name, purpose, time_cap_ms).await?
         } else {
             // Without a front door there's no roster, so nothing to delegate to.
             let offered: Vec<String> = self
@@ -309,14 +312,15 @@ impl Runtime {
         &self,
         name: &str,
         purpose: &str,
+        time_cap_ms: Option<u64>,
     ) -> Result<(Session, String), ToolFailure> {
         let agent = self
             .workflows
             .agent(name)
             .await
-            .map_err(|error| ToolFailure(schema::bounded(&error.to_string())))?
+            .map_err(|error| ToolFailure::new(schema::bounded(&error.to_string())))?
             .ok_or_else(|| {
-                ToolFailure(format!(
+                ToolFailure::new(format!(
                     "front_door names the agent {name}, and there's no such agent"
                 ))
             })?;
@@ -324,12 +328,17 @@ impl Runtime {
             agent: format!("agent:{name}"),
             harness: self.workflows.agent_harness(&agent),
         };
-        let budget = agent.budget.unwrap_or(self.config.budget);
-        let mut instructions = agent.system_prompt.clone();
-        if agent.tools.iter().any(|tool| tool == DELEGATE_TOOL) {
-            instructions.push_str("\n\n");
-            instructions.push_str(&self.roster(name).await?);
+        let mut budget = agent.budget.unwrap_or(self.config.budget);
+        // Held to what's outside the run, so it ends itself, with a receipt,
+        // before something else stops it.
+        if let Some(cap) = time_cap_ms {
+            budget.max_duration_ms = budget.max_duration_ms.min(cap);
         }
+        let instructions = self
+            .workflows
+            .instructions(name, &agent)
+            .await
+            .map_err(ToolFailure::new)?;
         let session = session_with(
             self,
             agent.tools,
@@ -340,57 +349,6 @@ impl Runtime {
         )?;
         Ok((session, instructions))
     }
-
-    /// The agents the front door can hand work to, read now, so a new or
-    /// changed agent is there on the next chat. An agent that can delegate
-    /// itself is left out, as `delegate` would refuse it.
-    async fn roster(&self, front_door: &str) -> Result<String, ToolFailure> {
-        let page =
-            PageRequest::new(ROSTER_LIMIT, 0).map_err(|error| ToolFailure(error.to_string()))?;
-        let listed = self
-            .workflows
-            .store
-            .list_definitions(DefinitionKind::Agent, page)
-            .await
-            .map_err(|error| ToolFailure(schema::bounded(&error.to_string())))?;
-        let mut lines = Vec::new();
-        for definition in &listed.items {
-            let Ok(agent) = serde_json::from_value::<Agent>(definition.body.clone()) else {
-                continue;
-            };
-            let name = &definition.key.name;
-            if name == front_door || agent.tools.iter().any(|tool| tool == DELEGATE_TOOL) {
-                continue;
-            }
-            let what = if agent.description.is_empty() {
-                "(no description)"
-            } else {
-                agent.description.as_str()
-            };
-            lines.push(format!("- {name}: {what}"));
-        }
-        Ok(roster_text(&lines, listed.has_more))
-    }
-}
-
-/// The most agents listed to the front door.
-const ROSTER_LIMIT: u32 = 100;
-
-fn roster_text(lines: &[String], cut: bool) -> String {
-    if lines.is_empty() {
-        return "There are no agents to hand work to with `delegate` yet.".to_owned();
-    }
-    let mut text = format!(
-        "The agents you can hand work to with `delegate`, by name:\n{}",
-        lines.join("\n")
-    );
-    if cut {
-        let _ = write!(
-            text,
-            "\n(Only the first {ROSTER_LIMIT} are listed; there are more.)"
-        );
-    }
-    text
 }
 
 /// What a tool's result looks like to a client. It's dispatch's reply.
@@ -436,11 +394,10 @@ impl DispatchedTool {
 #[async_trait]
 impl Tool for DispatchedTool {
     fn definition(&self) -> ToolDefinition {
-        ToolDefinition {
-            input_schema: schema::for_model(&self.definition.input_schema),
-            output_schema: schema::schema_of::<ToolEnvelope>(),
-            ..self.definition.clone()
-        }
+        let mut definition = self.definition.clone();
+        definition.input_schema = schema::for_model(&self.definition.input_schema);
+        definition.output_schema = schema::schema_of::<ToolEnvelope>();
+        definition
     }
 
     async fn run(&self, arguments: Value, _: ToolContext) -> Result<ToolOutput, ToolFailure> {
@@ -470,19 +427,19 @@ impl Tool for DispatchedTool {
         };
         let receipt = session.finish(claimed).await;
         if reply.status != CallStatus::Ran {
-            return Err(ToolFailure(reply.content));
+            return Err(ToolFailure::new(reply.content));
         }
         let value: Value = serde_json::from_str(&reply.content)
-            .map_err(|error| ToolFailure(schema::bounded(&error.to_string())))?;
+            .map_err(|error| ToolFailure::new(schema::bounded(&error.to_string())))?;
         let untrusted = value.get("untrusted").and_then(Value::as_bool);
-        Ok(ToolOutput {
+        Ok(ToolOutput::new(
             value,
-            trust: if untrusted == Some(false) {
+            if untrusted == Some(false) {
                 Trust::Trusted
             } else {
                 Trust::Untrusted
             },
-            cost_usd_micros: receipt.totals.cost_usd_micros,
-        })
+        )
+        .with_cost(receipt.totals.cost_usd_micros))
     }
 }

@@ -152,17 +152,26 @@ impl Runtime {
         self.harness_records()
             .await
             .map_err(|error| error.to_string())?;
-        let page = PageRequest::new(MAX_AGENTS, 0).map_err(|error| error.to_string())?;
-        let agents = self
-            .workflows
-            .store
-            .list_definitions(DefinitionKind::Agent, page)
-            .await
-            .map_err(|error| error.to_string())?;
+        let mut agents = Vec::new();
+        let mut offset = 0;
+        loop {
+            let page = PageRequest::new(MAX_AGENTS, offset).map_err(|error| error.to_string())?;
+            let found = self
+                .workflows
+                .store
+                .list_definitions(DefinitionKind::Agent, page)
+                .await
+                .map_err(|error| error.to_string())?;
+            agents.extend(found.items);
+            if !found.has_more {
+                break;
+            }
+            offset = offset.saturating_add(MAX_AGENTS);
+        }
         let tried = self.tried_lately().await?;
         let mut skipped = Vec::new();
         let mut recent = Vec::new();
-        for definition in agents.items {
+        for definition in agents {
             let name = definition.key.name;
             match self.resting(&name, &tried).await? {
                 Some(why) => skipped.push(why),

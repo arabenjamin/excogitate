@@ -1,36 +1,38 @@
 //! A plugin in its own process: the client side of MCP over stdio.
 //!
-//! One task owns the child's stdout and routes replies by id, and another
-//! owns its stdin. A call that's abandoned, such as by a run's time limit,
-//! leaves neither stream mid-message.
+//! One task drives the connection through the shared JSON-RPC peer. A call
+//! that's abandoned, such as by a run's time limit, leaves neither stream
+//! mid-message, and the process is told to stop it.
 
 use std::collections::HashMap;
 use std::process::Stdio;
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex, PoisonError};
+use std::sync::{Arc, LazyLock, Mutex, PoisonError};
 use std::time::Duration;
 
 use async_trait::async_trait;
 use dispatch::{Tool, ToolContext, ToolDefinition, ToolFailure, ToolOutput};
+use plugin_api::rpc::{self, INVALID_PARAMS, METHOD_NOT_FOUND, Peer, RpcError, failure, success};
 use plugin_api::wire::{
-    CAPABILITY_METHOD, CONTEXT_META, CapabilityCall, WireContext, WireHttpResponse, WireModelReply,
-    error_code, page_of, query_of, wire_page, wire_record,
+    CAPABILITY_METHOD, CONTEXT_META, CapabilityCall, CapabilityRequest, WireContext,
+    WireHttpResponse, WireModelReply, error_code, error_message, page_of, query_of, wire_page,
+    wire_record,
 };
-use plugin_api::{
-    Capabilities, CapabilityError, HttpRequest, MCP_VERSION, PluginManifest, read_line,
-};
-use protocol::{DataClass, RunId, Trust};
-use schema::bounded;
+use plugin_api::{Capabilities, CapabilityError, HttpRequest, MCP_VERSION, PluginManifest};
+use protocol::{DataClass, Trust};
+use schema::{Validator, bounded};
 use serde_json::{Value, json};
 use store::RecordId;
-use tokio::io::{AsyncWriteExt, BufReader};
-use tokio::process::{Child, ChildStdin, ChildStdout, Command};
-use tokio::sync::{mpsc, oneshot};
+use tokio::process::{Child, Command};
+use tokio::sync::watch;
 use tokio::task::JoinHandle;
-use tokio::time::timeout;
+use uuid::Uuid;
 
-/// How many messages can wait to be written.
-const OUTGOING_QUEUE: usize = 64;
+/// What one process may have the host do for it at once: capability calls
+/// running together. More are refused, not queued.
+const LIMITS: rpc::Limits = rpc::Limits {
+    in_flight: 8,
+    queue: 64,
+};
 
 /// How to start a plugin's process.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -67,39 +69,49 @@ pub enum ServiceError {
     Protocol(String),
 }
 
-type Pending = Arc<Mutex<HashMap<u64, oneshot::Sender<Value>>>>;
+/// What a capability request must meet.
+static REQUEST_SCHEMA: LazyLock<Option<Validator>> =
+    LazyLock::new(|| Validator::for_type::<CapabilityRequest>().ok());
+
+/// One tool call the host has out with the process.
+#[derive(Debug)]
+struct OutCall {
+    context: ToolContext,
+    ended: watch::Receiver<bool>,
+}
 
 /// What a process may ask of the host: the capabilities it was granted,
 /// for the tool calls the host is serving on its connection right now.
 #[derive(Debug, Default)]
 struct HostCalls {
     capabilities: Capabilities,
-    /// Each run with a call in flight, with how many.
-    serving: Mutex<HashMap<RunId, (ToolContext, usize)>>,
+    /// Each tool call in flight, by the token it was sent with.
+    serving: Mutex<HashMap<Uuid, OutCall>>,
 }
 
 impl HostCalls {
-    fn serving(&self) -> std::sync::MutexGuard<'_, HashMap<RunId, (ToolContext, usize)>> {
+    fn serving(&self) -> std::sync::MutexGuard<'_, HashMap<Uuid, OutCall>> {
         self.serving.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
-    fn begin(&self, context: ToolContext) {
-        self.serving().entry(context.run).or_insert((context, 0)).1 += 1;
-    }
-
-    fn end(&self, run: RunId) {
-        let mut serving = self.serving();
-        if let Some((_, count)) = serving.get_mut(&run) {
-            *count -= 1;
-            if *count == 0 {
-                serving.remove(&run);
-            }
+    /// Opens a call's window for capability calls. It closes when the guard
+    /// is dropped, and whatever is still running for it is stopped.
+    fn begin(&self, context: ToolContext) -> EndCall<'_> {
+        let token = Uuid::new_v4();
+        let (ending, ended) = watch::channel(false);
+        self.serving().insert(token, OutCall { context, ended });
+        EndCall {
+            host: self,
+            token,
+            ending,
         }
     }
 
-    /// The host's own record of the run, if it's serving a call for it.
-    fn context(&self, run: RunId) -> Option<ToolContext> {
-        self.serving().get(&run).map(|(context, _)| *context)
+    /// The host's own record of the call, if it's still running.
+    fn call(&self, token: Uuid) -> Option<(ToolContext, watch::Receiver<bool>)> {
+        self.serving()
+            .get(&token)
+            .map(|call| (call.context, call.ended.clone()))
     }
 
     async fn answer(
@@ -126,7 +138,7 @@ impl HostCalls {
                 let found = self
                     .capabilities
                     .records()?
-                    .get(&record_type, RecordId::from_uuid(id))
+                    .get(&record_type, RecordId::from_uuid(id), context)
                     .await?;
                 json(serde_json::to_value(found.map(wire_record)))
             }
@@ -137,13 +149,13 @@ impl HostCalls {
                 offset,
             } => {
                 let query = query_of(record_type, filters, limit, offset)?;
-                let page = self.capabilities.records()?.query(query).await?;
+                let page = self.capabilities.records()?.query(query, context).await?;
                 json(serde_json::to_value(wire_page(page)))
             }
             CapabilityCall::RecordsDelete { record_type, id } => {
                 self.capabilities
                     .records()?
-                    .delete(&record_type, RecordId::from_uuid(id))
+                    .delete(&record_type, RecordId::from_uuid(id), context)
                     .await?;
                 Ok(Value::Null)
             }
@@ -154,6 +166,7 @@ impl HostCalls {
                         &relation,
                         RecordId::from_uuid(from),
                         RecordId::from_uuid(to),
+                        context,
                     )
                     .await?;
                 Ok(Value::Null)
@@ -173,6 +186,7 @@ impl HostCalls {
                         RecordId::from_uuid(id),
                         direction.into(),
                         page_of(limit, offset)?,
+                        context,
                     )
                     .await?;
                 json(serde_json::to_value(wire_page(page)))
@@ -183,12 +197,12 @@ impl HostCalls {
                 headers,
                 body,
             } => {
-                let request = HttpRequest {
-                    method,
-                    url,
-                    headers,
-                    body,
-                };
+                let mut request = HttpRequest::new(method, url);
+                request.headers = headers
+                    .into_iter()
+                    .map(|header| (header.name, header.value))
+                    .collect();
+                request.body = body;
                 let response = self.capabilities.http()?.request(request, context).await?;
                 json(serde_json::to_value(WireHttpResponse::from(response)))
             }
@@ -206,109 +220,80 @@ impl HostCalls {
     /// The reply to a request the process sent.
     async fn reply_to(&self, message: &Value) -> Value {
         let id = message.get("id").cloned().unwrap_or(Value::Null);
-        let refuse = |code: i64, text: &str| json!({ "jsonrpc": "2.0", "id": id, "error": { "code": code, "message": bounded(text) } });
         if message.get("method").and_then(Value::as_str) != Some(CAPABILITY_METHOD) {
-            return refuse(-32601, "the host answers only capabilities/call");
+            return failure(
+                &id,
+                METHOD_NOT_FOUND,
+                "the host answers only capabilities/call",
+            );
         }
         let params = message.get("params").cloned().unwrap_or(Value::Null);
-        let run = params
-            .get("run")
-            .and_then(Value::as_str)
-            .and_then(|run| run.parse::<RunId>().ok());
-        let call = params
-            .get("call")
-            .cloned()
-            .and_then(|call| serde_json::from_value::<CapabilityCall>(call).ok());
-        let (Some(run), Some(call)) = (run, call) else {
-            return refuse(
-                -32602,
-                "a capability call needs a run and a call it understands",
-            );
+        // The published schema, bounds and all, before anything else.
+        let checked = REQUEST_SCHEMA
+            .as_ref()
+            .ok_or_else(|| "the capability schema doesn't compile".to_owned())
+            .and_then(|schema| {
+                schema
+                    .parse::<CapabilityRequest>(params)
+                    .map_err(|refusal| refusal.to_string())
+            });
+        let CapabilityRequest { token, call } = match checked {
+            Ok(request) => request,
+            Err(problem) => return failure(&id, INVALID_PARAMS, &problem),
         };
-        // The host's record of the run, never the process's: it can't claim
-        // a bigger budget, act outside a call, or reach another run.
-        let Some(context) = self.context(run) else {
-            return refuse(
+        // The host's record of the call, never the process's: it can't claim
+        // a bigger budget, act outside a call, or reach another one.
+        let Some((context, mut ended)) = self.call(token) else {
+            return failure(
+                &id,
                 plugin_api::wire::REFUSED_CODE,
-                "no call of this plugin is running for that run",
+                "no tool call with that token is running",
             );
         };
-        match self.answer(call, context).await {
-            Ok(result) => json!({ "jsonrpc": "2.0", "id": id, "result": result }),
-            Err(error) => refuse(error_code(&error), &error.to_string()),
+        let answered = tokio::select! {
+            answered = self.answer(call, context) => answered,
+            _ = ended.wait_for(|ended| *ended) => Err(CapabilityError::Refused(
+                "the tool call it was for has ended".to_owned(),
+            )),
+        };
+        match answered {
+            Ok(result) => success(&id, &result),
+            Err(error) => failure(&id, error_code(&error), &error_message(&error)),
         }
     }
 }
 
-fn pending_lock(
-    pending: &Pending,
-) -> std::sync::MutexGuard<'_, HashMap<u64, oneshot::Sender<Value>>> {
-    pending.lock().unwrap_or_else(PoisonError::into_inner)
+#[async_trait]
+impl rpc::Handler for HostCalls {
+    async fn handle(&self, message: Value) -> Option<Value> {
+        // The process's notifications need nothing from the host.
+        message.get("id")?;
+        Some(self.reply_to(&message).await)
+    }
 }
 
-/// Stops the tasks and, through `kill_on_drop`, the process.
+fn service_error(error: RpcError) -> ServiceError {
+    match error {
+        RpcError::Timeout => ServiceError::Timeout,
+        RpcError::Remote { message, .. } => ServiceError::Remote(message),
+        RpcError::Malformed(problem) => ServiceError::Protocol(problem),
+        _ => ServiceError::Stopped,
+    }
+}
+
+/// Stops the connection's task and, through `kill_on_drop`, the process.
 #[derive(Debug)]
 struct Connection {
     host: Arc<HostCalls>,
-    outgoing: mpsc::Sender<String>,
-    pending: Pending,
-    next_id: AtomicU64,
+    peer: Arc<Peer>,
     limit: Duration,
-    reader: JoinHandle<()>,
-    writer: JoinHandle<()>,
+    running: JoinHandle<()>,
     _child: Child,
 }
 
 impl Drop for Connection {
     fn drop(&mut self) {
-        self.reader.abort();
-        self.writer.abort();
-    }
-}
-
-async fn read_replies(
-    stdout: ChildStdout,
-    pending: Pending,
-    host: Arc<HostCalls>,
-    outgoing: mpsc::Sender<String>,
-) {
-    let mut reader = BufReader::new(stdout);
-    // Ends at the end of the stream, a read error, or an oversized line.
-    while let Ok(Some(line)) = read_line(&mut reader).await {
-        let Ok(message) = serde_json::from_slice::<Value>(&line) else {
-            continue;
-        };
-        // A request from the process: a capability call, answered on its
-        // own task so a slow one doesn't hold up the replies behind it.
-        if message.get("method").is_some() {
-            if message.get("id").is_some() {
-                let (host, outgoing) = (Arc::clone(&host), outgoing.clone());
-                tokio::spawn(async move {
-                    let reply = host.reply_to(&message).await;
-                    let _ = outgoing.send(reply.to_string()).await;
-                });
-            }
-            continue;
-        }
-        let waiter = message
-            .get("id")
-            .and_then(Value::as_u64)
-            .and_then(|id| pending_lock(&pending).remove(&id));
-        if let Some(waiter) = waiter {
-            // The caller may have given up; that's fine.
-            let _ = waiter.send(message);
-        }
-    }
-    // Dropping the senders tells every waiting caller the service stopped.
-    pending_lock(&pending).clear();
-}
-
-async fn write_messages(mut stdin: ChildStdin, mut outgoing: mpsc::Receiver<String>) {
-    while let Some(mut message) = outgoing.recv().await {
-        message.push('\n');
-        if stdin.write_all(message.as_bytes()).await.is_err() || stdin.flush().await.is_err() {
-            break;
-        }
+        self.running.abort();
     }
 }
 
@@ -333,90 +318,59 @@ impl Connection {
         let (Some(stdin), Some(stdout)) = (child.stdin.take(), child.stdout.take()) else {
             return Err(ServiceError::Spawn("no pipes to the process".to_owned()));
         };
-        let pending = Pending::default();
-        let (sender, receiver) = mpsc::channel(OUTGOING_QUEUE);
         let host = Arc::new(HostCalls {
             capabilities,
             serving: Mutex::default(),
         });
+        let (peer, io) = Peer::new(LIMITS);
+        let (driving, handler) = (Arc::clone(&peer), Arc::clone(&host));
+        let running = tokio::spawn(async move {
+            // Ends when the process closes its stdout or dies; every request
+            // still waiting then hears the service stopped.
+            let _ = driving.run(io, stdout, stdin, handler).await;
+        });
         Ok(Self {
-            reader: tokio::spawn(read_replies(
-                stdout,
-                Arc::clone(&pending),
-                Arc::clone(&host),
-                sender.clone(),
-            )),
             host,
-            outgoing: sender,
-            writer: tokio::spawn(write_messages(stdin, receiver)),
-            pending,
-            next_id: AtomicU64::new(1),
+            peer,
             limit: Duration::from_secs(u64::from(spec.timeout_secs)),
+            running,
             _child: child,
         })
     }
 
     async fn request(&self, method: &str, params: Value) -> Result<Value, ServiceError> {
-        let id = self.next_id.fetch_add(1, Ordering::Relaxed);
-        let (sender, receiver) = oneshot::channel();
-        pending_lock(&self.pending).insert(id, sender);
-        let forget = Forget {
-            pending: &self.pending,
-            id,
-        };
-        let message = json!({ "jsonrpc": "2.0", "id": id, "method": method, "params": params });
-        self.outgoing
-            .send(message.to_string())
+        self.peer
+            .request(method, params, Some(self.limit))
             .await
-            .map_err(|_| ServiceError::Stopped)?;
-        let reply = timeout(self.limit, receiver)
-            .await
-            .map_err(|_| ServiceError::Timeout)?
-            .map_err(|_| ServiceError::Stopped)?;
-        drop(forget);
-        if let Some(error) = reply.get("error") {
-            let text = error
-                .get("message")
-                .and_then(Value::as_str)
-                .unwrap_or("unknown");
-            return Err(ServiceError::Remote(bounded(text)));
-        }
-        reply
-            .get("result")
-            .cloned()
-            .ok_or_else(|| ServiceError::Protocol("a reply with no result".to_owned()))
+            .map_err(service_error)
     }
 
     async fn notify(&self, method: &str) -> Result<(), ServiceError> {
-        let message = json!({ "jsonrpc": "2.0", "method": method });
-        self.outgoing
-            .send(message.to_string())
+        self.peer
+            .notify(method, Value::Null)
             .await
-            .map_err(|_| ServiceError::Stopped)
+            .map_err(service_error)
     }
 }
 
-/// Ends a call's window for capability requests, even if it's abandoned.
+/// Ends a call's window for capability calls, even if it's abandoned, and
+/// stops what's still running for it.
 struct EndCall<'a> {
     host: &'a HostCalls,
-    run: RunId,
+    token: Uuid,
+    ending: watch::Sender<bool>,
+}
+
+impl EndCall<'_> {
+    const fn token(&self) -> Uuid {
+        self.token
+    }
 }
 
 impl Drop for EndCall<'_> {
     fn drop(&mut self) {
-        self.host.end(self.run);
-    }
-}
-
-/// Removes a waiter when its call is abandoned, so they can't pile up.
-struct Forget<'a> {
-    pending: &'a Pending,
-    id: u64,
-}
-
-impl Drop for Forget<'_> {
-    fn drop(&mut self) {
-        pending_lock(self.pending).remove(&self.id);
+        self.host.serving().remove(&self.token);
+        let _ = self.ending.send(true);
     }
 }
 
@@ -480,13 +434,13 @@ fn result_value(result: &Value) -> Result<Value, ToolFailure> {
         .and_then(|part| part.get("text"))
         .and_then(Value::as_str);
     if result.get("isError").and_then(Value::as_bool) == Some(true) {
-        return Err(ToolFailure(bounded(text.unwrap_or("the tool failed"))));
+        return Err(ToolFailure::new(bounded(text.unwrap_or("the tool failed"))));
     }
     if let Some(value) = result.get("structuredContent") {
         return Ok(value.clone());
     }
     text.and_then(|text| serde_json::from_str(text).ok())
-        .ok_or_else(|| ToolFailure("the service returned no JSON result".to_owned()))
+        .ok_or_else(|| ToolFailure::new("the service returned no JSON result".to_owned()))
 }
 
 #[async_trait]
@@ -496,38 +450,33 @@ impl Tool for ServiceTool {
     }
 
     async fn run(&self, arguments: Value, context: ToolContext) -> Result<ToolOutput, ToolFailure> {
+        // While the call is out, the process may ask for capabilities on its
+        // behalf, with this call's token, and only then.
+        let serving = self.connection.host.begin(context);
         let sent = WireContext {
             run: context.run.as_uuid(),
             public: context.data_class == DataClass::Public,
             budget_usd_micros: context.budget_usd_micros,
+            call: serving.token(),
         };
         let params = json!({
             "name": self.definition.name,
             "arguments": arguments,
             "_meta": { CONTEXT_META: sent },
         });
-        // While the call is out, the process may ask for capabilities on its
-        // behalf, and only then.
-        self.connection.host.begin(context);
-        let serving = EndCall {
-            host: &self.connection.host,
-            run: context.run,
-        };
         let result = self.connection.request("tools/call", params).await;
         drop(serving);
-        let result = result.map_err(|error| ToolFailure(error.to_string()))?;
-        Ok(ToolOutput {
-            value: result_value(&result)?,
-            // Another process's output is never trusted as instructions.
-            trust: Trust::Untrusted,
-            cost_usd_micros: 0,
-        })
+        let result = result.map_err(|error| ToolFailure::new(error.to_string()))?;
+        // Another process's output is never trusted as instructions.
+        Ok(ToolOutput::new(result_value(&result)?, Trust::Untrusted))
     }
 }
 
 #[cfg(test)]
 #[allow(clippy::indexing_slicing)]
 mod tests {
+    use protocol::RunId;
+
     use super::*;
 
     fn shell(script: &str, env_allow: &[&str], timeout_secs: u32) -> ServiceSpec {
@@ -576,12 +525,12 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_silent_service_times_out_and_forgets_the_call() {
+    async fn a_silent_service_times_out() {
         let connection =
             Connection::open(&shell("sleep 30", &[], 1), Capabilities::default()).unwrap();
         let error = connection.request("x", json!({})).await.unwrap_err();
+        // The peer's own tests check that the call is forgotten.
         assert_eq!(error, ServiceError::Timeout);
-        assert!(pending_lock(&connection.pending).is_empty());
     }
 
     #[tokio::test]
@@ -620,7 +569,10 @@ mod tests {
     #[test]
     fn an_error_result_is_a_failure() {
         let result = json!({ "content": [{ "text": "broke" }], "isError": true });
-        assert_eq!(result_value(&result), Err(ToolFailure("broke".to_owned())));
+        assert_eq!(
+            result_value(&result),
+            Err(ToolFailure::new("broke".to_owned()))
+        );
     }
 
     #[test]
@@ -636,24 +588,21 @@ mod tests {
     impl plugin_api::ModelCapability for SeenModel {
         async fn complete(
             &self,
-            _prompt: &str,
+            prompt: &str,
             context: ToolContext,
         ) -> Result<plugin_api::ModelReply, CapabilityError> {
             self.0.lock().unwrap().push(context);
-            Ok(plugin_api::ModelReply {
-                text: "ok".to_owned(),
-                model: "m".to_owned(),
-                cost_usd_micros: 5,
-            })
+            if prompt == "slow" {
+                std::future::pending::<()>().await;
+            }
+            Ok(plugin_api::ModelReply::new("ok", "m", 5))
         }
     }
 
     fn host_with_model() -> (HostCalls, Arc<SeenModel>) {
         let seen = Arc::new(SeenModel::default());
-        let capabilities = Capabilities {
-            model: Some(Arc::clone(&seen) as Arc<dyn plugin_api::ModelCapability>),
-            ..Capabilities::default()
-        };
+        let capabilities = Capabilities::default()
+            .with_model(Arc::clone(&seen) as Arc<dyn plugin_api::ModelCapability>);
         let host = HostCalls {
             capabilities,
             serving: Mutex::default(),
@@ -661,29 +610,28 @@ mod tests {
         (host, seen)
     }
 
-    fn capability_request(run: RunId, call: &Value) -> Value {
+    fn capability_request(token: Uuid, call: &Value) -> Value {
         json!({
             "jsonrpc": "2.0", "id": 9, "method": CAPABILITY_METHOD,
-            "params": { "run": run.to_string(), "call": call }
+            "params": { "token": token.to_string(), "call": call }
         })
     }
 
     fn context(run: RunId) -> ToolContext {
-        ToolContext {
-            run,
-            data_class: DataClass::Public,
-            budget_usd_micros: 77,
-        }
+        ToolContext::new(run, DataClass::Public, 77)
+    }
+
+    const MODEL_CALL: &str = r#"{ "op": "model", "prompt": "hi" }"#;
+
+    fn model_call() -> Value {
+        serde_json::from_str(MODEL_CALL).unwrap()
     }
 
     #[tokio::test]
-    async fn a_capability_call_for_a_run_not_being_served_is_refused() {
+    async fn a_capability_call_without_a_live_token_is_refused() {
         let (host, seen) = host_with_model();
         let reply = host
-            .reply_to(&capability_request(
-                RunId::generate(),
-                &json!({ "op": "model", "prompt": "hi" }),
-            ))
+            .reply_to(&capability_request(Uuid::new_v4(), &model_call()))
             .await;
         assert_eq!(
             reply["error"]["code"],
@@ -694,24 +642,19 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn the_host_uses_its_own_record_of_the_run_and_only_while_it_runs() {
+    async fn the_host_uses_its_own_record_of_the_call_and_only_while_it_runs() {
         let (host, seen) = host_with_model();
         let run = RunId::generate();
-        host.begin(context(run));
+        let serving = host.begin(context(run));
+        let token = serving.token();
         let reply = host
-            .reply_to(&capability_request(
-                run,
-                &json!({ "op": "model", "prompt": "hi" }),
-            ))
+            .reply_to(&capability_request(token, &model_call()))
             .await;
         assert_eq!(reply["result"]["text"], "ok", "{reply}");
         assert_eq!(seen.0.lock().unwrap().as_slice(), [context(run)]);
-        host.end(run);
+        drop(serving);
         let after = host
-            .reply_to(&capability_request(
-                run,
-                &json!({ "op": "model", "prompt": "hi" }),
-            ))
+            .reply_to(&capability_request(token, &model_call()))
             .await;
         assert_eq!(
             after["error"]["code"],
@@ -721,12 +664,67 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn two_calls_for_one_run_each_keep_their_own_record() {
+        let (host, seen) = host_with_model();
+        let run = RunId::generate();
+        let first = host.begin(ToolContext::new(run, DataClass::Private, 10));
+        let second = host.begin(ToolContext::new(run, DataClass::Public, 20));
+        for serving in [&first, &second] {
+            let reply = host
+                .reply_to(&capability_request(serving.token(), &model_call()))
+                .await;
+            assert_eq!(reply["result"]["text"], "ok", "{reply}");
+        }
+        let budgets: Vec<u64> = seen
+            .0
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|context| context.budget_usd_micros)
+            .collect();
+        assert_eq!(budgets, [10, 20]);
+    }
+
+    #[tokio::test]
+    async fn a_capability_call_still_running_when_its_tool_call_ends_is_stopped() {
+        let (host, _) = host_with_model();
+        let host = Arc::new(host);
+        let serving = host.begin(context(RunId::generate()));
+        let token = serving.token();
+        // A model call that never finishes on its own.
+        let slow = {
+            let host = Arc::clone(&host);
+            tokio::spawn(async move {
+                host.reply_to(&capability_request(
+                    token,
+                    &json!({ "op": "model", "prompt": "slow" }),
+                ))
+                .await
+            })
+        };
+        tokio::time::sleep(Duration::from_millis(20)).await;
+        drop(serving);
+        let reply = tokio::time::timeout(Duration::from_secs(5), slow)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(
+            reply["error"]["message"]
+                .as_str()
+                .unwrap()
+                .contains("has ended"),
+            "{reply}"
+        );
+    }
+
+    #[tokio::test]
     async fn a_capability_that_wasnt_granted_is_refused_as_such() {
         let (host, _) = host_with_model();
-        let run = RunId::generate();
-        host.begin(context(run));
+        let serving = host.begin(context(RunId::generate()));
         let call = json!({ "op": "http", "method": "GET", "url": "http://x/", "headers": [], "body": null });
-        let reply = host.reply_to(&capability_request(run, &call)).await;
+        let reply = host
+            .reply_to(&capability_request(serving.token(), &call))
+            .await;
         assert_eq!(
             reply["error"]["code"],
             plugin_api::wire::NOT_GRANTED_CODE,
@@ -735,15 +733,30 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_capability_call_past_the_published_bounds_is_refused_unrun() {
+        let (host, seen) = host_with_model();
+        let serving = host.begin(context(RunId::generate()));
+        let long = "x".repeat(plugin_api::wire::MAX_PROMPT + 1);
+        let reply = host
+            .reply_to(&capability_request(
+                serving.token(),
+                &json!({ "op": "model", "prompt": long }),
+            ))
+            .await;
+        assert_eq!(reply["error"]["code"], INVALID_PARAMS, "{reply}");
+        assert!(seen.0.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
     async fn a_request_that_isnt_a_capability_call_is_refused() {
         let (host, _) = host_with_model();
         let reply = host
             .reply_to(&json!({ "jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {} }))
             .await;
-        assert_eq!(reply["error"]["code"], -32601, "{reply}");
+        assert_eq!(reply["error"]["code"], METHOD_NOT_FOUND, "{reply}");
         let garbled = host
-            .reply_to(&json!({ "jsonrpc": "2.0", "id": 1, "method": CAPABILITY_METHOD, "params": { "run": "x" } }))
+            .reply_to(&json!({ "jsonrpc": "2.0", "id": 1, "method": CAPABILITY_METHOD, "params": { "token": "x" } }))
             .await;
-        assert_eq!(garbled["error"]["code"], -32602, "{garbled}");
+        assert_eq!(garbled["error"]["code"], INVALID_PARAMS, "{garbled}");
     }
 }

@@ -54,6 +54,16 @@ pub enum StructuredError {
     /// The schema can't be used. A bug in the caller.
     #[error("the output schema is unusable: {0}")]
     BadSchema(String),
+    /// The first reply was refused, and the call to repair it failed.
+    #[error("the model's reply was refused: {first}; then the repair call failed: {error}")]
+    RepairFailed {
+        /// Why the first reply was refused.
+        first: String,
+        /// Why the repair call failed.
+        error: GatewayError,
+        /// What the first call cost, in millionths of a dollar.
+        cost_usd_micros: u64,
+    },
     /// Both replies were refused.
     #[error("the model's reply was refused twice: {first}; then: {repair}")]
     Refused {
@@ -64,6 +74,23 @@ pub enum StructuredError {
         /// What the two calls cost, in millionths of a dollar.
         cost_usd_micros: u64,
     },
+}
+
+impl StructuredError {
+    /// What was spent before it failed, in millionths of a dollar. It's
+    /// spent all the same, so a caller keeping accounts must count it.
+    #[must_use]
+    pub const fn cost_usd_micros(&self) -> u64 {
+        match self {
+            Self::Gateway(_) | Self::BadSchema(_) => 0,
+            Self::RepairFailed {
+                cost_usd_micros, ..
+            }
+            | Self::Refused {
+                cost_usd_micros, ..
+            } => *cost_usd_micros,
+        }
+    }
 }
 
 fn read_reply<T: DeserializeOwned>(
@@ -140,7 +167,16 @@ pub async fn generate_structured<T: JsonSchema + DeserializeOwned>(
         .budget_usd_micros
         .map(|left| left.saturating_sub(first.cost_usd_micros));
 
-    let second = gateway.chat(&repair_policy, &request).await?;
+    let second = match gateway.chat(&repair_policy, &request).await {
+        Ok(second) => second,
+        Err(error) => {
+            return Err(StructuredError::RepairFailed {
+                first: first_problem,
+                error,
+                cost_usd_micros: total_cost_usd_micros,
+            });
+        }
+    };
     total_cost_usd_micros = total_cost_usd_micros.saturating_add(second.cost_usd_micros);
     match read_reply::<T>(&second, &validator) {
         Ok(value) => Ok(Structured {
@@ -337,6 +373,22 @@ models:
         };
         assert!(first.contains("no complete JSON"));
         assert_ne!(repair, "");
+        assert_eq!(client.called().len(), 2);
+    }
+
+    #[tokio::test]
+    async fn a_repair_call_that_fails_keeps_the_first_reason_and_its_cost() {
+        let refused = ModelError::Status {
+            code: 400,
+            excerpt: String::new(),
+        };
+        let (result, client) = run(vec![Ok(text("no json")), Err(refused)]).await;
+        let error = result.unwrap_err();
+        let StructuredError::RepairFailed { first, .. } = &error else {
+            panic!("{error:?}");
+        };
+        assert!(first.contains("no complete JSON"));
+        assert_eq!(error.cost_usd_micros(), 0, "this model is free");
         assert_eq!(client.called().len(), 2);
     }
 

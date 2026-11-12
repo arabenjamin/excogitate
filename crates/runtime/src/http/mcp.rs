@@ -6,25 +6,17 @@ use std::sync::Arc;
 use axum::Router;
 use axum::body::Bytes;
 use axum::extract::State;
-use axum::http::header::CONTENT_TYPE;
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::routing::post;
 use plugin_api::MCP_VERSION;
-use serde_json::{Value, json};
+use plugin_api::rpc::{INVALID_REQUEST, PARSE_ERROR, failure};
+use serde_json::Value;
 
 use super::{ApiError, App, detached, json_body};
 
-const PARSE_ERROR: i64 = -32700;
-const INVALID_REQUEST: i64 = -32600;
-
 fn rpc_error(status: StatusCode, code: i64, message: &str) -> Response {
-    let body = json!({
-        "jsonrpc": "2.0",
-        "id": Value::Null,
-        "error": { "code": code, "message": message },
-    });
-    (status, axum::Json(body)).into_response()
+    (status, axum::Json(failure(&Value::Null, code, message))).into_response()
 }
 
 fn well_formed(message: &Value) -> bool {
@@ -67,7 +59,7 @@ async fn post_message(State(app): State<App>, headers: HeaderMap, body: Bytes) -
         app.mcp.handle(&message).await
     };
     match reply {
-        Some(text) => ([(CONTENT_TYPE, "application/json")], text).into_response(),
+        Some(reply) => axum::Json(reply).into_response(),
         None => ApiError::internal(&"a request got no reply").into_response(),
     }
 }

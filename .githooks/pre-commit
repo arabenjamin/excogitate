@@ -14,6 +14,12 @@ else
 fi
 cargo fmt --all -- --check
 "$root/scripts/check_name.sh"
+# A clone's own checks, kept out of the repo: .git/hooks/pre-commit.local, if
+# it's executable, runs on what's staged.
+local_hook="$(git rev-parse --absolute-git-dir)/hooks/pre-commit.local"
+if [[ -x $local_hook ]]; then
+  "$local_hook"
+fi
 # Unit tests only. Cargo rejects --lib when the workspace has no library.
 unit_targets=(--bins)
 if [[ -n $(git ls-files 'crates/*/src/lib.rs') ]]; then

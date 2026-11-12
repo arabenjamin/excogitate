@@ -64,6 +64,16 @@
           "description": "Where it stands.",
           "oneOf": [
             {
+              "const": "pending",
+              "description": "Recorded before its file is written, so no edit goes unrecorded. It\nbecomes live once the file is in place; if the runtime stopped in\nbetween, it's in effect exactly when the agent's harness is its own.",
+              "type": "string"
+            },
+            {
+              "const": "abandoned",
+              "description": "Its file never went in.",
+              "type": "string"
+            },
+            {
               "const": "live",
               "description": "The agent runs with it.",
               "type": "string"

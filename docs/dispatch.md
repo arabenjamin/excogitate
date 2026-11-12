@@ -46,9 +46,21 @@ Every run has limits on rounds, tool calls, writes, tokens, money, request size
 and time, with no defaults (`schemas/v1/budget.schema.json`). A refused call
 still counts, so a loop of bad calls ends. Hitting one is final for the run.
 
-What a tool spends counts too. It's told how much money is left, and its cost
-goes on the receipt. A tool with both reads and writes says which each call
-is, so only real writes use the write budget.
+What a tool spends counts too. It's told how much money, time and how many
+tool calls are left, and its cost goes on the receipt, whether it worked or
+failed. A tool with both reads and writes says which each call is, so only
+real writes use the write budget. A plugin's `http` and `model` calls each
+count as a tool call, and each is a `capability` step on the trajectory
+under the tool call that made it.
+
+A run handed to another agent with `delegate` gets no more time than its
+caller has left, less a margin, so it ends first and its cost reaches the
+caller's receipt.
+
+When the server stops, every run still going ends at once, mid-call if need
+be, as `budget_hit` with `stopped`, and keeps its receipt. A model call cut
+off this way, or by a time limit, is settled in the day's spend at what its
+prompt cost.
 
 ## Receipts
 

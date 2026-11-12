@@ -614,3 +614,26 @@ async fn limits_and_empty_queries_are_refused() {
         assert!(matches!(result, Err(MemoryError::Invalid(_))));
     }
 }
+
+#[tokio::test]
+async fn a_similarity_threshold_applies_before_the_limit() {
+    let (memory, _) = memory_with(Some(Arc::new(Fake::default())));
+    // Two notes full of the word but far from it by vector, and one close.
+    for text in ["bird cat cat cat", "dog cat cat cat"] {
+        memory
+            .store(note(text), private(), None, now())
+            .await
+            .unwrap();
+    }
+    let close = memory
+        .store(note("cat alone"), private(), None, now())
+        .await
+        .unwrap();
+    let found = memory
+        .search_close("cat", ClassFilter::Any, SCOPE_PRIVATE, 1, Some(0.6))
+        .await
+        .unwrap();
+    assert_eq!(found.hits.len(), 1, "{:?}", found.hits);
+    assert_eq!(found.hits[0].note_id, close.id);
+    assert_eq!(found.not_close_enough, 2);
+}

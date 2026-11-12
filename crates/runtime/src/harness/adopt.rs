@@ -8,7 +8,8 @@ use std::time::Duration;
 use chrono::{DateTime, Utc};
 use harness::{
     Adoption, Attempt, CALIBRATION_DAYS, CALIBRATION_TYPE, CHANGE_TYPE, Calibration, Change,
-    ChangeStatus, Facts, HOLD_TYPE, Hold, Judges, MAX_FILE_CHARS, check_adoption, hold_id,
+    ChangeStatus, Facts, HOLD_TYPE, Hold, Judges, LESSON_TYPE, Lesson, LessonStatus,
+    MAX_FILE_CHARS, check_adoption, hold_id, lesson_id,
 };
 use serde_json::json;
 use store::{
@@ -21,8 +22,11 @@ use crate::Runtime;
 
 /// How long the owner's webhook has to answer.
 const NOTIFY_TIMEOUT: Duration = Duration::from_secs(10);
-/// The most changes to one agent read back.
-const MAX_CHANGES: u32 = 200;
+/// How many changes are read at once.
+const CHANGE_PAGE: u32 = store::MAX_PAGE_LIMIT;
+/// The most changes to one agent read back. Past this, adoption stops
+/// rather than decide from part of the history.
+const MAX_CHANGES: usize = 100_000;
 
 /// Why a change to a file couldn't be made.
 #[derive(Debug)]
@@ -51,14 +55,14 @@ impl<E: std::fmt::Display> From<E> for ChangeError {
 }
 
 fn text(field: &str, value: &str) -> FieldFilter {
-    FieldFilter {
-        field: field.to_owned(),
-        op: FieldOp::Eq,
-        value: FieldValue::Text(value.to_owned()),
-    }
+    FieldFilter::new(
+        field.to_owned(),
+        FieldOp::Eq,
+        FieldValue::Text(value.to_owned()),
+    )
 }
 
-fn not_adopted(reason: impl Into<String>) -> Adoption {
+pub(super) fn not_adopted(reason: impl Into<String>) -> Adoption {
     Adoption {
         adopted: false,
         change_id: None,
@@ -80,11 +84,35 @@ struct Making<'a> {
 }
 
 /// Writes `body` to `path` all at once: a reader sees the old file or the
-/// new one, never half of either.
+/// new one, never half of either, and it's on disk before this returns. The
+/// staging file has a name no one can guess and is made new, and a link in
+/// place of the agent's file is refused rather than followed.
 fn write_whole(path: &Path, body: &str) -> std::io::Result<()> {
-    let staging = path.with_extension("yaml.writing");
-    std::fs::write(&staging, body)?;
-    std::fs::rename(&staging, path)
+    use std::io::Write;
+    if std::fs::symlink_metadata(path).is_ok_and(|found| !found.file_type().is_file()) {
+        return Err(std::io::Error::other(format!(
+            "{} isn't a plain file, so it isn't replaced",
+            path.display()
+        )));
+    }
+    let directory = path
+        .parent()
+        .ok_or_else(|| std::io::Error::other("the agent's file has no directory"))?;
+    let staging = directory.join(format!(".{}.writing", uuid::Uuid::new_v4()));
+    let written = (|| {
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&staging)?;
+        file.write_all(body.as_bytes())?;
+        file.sync_all()?;
+        std::fs::rename(&staging, path)?;
+        std::fs::File::open(directory)?.sync_all()
+    })();
+    if written.is_err() {
+        let _ = std::fs::remove_file(&staging);
+    }
+    written
 }
 
 fn agent_file(root: &Path, name: &str) -> PathBuf {
@@ -98,25 +126,39 @@ impl Runtime {
         })
     }
 
-    /// Every change made to `agent`, with its id, oldest first.
+    /// Every change made to `agent`, with its id, oldest first: all of
+    /// them, a page at a time, since the newest decide what may happen next.
     pub(crate) async fn changes_to(
         &self,
         agent: &str,
     ) -> Result<Vec<(RecordId, Change)>, ChangeError> {
-        let found = self
-            .workflows
-            .store
-            .query_records(RecordQuery {
-                record_type: CHANGE_TYPE.to_owned(),
-                filters: vec![text("agent", agent)],
-                page: PageRequest::new(MAX_CHANGES, 0)?,
-            })
-            .await?;
-        found
-            .items
-            .into_iter()
-            .map(|record| Ok((record.id, serde_json::from_value(record.data)?)))
-            .collect()
+        let mut changes = Vec::new();
+        let mut offset = 0;
+        loop {
+            let found = self
+                .workflows
+                .store
+                .query_records(
+                    RecordQuery::new(
+                        CHANGE_TYPE.to_owned(),
+                        PageRequest::new(CHANGE_PAGE, offset)?,
+                    )
+                    .with_filters(vec![text("agent", agent)]),
+                )
+                .await?;
+            for record in found.items {
+                changes.push((record.id, serde_json::from_value(record.data)?));
+            }
+            if !found.has_more {
+                return Ok(changes);
+            }
+            offset = offset.saturating_add(CHANGE_PAGE);
+            if changes.len() >= MAX_CHANGES {
+                return Err(ChangeError::Internal(format!(
+                    "{agent} has more than {MAX_CHANGES} changes, too many to read safely"
+                )));
+            }
+        }
     }
 
     pub(crate) async fn hold_on(&self, agent: &str) -> Result<Option<Hold>, ChangeError> {
@@ -150,23 +192,18 @@ impl Runtime {
         let found = self
             .workflows
             .store
-            .query_records(RecordQuery {
-                record_type: CALIBRATION_TYPE.to_owned(),
-                filters: vec![
-                    text("model", model),
-                    FieldFilter {
-                        field: "passed".to_owned(),
-                        op: FieldOp::Eq,
-                        value: FieldValue::Bool(true),
-                    },
-                    FieldFilter {
-                        field: "at".to_owned(),
-                        op: FieldOp::Gte,
-                        value: FieldValue::Timestamp(since),
-                    },
-                ],
-                page: PageRequest::new(1, 0)?,
-            })
+            .query_records(
+                RecordQuery::new(CALIBRATION_TYPE.to_owned(), PageRequest::new(1, 0)?)
+                    .with_filters(vec![
+                        text("model", model),
+                        FieldFilter::new("passed".to_owned(), FieldOp::Eq, FieldValue::Bool(true)),
+                        FieldFilter::new(
+                            "at".to_owned(),
+                            FieldOp::Gte,
+                            FieldValue::Timestamp(since),
+                        ),
+                    ]),
+            )
             .await?;
         if let Some(record) = found.items.first() {
             let passed: Calibration = serde_json::from_value(record.data.clone())?;
@@ -212,7 +249,8 @@ impl Runtime {
         let changes = self.changes_to(name).await?;
         let live = changes
             .iter()
-            .find(|(_, change)| change.status == ChangeStatus::Live);
+            .rev()
+            .find(|(_, change)| change.in_effect(&current));
         if let Some((id, change)) = live
             && change.to_harness != current
         {
@@ -281,20 +319,36 @@ impl Runtime {
             ended_at: Some(now),
             ..change.clone()
         };
-        self.workflows
-            .store
-            .apply(
-                UnitOfWork::new()
-                    .with(WriteOp::PutRecord(Self::hold_record(&hold)?))
-                    .with(WriteOp::PutRecord(harness::record(
-                        CHANGE_TYPE,
-                        id,
-                        &replaced,
-                        change.at,
-                    )?)),
-            )
-            .await?;
+        let mut unit = UnitOfWork::new()
+            .with(WriteOp::PutRecord(Self::hold_record(&hold)?))
+            .with(WriteOp::PutRecord(harness::record(
+                CHANGE_TYPE,
+                id,
+                &replaced,
+                change.at,
+            )?));
+        // The owner's edit took its place, so its lesson no longer counts.
+        if let Some(retired) = self.retired_lesson(id).await? {
+            unit = unit.with(retired);
+        }
+        self.workflows.store.apply(unit).await?;
         Ok(not_adopted(format!("the agent is held: {}", hold.reason)))
+    }
+
+    /// The write that retires a change's lesson, if it left one.
+    async fn retired_lesson(&self, change_id: RecordId) -> Result<Option<WriteOp>, ChangeError> {
+        let id = lesson_id(change_id);
+        let Some(found) = self.workflows.store.get_record(LESSON_TYPE, id).await? else {
+            return Ok(None);
+        };
+        let mut lesson: Lesson = serde_json::from_value(found.data)?;
+        lesson.status = LessonStatus::Retired;
+        Ok(Some(WriteOp::PutRecord(harness::record(
+            LESSON_TYPE,
+            id,
+            &lesson,
+            lesson.at,
+        )?)))
     }
 
     /// Writes the agent's new file, records the change and tells the owner.
@@ -335,8 +389,6 @@ impl Runtime {
         if new_file.chars().count() > MAX_FILE_CHARS {
             return Ok(not_adopted("the new file would be too large to keep"));
         }
-        self.replace_file(&root, &path, &new_file, &old_file)
-            .await?;
         let evidence = attempt
             .verdicts
             .iter()
@@ -346,7 +398,7 @@ impl Runtime {
             .map(|checked| checked.verdict.cite.clone())
             .take(8)
             .collect();
-        let mut change = Change {
+        let change = Change {
             agent: name.clone(),
             attempt_id: attempt_id.to_string(),
             at: now,
@@ -357,17 +409,63 @@ impl Runtime {
             summary: candidate.change.clone(),
             evidence,
             judge_model: model.to_owned(),
-            status: ChangeStatus::Live,
+            status: ChangeStatus::Pending,
             ended_at: None,
             notice: String::new(),
         };
-        change.notice = self.notify(change_id, &change).await;
-        let mut unit = UnitOfWork::new().with(WriteOp::PutRecord(harness::record(
-            CHANGE_TYPE,
-            change_id,
-            &change,
-            now,
-        )?));
+        let lesson = Lesson {
+            agent: name.clone(),
+            change_id: change_id.to_string(),
+            at: now,
+            situation: harness::situation(&attempt.request.task, attempt.request.why.as_deref()),
+            lesson: change.summary.clone(),
+            evidence: change.evidence.clone(),
+            status: LessonStatus::Active,
+        };
+        self.commit_change(&root, &path, change_id, change, live, &lesson)
+            .await
+    }
+
+    /// Puts a change in effect: its record, then its file, then the record
+    /// marked live and the change it replaces, then the owner told.
+    async fn commit_change(
+        &self,
+        root: &Path,
+        path: &Path,
+        change_id: RecordId,
+        mut change: Change,
+        live: Option<&(RecordId, Change)>,
+        lesson: &Lesson,
+    ) -> Result<Adoption, ChangeError> {
+        let now = change.at;
+        // The record first: whatever stops this from here on, the edit is
+        // never on disk without one.
+        self.put_change(change_id, &change).await?;
+        if let Err(error) = self
+            .replace_file(root, path, &change.new_file, &change.old_file)
+            .await
+        {
+            change.status = ChangeStatus::Abandoned;
+            change.ended_at = Some(Utc::now());
+            self.put_change(change_id, &change).await?;
+            return Err(error);
+        }
+        change.status = ChangeStatus::Live;
+        // Its lesson goes into the library with it: only an adopted change
+        // teaches anything.
+        let mut unit = UnitOfWork::new()
+            .with(WriteOp::PutRecord(harness::record(
+                CHANGE_TYPE,
+                change_id,
+                &change,
+                now,
+            )?))
+            .with(WriteOp::PutRecord(harness::record(
+                LESSON_TYPE,
+                lesson_id(change_id),
+                lesson,
+                now,
+            )?));
         if let Some((id, earlier)) = live {
             let replaced = Change {
                 status: ChangeStatus::Replaced,
@@ -381,12 +479,33 @@ impl Runtime {
                 earlier.at,
             )?));
         }
-        self.workflows.store.apply(unit).await?;
+        self.workflows.store.apply(unit).await.map_err(|error| {
+            ChangeError::Internal(format!(
+                "the new file is in place, and change {change_id} is still marked pending: {error}"
+            ))
+        })?;
+        // Last, so a slow webhook can't come between the file and its record.
+        change.notice = self.notify(change_id, &change).await;
+        if let Err(error) = self.put_change(change_id, &change).await {
+            eprintln!(
+                "change {change_id} is live, but how the owner was told wasn't kept: {}",
+                error.message()
+            );
+        }
         Ok(Adoption {
             adopted: true,
             change_id: Some(change_id.to_string()),
             reason: "the evidence supported it and every rule was met".to_owned(),
         })
+    }
+
+    async fn put_change(&self, id: RecordId, change: &Change) -> Result<(), ChangeError> {
+        let record = harness::record(CHANGE_TYPE, id, change, change.at)?;
+        self.workflows
+            .store
+            .apply(UnitOfWork::new().with(WriteOp::PutRecord(record)))
+            .await?;
+        Ok(())
     }
 
     /// Puts `body` in place of the file at `path` and reloads every
@@ -441,9 +560,11 @@ impl Runtime {
     pub(crate) async fn revert(&self, id: RecordId) -> Result<Change, ChangeError> {
         let _changing = self.changing.lock().await;
         let change = self.change(id).await?;
-        if change.status != ChangeStatus::Live {
+        // A pending change is in effect if its file went in; the check on
+        // the agent's harness below makes sure it did.
+        if !matches!(change.status, ChangeStatus::Live | ChangeStatus::Pending) {
             return Err(ChangeError::Conflict(
-                "only a live change can be reverted".to_owned(),
+                "only a change in effect can be reverted".to_owned(),
             ));
         }
         let root = self.root()?;
@@ -471,19 +592,19 @@ impl Runtime {
             since: now,
             reason: format!("the owner reverted change {id}"),
         };
-        self.workflows
-            .store
-            .apply(
-                UnitOfWork::new()
-                    .with(WriteOp::PutRecord(harness::record(
-                        CHANGE_TYPE,
-                        id,
-                        &reverted,
-                        reverted.at,
-                    )?))
-                    .with(WriteOp::PutRecord(Self::hold_record(&hold)?)),
-            )
-            .await?;
+        let mut unit = UnitOfWork::new()
+            .with(WriteOp::PutRecord(harness::record(
+                CHANGE_TYPE,
+                id,
+                &reverted,
+                reverted.at,
+            )?))
+            .with(WriteOp::PutRecord(Self::hold_record(&hold)?));
+        // What it taught no longer counts.
+        if let Some(retired) = self.retired_lesson(id).await? {
+            unit = unit.with(retired);
+        }
+        self.workflows.store.apply(unit).await?;
         Ok(reverted)
     }
 
@@ -505,11 +626,7 @@ impl Runtime {
         let found = self
             .workflows
             .store
-            .query_records(RecordQuery {
-                record_type: CHANGE_TYPE.to_owned(),
-                filters,
-                page,
-            })
+            .query_records(RecordQuery::new(CHANGE_TYPE.to_owned(), page).with_filters(filters))
             .await?;
         let items = found
             .items
@@ -535,16 +652,43 @@ impl Runtime {
     }
 
     /// The agents that are held.
+    /// The lesson library, optionally for one agent or in one state.
+    pub(crate) async fn lessons(
+        &self,
+        agent: Option<&str>,
+        status: Option<LessonStatus>,
+        page: PageRequest,
+    ) -> Result<store::Page<Lesson>, ChangeError> {
+        self.harness_records().await?;
+        let mut filters = Vec::new();
+        if let Some(agent) = agent {
+            filters.push(text("agent", agent));
+        }
+        if let Some(status) = status {
+            filters.push(harness::status_filter(status));
+        }
+        let found = self
+            .workflows
+            .store
+            .query_records(RecordQuery::new(LESSON_TYPE.to_owned(), page).with_filters(filters))
+            .await?;
+        let items = found
+            .items
+            .into_iter()
+            .map(|record| Ok(serde_json::from_value(record.data)?))
+            .collect::<Result<_, ChangeError>>()?;
+        Ok(store::Page {
+            items,
+            has_more: found.has_more,
+        })
+    }
+
     pub(crate) async fn holds(&self, page: PageRequest) -> Result<store::Page<Hold>, ChangeError> {
         self.harness_records().await?;
         let found = self
             .workflows
             .store
-            .query_records(RecordQuery {
-                record_type: HOLD_TYPE.to_owned(),
-                filters: Vec::new(),
-                page,
-            })
+            .query_records(RecordQuery::new(HOLD_TYPE.to_owned(), page))
             .await?;
         let items = found
             .items
@@ -588,5 +732,41 @@ impl Runtime {
             .apply(UnitOfWork::new().with(op))
             .await?;
         Ok(None)
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, reason = "a test: a panic is how it fails")]
+mod tests {
+    use super::*;
+
+    fn scratch(name: &str) -> PathBuf {
+        let root = std::env::temp_dir().join(format!("write-whole-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        root
+    }
+
+    #[test]
+    fn a_file_is_replaced_whole_and_nothing_is_left_behind() {
+        let root = scratch("whole");
+        let path = root.join("helper.yaml");
+        std::fs::write(&path, "old").unwrap();
+        write_whole(&path, "new").unwrap();
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "new");
+        let left: Vec<_> = std::fs::read_dir(&root).unwrap().collect();
+        assert_eq!(left.len(), 1, "no staging file is left");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_link_in_place_of_the_file_is_refused_not_followed() {
+        let root = scratch("link");
+        let elsewhere = root.join("elsewhere.txt");
+        std::fs::write(&elsewhere, "keep me").unwrap();
+        let path = root.join("helper.yaml");
+        std::os::unix::fs::symlink(&elsewhere, &path).unwrap();
+        assert!(write_whole(&path, "new").is_err());
+        assert_eq!(std::fs::read_to_string(&elsewhere).unwrap(), "keep me");
     }
 }

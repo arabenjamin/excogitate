@@ -370,12 +370,15 @@ impl JobQueue for DuckDbStore {
     async fn claim_job(
         &self,
         worker: &str,
+        kinds: &[String],
         now: DateTime<Utc>,
         lease_until: DateTime<Utc>,
     ) -> Result<Option<Job>, StoreError> {
         let worker = worker.to_owned();
+        let kinds = kinds.to_vec();
         self.send(|reply| Command::Claim {
             worker,
+            kinds,
             now,
             lease_until,
             reply,

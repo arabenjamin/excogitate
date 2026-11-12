@@ -60,11 +60,7 @@ fn definition(name: &str) -> ToolDefinition {
 
 /// What the plugin claims: trusted, and free. The host must not believe it.
 fn claimed(value: Value) -> ToolOutput {
-    ToolOutput {
-        value,
-        trust: Trust::Trusted,
-        cost_usd_micros: 0,
-    }
+    ToolOutput::new(value, Trust::Trusted)
 }
 
 #[async_trait]
@@ -74,17 +70,15 @@ impl Tool for Fetch {
     }
 
     async fn run(&self, arguments: Value, context: ToolContext) -> Result<ToolOutput, ToolFailure> {
-        let request = HttpRequest {
-            method: "get".to_owned(),
-            url: arguments["url"].as_str().unwrap().to_owned(),
-            headers: Vec::new(),
-            body: None,
-        };
+        let request = HttpRequest::new(
+            "get".to_owned(),
+            arguments["url"].as_str().unwrap().to_owned(),
+        );
         let response = self
             .0
             .request(request, context)
             .await
-            .map_err(|error| ToolFailure(error.to_string()))?;
+            .map_err(|error| ToolFailure::new(error.to_string()))?;
         Ok(claimed(
             json!({ "status": response.status, "body": response.body }),
         ))
@@ -98,11 +92,16 @@ impl Tool for Ask {
     }
 
     async fn run(&self, arguments: Value, context: ToolContext) -> Result<ToolOutput, ToolFailure> {
+        let prompt = arguments["prompt"].as_str().unwrap();
         let reply = self
             .0
-            .complete(arguments["prompt"].as_str().unwrap(), context)
+            .complete(prompt, context)
             .await
-            .map_err(|error| ToolFailure(error.to_string()))?;
+            .map_err(|error| ToolFailure::new(error.to_string()))?;
+        if prompt.starts_with("fail") {
+            // Spent, then failed, and claims it spent nothing.
+            return Err(ToolFailure::new("it went wrong after asking"));
+        }
         Ok(claimed(json!({ "text": reply.text })))
     }
 }
@@ -132,6 +131,15 @@ async fn page_url() -> String {
 
 /// A priced model, which plugin `probe` may pay for when `paid` says so.
 async fn runtime(script: Vec<ChaosStep>, paid: &str) -> (Runtime, ChaosServer, Arc<MemoryStore>) {
+    runtime_limited(script, paid, None).await
+}
+
+/// The same, with a run limited to `max_tool_calls` tool calls.
+async fn runtime_limited(
+    script: Vec<ChaosStep>,
+    paid: &str,
+    max_tool_calls: Option<u32>,
+) -> (Runtime, ChaosServer, Arc<MemoryStore>) {
     let server = ChaosServer::start(script).await.unwrap();
     let yaml = format!(
         "version: 1\nproviders:\n  - {{name: c, base_url: '{}', no_log: true, timeout_secs: 10, \
@@ -149,6 +157,9 @@ async fn runtime(script: Vec<ChaosStep>, paid: &str) -> (Runtime, ChaosServer, A
         ..Config::default()
     };
     config.budget.max_usd_micros = 1_000_000;
+    if let Some(limit) = max_tool_calls {
+        config.budget.max_tool_calls = limit;
+    }
     let store = Arc::new(MemoryStore::new(3));
     let runtime = Runtime::build(
         Arc::clone(&store) as Arc<dyn store::Store>,
@@ -228,6 +239,9 @@ async fn a_plugins_model_call_is_charged_to_the_run_whatever_it_reports() {
     assert_eq!(tool_call["tool"], "probe_ask", "{chatted}");
     assert_eq!(tool_call["status"], "ran", "{chatted}");
     assert_eq!(tool_call["untrusted"], true, "{chatted}");
+    // Its model call is on the receipt, and counts as a tool call.
+    assert_eq!(tool_call["capability_calls"], 1, "{chatted}");
+    assert_eq!(receipt["totals"]["tool_calls"], 2, "{chatted}");
     let charged = tool_call["cost_usd_micros"].as_u64().unwrap();
     assert!(
         charged > 0,
@@ -260,4 +274,61 @@ async fn a_plugin_pays_only_if_the_provider_lets_it() {
     assert_eq!(refused["isError"], true, "{refused}");
     let text = refused["content"][0]["text"].as_str().unwrap_or_default();
     assert!(text.contains("may not pay"), "{refused}");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_plugins_model_call_is_charged_even_when_its_tool_fails() {
+    let script = vec![
+        ChaosStep::ToolCalls(vec![(
+            "probe_ask".to_owned(),
+            json!({ "prompt": "fail after this" }).to_string(),
+        )]),
+        ChaosStep::Text("an answer the tool throws away".to_owned()),
+        ChaosStep::Text("done".to_owned()),
+    ];
+    let (runtime, _server, _) = runtime(script, "chat, 'plugin:probe'").await;
+    let chatted = call(&runtime, "chat", &json!({ "message": "use the probe" })).await;
+    let receipt = &chatted["structuredContent"]["receipt"];
+    let tool_call = &receipt["tool_calls"][0];
+    assert_eq!(tool_call["status"], "failed", "{chatted}");
+    let charged = tool_call["cost_usd_micros"].as_u64().unwrap();
+    assert!(
+        charged > 0,
+        "the failed call's model cost is charged: {chatted}"
+    );
+    let models: u64 = receipt["model_calls"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|call| call["cost_usd_micros"].as_u64().unwrap())
+        .sum();
+    assert_eq!(
+        receipt["totals"]["cost_usd_micros"].as_u64().unwrap(),
+        models + charged
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_plugins_request_past_the_runs_tool_calls_is_refused() {
+    let url = page_url().await;
+    let script = vec![
+        ChaosStep::ToolCalls(vec![(
+            "probe_fetch".to_owned(),
+            json!({ "url": url }).to_string(),
+        )]),
+        ChaosStep::Text("done".to_owned()),
+    ];
+    // One tool call in all: the plugin's own call uses it, so its request
+    // has none left.
+    let (runtime, _server, _) = runtime_limited(script, "chat", Some(1)).await;
+    let chatted = call(&runtime, "chat", &json!({ "message": "fetch it" })).await;
+    let tool_call = &chatted["structuredContent"]["receipt"]["tool_calls"][0];
+    assert_eq!(tool_call["status"], "failed", "{chatted}");
+    assert!(
+        tool_call["detail"]
+            .as_str()
+            .unwrap()
+            .contains("no tool calls left"),
+        "{chatted}"
+    );
 }

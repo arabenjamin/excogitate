@@ -30,6 +30,8 @@ const SCHEDULER_TICK: Duration = Duration::from_secs(5);
 const DEFAULT_BIND: &str = "127.0.0.1:8080";
 /// How long open requests get to finish once it's told to stop.
 const HTTP_GRACE: Duration = Duration::from_secs(25);
+/// How long the store waits at shutdown for runs to let go of it.
+const STORE_GRACE: Duration = Duration::from_secs(5);
 
 /// The runtime couldn't start, or its connection failed.
 #[derive(Debug, thiserror::Error)]
@@ -46,6 +48,14 @@ pub enum RunError {
     /// The models file is wrong.
     #[error("models configuration: {0}")]
     Models(#[from] model::ConfigError),
+    /// A settings file is wrong. Says which setting named it, and where.
+    #[error("{setting}: {problem}")]
+    Settings {
+        /// The variable and the file, as `PREFIX_NAME=path`.
+        setting: String,
+        /// What's wrong with it.
+        problem: String,
+    },
     /// The configuration is wrong.
     #[error(transparent)]
     Config(#[from] ConfigError),
@@ -141,6 +151,20 @@ impl OpenStore {
         }
     }
 
+    /// Waits, up to `limit`, for everything else holding the store to let
+    /// go, so it closes in order rather than whenever the last holder drops.
+    async fn wait_unshared(&self, limit: Duration) {
+        let shared = || match self {
+            Self::DuckDb(store) => Arc::strong_count(store) > 1,
+            #[cfg(feature = "neo4j")]
+            Self::Neo4j(store) => Arc::strong_count(store) > 1,
+        };
+        let deadline = tokio::time::Instant::now() + limit;
+        while shared() && tokio::time::Instant::now() < deadline {
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+    }
+
     /// The `DuckDB` writer has to finish before the process ends. Neo4j's
     /// connections close on their own.
     fn close(self) {
@@ -225,9 +249,15 @@ async fn open(product: &str, compiled: &[Arc<dyn Plugin>]) -> Result<Opened, Run
             .filter(|value| !value.is_empty())
     };
     let places = Places::from(&variable);
-    let catalog = Catalog::from_yaml(&read(&places.models)?, |name| std::env::var(name).ok())?;
+    let in_file = |name: &str, path: &Path| {
+        let setting = format!("{prefix}_{name}={}", path.display());
+        move |problem: String| RunError::Settings { setting, problem }
+    };
+    let catalog = Catalog::from_yaml(&read(&places.models)?, |name| std::env::var(name).ok())
+        .map_err(|error| in_file("MODELS", &places.models)(error.to_string()))?;
     let mut config = match &places.config {
-        Some(path) => Config::from_yaml(&read(path)?)?,
+        Some(path) => Config::from_yaml(&read(path)?)
+            .map_err(|error| in_file("CONFIG", path)(error.to_string()))?,
         None => Config::default(),
     };
     // Unless the configuration names another, requests say which program sent them.
@@ -244,7 +274,8 @@ async fn open(product: &str, compiled: &[Arc<dyn Plugin>]) -> Result<Opened, Run
         Arc::new(DuckDbSink::open(Some(&places.data.join("events.duckdb")))?);
     let workers = config.workers;
     let grants = match &places.plugins {
-        Some(path) => PluginsConfig::from_yaml(&read(path)?).map_err(RuntimeError::from)?,
+        Some(path) => PluginsConfig::from_yaml(&read(path)?)
+            .map_err(|error| in_file("PLUGINS", path)(error.to_string()))?,
         None => PluginsConfig::default(),
     };
     let plugins = Plugins {
@@ -279,7 +310,16 @@ pub async fn run_stdio(
     version: &str,
     plugins: &[Arc<dyn Plugin>],
 ) -> Result<(), RunError> {
-    let Opened { store, runtime, .. } = open(product, plugins).await?;
+    let Opened {
+        store,
+        runtime,
+        definitions,
+        ..
+    } = open(product, plugins).await?;
+    // The same files the server would read, checked the same way, so a bad
+    // one or a missing front door stops it here too.
+    let count = runtime.load_definitions(&definitions, Utc::now()).await?;
+    eprintln!("{count} definitions loaded");
     let tools = runtime.mcp_tools();
     drop(runtime);
     let served = plugin_api::serve_stdio(product, version, tools)
@@ -416,11 +456,15 @@ pub async fn run_server(
         async {
             stop_signal().await;
             eprintln!("stopping");
+            // Every run still going ends now, with its receipt, so the
+            // grace period has finished runs to wait for.
+            runtime.stop_runs();
             // Nobody can be left waiting on a channel nothing listens to.
             let _ = stop.send(true);
         },
     );
     drop(runtime);
+    store.wait_unshared(STORE_GRACE).await;
     store.close();
     served.map_err(RunError::Serve)
 }

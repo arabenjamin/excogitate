@@ -24,6 +24,12 @@ pub const MAX_FILE_CHARS: usize = 64_000;
 #[serde(rename_all = "snake_case")]
 #[schemars(inline)]
 pub enum ChangeStatus {
+    /// Recorded before its file is written, so no edit goes unrecorded. It
+    /// becomes live once the file is in place; if the runtime stopped in
+    /// between, it's in effect exactly when the agent's harness is its own.
+    Pending,
+    /// Its file never went in.
+    Abandoned,
     /// The agent runs with it.
     Live,
     /// The owner put the old file back.
@@ -72,6 +78,18 @@ pub struct Change {
     /// Whether the owner was told, and how.
     #[schemars(length(max = 2048))]
     pub notice: String,
+}
+
+impl Change {
+    /// Whether the agent runs with this change, given its harness now.
+    #[must_use]
+    pub fn in_effect(&self, current_harness: &str) -> bool {
+        match self.status {
+            ChangeStatus::Live => true,
+            ChangeStatus::Pending => self.to_harness == current_harness,
+            _ => false,
+        }
+    }
 }
 
 /// An agent the system leaves alone until the owner releases it.
@@ -144,5 +162,33 @@ pub fn check_adoption(facts: &Facts<'_>) -> Result<(), String> {
             Ok(())
         }
         _ => Err("the judge model hasn't passed its known-answer test".to_owned()),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_pending_change_is_in_effect_only_if_its_file_went_in() {
+        let change: Change = serde_json::from_value(serde_json::json!({
+            "agent": "helper", "attempt_id": "a", "at": "2026-11-11T12:00:00Z",
+            "from_harness": "before", "to_harness": "after", "old_file": "", "new_file": "",
+            "summary": "s", "evidence": [], "judge_model": "m", "status": "pending",
+            "ended_at": null, "notice": ""
+        }))
+        .unwrap();
+        assert!(change.in_effect("after"));
+        assert!(!change.in_effect("before"));
+        let abandoned = Change {
+            status: ChangeStatus::Abandoned,
+            ..change.clone()
+        };
+        assert!(!abandoned.in_effect("after"));
+        let live = Change {
+            status: ChangeStatus::Live,
+            ..change
+        };
+        assert!(live.in_effect("someone edited it"));
     }
 }

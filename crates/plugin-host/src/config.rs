@@ -1,10 +1,8 @@
 //! The deployment's `plugins.yaml`: what each plugin is granted.
 
 use plugin_api::PluginCapability;
-use schema::{Validator, bounded};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 
 use crate::HostError;
 
@@ -82,12 +80,7 @@ impl PluginsConfig {
     ///
     /// [`HostError::Config`] if it isn't YAML or fails its schema.
     pub fn from_yaml(text: &str) -> Result<Self, HostError> {
-        let raw: Value = serde_saphyr::from_str(text)
-            .map_err(|error| HostError::Config(bounded(&error.to_string())))?;
-        Validator::for_type::<Self>()
-            .map_err(|error| HostError::Config(error.to_string()))?
-            .parse(raw)
-            .map_err(|refusal| HostError::Config(refusal.to_string()))
+        schema::parse_yaml(text).map_err(|error| HostError::Config(error.to_string()))
     }
 
     pub(crate) fn granted(&self, plugin: &str, capability: PluginCapability) -> bool {

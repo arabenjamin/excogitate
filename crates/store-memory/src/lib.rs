@@ -459,6 +459,7 @@ impl JobQueue for MemoryStore {
     async fn claim_job(
         &self,
         worker: &str,
+        kinds: &[String],
         now: DateTime<Utc>,
         lease_until: DateTime<Utc>,
     ) -> Result<Option<Job>, StoreError> {
@@ -470,7 +471,7 @@ impl JobQueue for MemoryStore {
         let Some(job) = state
             .jobs
             .values_mut()
-            .filter(|job| runnable(job, now))
+            .filter(|job| runnable(job, now) && kinds.contains(&job.kind))
             .min_by_key(|job| (std::cmp::Reverse(job.priority), job.run_at, job.id))
         else {
             return Ok(None);

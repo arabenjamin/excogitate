@@ -107,6 +107,9 @@ pub struct Candidate {
     pub output_tokens: u32,
     /// The most the call could cost on it.
     pub worst_case_usd_micros: u64,
+    /// What the prompt alone costs: the least a call that reached the model
+    /// is billed.
+    pub input_usd_micros: u64,
 }
 
 fn check(
@@ -150,6 +153,7 @@ fn check(
         model: Arc::clone(model),
         output_tokens,
         worst_case_usd_micros,
+        input_usd_micros: model.price.cost(estimate.input, 0),
     })
 }
 

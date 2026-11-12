@@ -5,7 +5,7 @@
 # Cron has five fields, or six with seconds first.
 cron: "0 8 * * *"
 # An IANA zone. UTC if left out.
-timezone: America/Detroit
+timezone: America/New_York
 kind: chat
 payload:
   message: What have I stored recently that I should follow up on today?

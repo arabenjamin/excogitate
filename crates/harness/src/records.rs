@@ -12,6 +12,7 @@ use uuid::Uuid;
 use crate::attempt::Attempt;
 use crate::calibrate::Calibration;
 use crate::change::{Change, Hold};
+use crate::lesson::{LESSON_TYPE, Lesson};
 
 /// The record type of an attempt.
 pub const ATTEMPT_TYPE: &str = "harness.attempt";
@@ -82,6 +83,13 @@ pub fn declarations() -> RecordDecls {
                 ],
             ),
             declared::<Hold>(HOLD_TYPE, vec![field("agent", FieldKind::Text)]),
+            declared::<Lesson>(
+                LESSON_TYPE,
+                vec![
+                    field("agent", FieldKind::Text),
+                    field("status", FieldKind::Text),
+                ],
+            ),
             declared::<Calibration>(
                 CALIBRATION_TYPE,
                 vec![
@@ -115,17 +123,17 @@ pub fn record<T: Serialize>(
     value: &T,
     at: chrono::DateTime<chrono::Utc>,
 ) -> Result<Record, serde_json::Error> {
-    Ok(Record {
-        record_type: record_type.to_owned(),
+    Ok(Record::new(
+        record_type.to_owned(),
         id,
-        data: serde_json::to_value(value)?,
-        provenance: Provenance {
+        serde_json::to_value(value)?,
+        Provenance {
             data_class: DataClass::Private,
             trust: Trust::Untrusted,
             stored_by: Actor::new("harness"),
             stored_at: at,
         },
-    })
+    ))
 }
 
 /// An attempt as a record.

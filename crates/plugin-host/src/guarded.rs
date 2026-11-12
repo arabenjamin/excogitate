@@ -7,55 +7,94 @@ use std::sync::{Arc, Mutex, PoisonError};
 
 use async_trait::async_trait;
 use plugin_api::{
-    HttpCapability, ModelCapability, Tool, ToolContext, ToolDefinition, ToolFailure, ToolOutput,
+    CapabilityUse, HttpCapability, ModelCapability, Tool, ToolContext, ToolDefinition, ToolFailure,
+    ToolOutput,
 };
 use protocol::{RunId, Trust};
 use serde_json::Value;
 
-/// What a plugin's model calls have cost, per run, not yet charged.
+/// What one run's capability calls have done and cost, not yet charged.
 #[derive(Debug, Default)]
-pub struct SpendMeter {
-    spent: Mutex<HashMap<RunId, u64>>,
+struct Tally {
+    spent: u64,
+    uses: Vec<CapabilityUse>,
 }
 
-impl SpendMeter {
-    /// Adds a call's cost to its run.
-    pub fn add(&self, run: RunId, cost_usd_micros: u64) {
-        let mut spent = self.spent.lock().unwrap_or_else(PoisonError::into_inner);
-        let total = spent.entry(run).or_default();
-        *total = total.saturating_add(cost_usd_micros);
+/// What a plugin's capability calls have done and cost, per run, until the
+/// tool call they were made in reports them.
+#[derive(Debug, Default)]
+pub struct CapabilityMeter {
+    tallies: Mutex<HashMap<RunId, Tally>>,
+    turns: Mutex<HashMap<RunId, Arc<tokio::sync::Mutex<()>>>>,
+}
+
+impl CapabilityMeter {
+    fn tallies(&self) -> std::sync::MutexGuard<'_, HashMap<RunId, Tally>> {
+        self.tallies.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// Waits for the run's turn to spend. Holding it while checking what's
+    /// left and making the call means two calls at once can't both spend
+    /// the same remainder.
+    pub async fn turn(&self, run: RunId) -> tokio::sync::OwnedMutexGuard<()> {
+        let turn = Arc::clone(
+            self.turns
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .entry(run)
+                .or_default(),
+        );
+        turn.lock_owned().await
+    }
+
+    /// Records a capability call, and adds what it cost to its run.
+    pub fn record(&self, run: RunId, used: CapabilityUse) {
+        let mut tallies = self.tallies();
+        let tally = tallies.entry(run).or_default();
+        tally.spent = tally.spent.saturating_add(used.cost_usd_micros);
+        tally.uses.push(used);
     }
 
     /// What the run has spent and not yet been charged.
     #[must_use]
     pub fn pending(&self, run: RunId) -> u64 {
-        self.spent
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .get(&run)
-            .copied()
-            .unwrap_or(0)
+        self.tallies().get(&run).map_or(0, |tally| tally.spent)
     }
 
-    /// Takes what the run has spent, to charge it.
-    fn take(&self, run: RunId) -> u64 {
-        self.spent
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .remove(&run)
-            .unwrap_or(0)
+    /// How many capability calls the run has made that aren't reported yet.
+    #[must_use]
+    pub fn calls(&self, run: RunId) -> u32 {
+        self.tallies().get(&run).map_or(0, |tally| {
+            u32::try_from(tally.uses.len()).unwrap_or(u32::MAX)
+        })
+    }
+
+    /// Takes what the run has done and spent, to report and charge it.
+    fn take(&self, run: RunId) -> Tally {
+        let mut turns = self.turns.lock().unwrap_or_else(PoisonError::into_inner);
+        // Forget the run's turn unless a call is waiting on it or holds it.
+        if turns
+            .get(&run)
+            .is_some_and(|turn| Arc::strong_count(turn) == 1)
+        {
+            turns.remove(&run);
+        }
+        drop(turns);
+        self.tallies().remove(&run).unwrap_or_default()
     }
 }
 
 /// Where the `http` and `model` capabilities come from. The runtime gives
 /// the host one; without it, a plugin asking for either is refused.
 pub trait CapabilitySource: Send + Sync + std::fmt::Debug {
-    /// HTTP for the plugin named.
-    fn http(&self, plugin: &str) -> Arc<dyn HttpCapability>;
+    /// HTTP for the plugin named. Each request is recorded in `meter`, and
+    /// counts as one of the run's tool calls.
+    fn http(&self, plugin: &str, meter: Arc<CapabilityMeter>) -> Arc<dyn HttpCapability>;
 
-    /// Model calls for the plugin named. Each call adds its cost to `meter`,
-    /// and may spend only what the run has left after what's pending there.
-    fn model(&self, plugin: &str, meter: Arc<SpendMeter>) -> Arc<dyn ModelCapability>;
+    /// Model calls for the plugin named. Each call is recorded in `meter`
+    /// with its cost, and may spend only what the run has left after what's
+    /// pending there.
+    fn model(&self, plugin: &str, meter: Arc<CapabilityMeter>) -> Arc<dyn ModelCapability>;
 }
 
 /// A tool of a plugin that holds `http` or `model`. What it returns came
@@ -64,7 +103,7 @@ pub trait CapabilitySource: Send + Sync + std::fmt::Debug {
 #[derive(Debug)]
 pub(crate) struct GuardedTool {
     pub(crate) inner: Arc<dyn Tool>,
-    pub(crate) meter: Option<Arc<SpendMeter>>,
+    pub(crate) meter: Option<Arc<CapabilityMeter>>,
 }
 
 #[async_trait]
@@ -79,14 +118,24 @@ impl Tool for GuardedTool {
 
     async fn run(&self, arguments: Value, context: ToolContext) -> Result<ToolOutput, ToolFailure> {
         let outcome = self.inner.run(arguments, context).await;
-        let metered = self
+        let tally = self
             .meter
             .as_ref()
-            .map_or(0, |meter| meter.take(context.run));
-        outcome.map(|output| ToolOutput {
-            trust: Trust::Untrusted,
-            cost_usd_micros: output.cost_usd_micros.max(metered),
-            ..output
-        })
+            .map(|meter| meter.take(context.run))
+            .unwrap_or_default();
+        // What its capability calls did and cost goes on the run whether the
+        // tool succeeded or not, and the host's record replaces the plugin's.
+        match outcome {
+            Ok(mut output) => {
+                output.trust = Trust::Untrusted;
+                output.cost_usd_micros = output.cost_usd_micros.max(tally.spent);
+                output.uses = tally.uses;
+                Ok(output)
+            }
+            Err(failure) => {
+                let cost = failure.cost_usd_micros().max(tally.spent);
+                Err(failure.with_cost(cost).with_uses(tally.uses))
+            }
+        }
     }
 }

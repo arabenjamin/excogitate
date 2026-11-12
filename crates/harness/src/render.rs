@@ -96,6 +96,15 @@ fn step_text(step: &Step) -> String {
                 cut(reply.as_deref().unwrap_or(""))
             )
         }
+        Step::Capability {
+            capability,
+            what,
+            ok,
+            ..
+        } => {
+            let went = if *ok { "worked" } else { "failed" };
+            format!("  the tool's {capability} call {went}: {}", cut(what))
+        }
         Step::Ended {
             outcome,
             budget_hit,

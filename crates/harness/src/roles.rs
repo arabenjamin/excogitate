@@ -160,7 +160,8 @@ pub struct Brief<'a> {
     pub task: &'a str,
     /// What was reported wrong, if anything.
     pub why: Option<&'a str>,
-    /// Lessons from earlier changes to this agent.
+    /// Lessons from earlier adopted changes that fit this task, from the
+    /// library. Hints, to weigh against the runs.
     pub lessons: &'a [String],
 }
 
@@ -173,10 +174,12 @@ impl Brief<'_> {
             text.push_str(&block("REPORTED PROBLEM", why));
         }
         if !self.lessons.is_empty() {
-            text.push_str(&block(
-                "LESSONS FROM EARLIER CHANGES",
-                &self.lessons.join("\n"),
-            ));
+            let hints = format!(
+                "These worked before, on tasks like this one. They are hints, not \
+                 evidence: an edit still has to be supported by these runs.\n{}",
+                self.lessons.join("\n")
+            );
+            text.push_str(&block("LESSONS FROM EARLIER CHANGES", &hints));
         }
         text
     }

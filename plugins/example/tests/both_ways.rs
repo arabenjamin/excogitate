@@ -7,11 +7,11 @@ use std::sync::Arc;
 use dispatch::{Budget, CallStatus, Outcome, Session, SessionConfig, ToolRegistry};
 use events::MemorySink;
 use model::ToolCall;
+use plugin_api::{DataClass, FieldFilter, FieldOp, FieldValue, PageRequest, RecordQuery, RunId};
 use plugin_example::{ExamplePlugin, MANIFEST};
 use plugin_host::{HostError, PluginHost, PluginsConfig, ServiceSpec};
-use protocol::{DataClass, RunId};
 use serde_json::{Value, json};
-use store::{FieldFilter, FieldOp, FieldValue, PageRequest, RecordQuery, RecordReader, Store};
+use store::{RecordReader, Store};
 use store_memory::MemoryStore;
 
 const BUDGET: Budget = Budget {
@@ -92,15 +92,17 @@ async fn compiled_in_it_counts_and_keeps_bookmarks() {
     assert_eq!(added.status, CallStatus::Ran, "{}", added.content);
 
     let found = store
-        .query_records(RecordQuery {
-            record_type: "example.bookmark".to_owned(),
-            filters: vec![FieldFilter {
-                field: "url".to_owned(),
-                op: FieldOp::Eq,
-                value: FieldValue::Text(url.to_owned()),
-            }],
-            page: PageRequest::new(5, 0).unwrap(),
-        })
+        .query_records(
+            RecordQuery::new(
+                "example.bookmark".to_owned(),
+                PageRequest::new(5, 0).unwrap(),
+            )
+            .with_filters(vec![FieldFilter::new(
+                "url".to_owned(),
+                FieldOp::Eq,
+                FieldValue::Text(url.to_owned()),
+            )]),
+        )
         .await
         .unwrap();
     assert_eq!(found.items.len(), 1);
@@ -181,15 +183,17 @@ async fn as_a_service_it_runs_in_its_own_process_and_keeps_bookmarks() {
         .await;
     assert_eq!(added.status, CallStatus::Ran, "{}", added.content);
     let found = store
-        .query_records(RecordQuery {
-            record_type: "example.bookmark".to_owned(),
-            filters: vec![FieldFilter {
-                field: "url".to_owned(),
-                op: FieldOp::Eq,
-                value: FieldValue::Text(url.to_owned()),
-            }],
-            page: PageRequest::new(5, 0).unwrap(),
-        })
+        .query_records(
+            RecordQuery::new(
+                "example.bookmark".to_owned(),
+                PageRequest::new(5, 0).unwrap(),
+            )
+            .with_filters(vec![FieldFilter::new(
+                "url".to_owned(),
+                FieldOp::Eq,
+                FieldValue::Text(url.to_owned()),
+            )]),
+        )
         .await
         .unwrap();
     assert_eq!(found.items.len(), 1, "the record reached the host's store");

@@ -16,6 +16,6 @@ mod worker;
 pub use definitions::{
     DefinitionError, DefinitionFile, list_definitions, read_definition_files, save_definitions,
 };
-pub use schedule::{Schedule, Scheduler};
+pub use schedule::{MIN_CATCH_UP_SECONDS, Schedule, Scheduler};
 pub use transport::{Enqueued, JobTransport, StoreTransport};
 pub use worker::{JobFailure, JobHandler, Worker, WorkerError, WorkerOptions};

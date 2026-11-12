@@ -31,6 +31,7 @@ pub(crate) enum Command {
     Export(String, Reply<()>),
     Claim {
         worker: String,
+        kinds: Vec<String>,
         now: DateTime<Utc>,
         lease_until: DateTime<Utc>,
         reply: Reply<Option<Job>>,
@@ -188,11 +189,12 @@ impl Writer<'_> {
             }
             Command::Claim {
                 worker,
+                kinds,
                 now,
                 lease_until,
                 reply,
             } => {
-                let _ = reply.send(self.claim(&worker, now, lease_until));
+                let _ = reply.send(self.claim(&worker, &kinds, now, lease_until));
             }
             Command::Complete {
                 id,
@@ -678,12 +680,15 @@ impl Writer<'_> {
     fn claim(
         &self,
         worker: &str,
+        kinds: &[String],
         now: DateTime<Utc>,
         lease_until: DateTime<Utc>,
     ) -> Result<Option<Job>, StoreError> {
         if lease_until <= now {
             return Err(StoreError::Invalid("a lease must end after now".to_owned()));
         }
+        // Only the count of kinds goes into the text; the kinds are bound.
+        let places = vec!["?"; kinds.len()].join(", ");
         self.transaction(|| {
             self.connection
                 .execute(
@@ -693,14 +698,23 @@ impl Writer<'_> {
                     params![now],
                 )
                 .map_err(backend)?;
-            let next = self.connection.query_row(
+            if kinds.is_empty() {
+                return Ok(None);
+            }
+            let sql = format!(
                 "SELECT id FROM jobs
-                 WHERE (status = 'queued' AND run_at <= ?)
-                    OR (status = 'claimed' AND lease_until <= ?)
-                 ORDER BY priority DESC, run_at, id LIMIT 1",
-                params![now, now],
-                |row| row.get::<_, String>(0),
+                 WHERE ((status = 'queued' AND run_at <= ?)
+                    OR (status = 'claimed' AND lease_until <= ?))
+                   AND kind IN ({places})
+                 ORDER BY priority DESC, run_at, id LIMIT 1"
             );
+            let mut bound: Vec<&dyn duckdb::ToSql> = vec![&now, &now];
+            bound.extend(kinds.iter().map(|kind| kind as &dyn duckdb::ToSql));
+            let next = self
+                .connection
+                .query_row(&sql, duckdb::params_from_iter(bound), |row| {
+                    row.get::<_, String>(0)
+                });
             let id = match next {
                 Ok(id) => id,
                 Err(duckdb::Error::QueryReturnedNoRows) => return Ok(None),

@@ -9,99 +9,55 @@
 //! Messages are read and written concurrently, so a tool waiting on the
 //! host's answer doesn't stop that answer being read.
 
-use std::collections::HashMap;
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex, PoisonError};
+use std::sync::Arc;
 
 use async_trait::async_trait;
-use protocol::RunId;
 use serde::de::DeserializeOwned;
-use serde_json::{Value, json};
+use serde_json::Value;
 use store::{Direction, Page, PageRequest, Record, RecordId, RecordQuery};
-use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt, BufReader};
-use tokio::sync::{mpsc, oneshot};
+use tokio::io::{AsyncRead, AsyncWrite};
 
+use crate::rpc::{self, Peer, RpcError};
 use crate::wire::{
-    CAPABILITY_METHOD, CONTEXT_META, CapabilityCall, WireContext, WireHttpResponse, WireModelReply,
+    CAPABILITY_METHOD, CapabilityCall, CapabilityRequest, WireHttpResponse, WireModelReply,
     WirePage, WireRecord, error_of, http_call, page_from, query_call, record_of,
 };
 use crate::{
     Capabilities, CapabilityError, HttpCapability, HttpRequest, HttpResponse, McpHandler,
     ModelCapability, ModelReply, Plugin, PluginCapability, PluginManifest, RecordsCapability,
-    ToolContext, read_line,
+    ToolContext,
 };
 
-tokio::task_local! {
-    /// The run of the tool call being served, for capability calls that
-    /// don't carry a context of their own.
-    static CURRENT_RUN: RunId;
-}
-
-type Waiters = Mutex<HashMap<u64, oneshot::Sender<Value>>>;
-
-/// The process's side of the connection: what it sends the host, and who's
-/// waiting for which answer.
+/// The process's side of the connection, which its capabilities call back
+/// through.
 #[derive(Debug)]
-struct Link {
-    outgoing: mpsc::Sender<String>,
-    waiting: Waiters,
-    next_id: AtomicU64,
-}
+struct Link(Arc<Peer>);
 
 impl Link {
-    fn waiters(&self) -> std::sync::MutexGuard<'_, HashMap<u64, oneshot::Sender<Value>>> {
-        self.waiting.lock().unwrap_or_else(PoisonError::into_inner)
-    }
-
+    /// Asks the host, for the tool call `context` belongs to.
     async fn call<T: DeserializeOwned>(
         &self,
-        run: RunId,
+        context: ToolContext,
         call: CapabilityCall,
     ) -> Result<T, CapabilityError> {
-        let id = self.next_id.fetch_add(1, Ordering::Relaxed);
-        let (sender, receiver) = oneshot::channel();
-        self.waiters().insert(id, sender);
-        let message = json!({
-            "jsonrpc": "2.0",
-            "id": id,
-            "method": CAPABILITY_METHOD,
-            "params": { "run": run.as_uuid(), "call": call },
-        });
-        let gone = || CapabilityError::Failed("the host has gone".to_owned());
-        if self.outgoing.send(message.to_string()).await.is_err() {
-            self.waiters().remove(&id);
-            return Err(gone());
-        }
-        let reply = receiver.await.map_err(|_| gone())?;
-        if let Some(error) = reply.get("error") {
-            let code = error.get("code").and_then(Value::as_i64).unwrap_or(0);
-            let message = error
-                .get("message")
-                .and_then(Value::as_str)
-                .unwrap_or("failed");
-            return Err(error_of(code, message));
-        }
-        serde_json::from_value(reply.get("result").cloned().unwrap_or(Value::Null))
+        let token = context.call.ok_or_else(|| {
+            CapabilityError::Refused(
+                "only a tool call from the host can use a capability".to_owned(),
+            )
+        })?;
+        let params = serde_json::to_value(CapabilityRequest { token, call })
+            .map_err(|error| CapabilityError::Failed(error.to_string()))?;
+        let result = self
+            .0
+            .request(CAPABILITY_METHOD, params, None)
+            .await
+            .map_err(|error| match error {
+                RpcError::Remote { code, message } => error_of(code, &message),
+                other => CapabilityError::Failed(other.to_string()),
+            })?;
+        serde_json::from_value(result)
             .map_err(|error| CapabilityError::Failed(format!("the host's answer: {error}")))
     }
-
-    fn answer(&self, reply: Value) {
-        let waiter = reply
-            .get("id")
-            .and_then(Value::as_u64)
-            .and_then(|id| self.waiters().remove(&id));
-        if let Some(waiter) = waiter {
-            // The tool may have given up; that's fine.
-            let _ = waiter.send(reply);
-        }
-    }
-}
-
-/// The run of the call being served.
-fn current_run() -> Result<RunId, CapabilityError> {
-    CURRENT_RUN
-        .try_with(|run| *run)
-        .map_err(|_| CapabilityError::Refused("only a tool call can use a capability".to_owned()))
 }
 
 #[derive(Debug)]
@@ -121,7 +77,7 @@ impl RecordsCapability for RemoteRecords {
             id: id.map(|id| id.as_uuid()),
             data,
         };
-        let id: uuid::Uuid = self.0.call(context.run, call).await?;
+        let id: uuid::Uuid = self.0.call(context, call).await?;
         Ok(RecordId::from_uuid(id))
     }
 
@@ -129,26 +85,36 @@ impl RecordsCapability for RemoteRecords {
         &self,
         record_type: &str,
         id: RecordId,
+        context: ToolContext,
     ) -> Result<Option<Record>, CapabilityError> {
         let call = CapabilityCall::RecordsGet {
             record_type: record_type.to_owned(),
             id: id.as_uuid(),
         };
-        let found: Option<WireRecord> = self.0.call(current_run()?, call).await?;
+        let found: Option<WireRecord> = self.0.call(context, call).await?;
         found.map(record_of).transpose()
     }
 
-    async fn query(&self, query: RecordQuery) -> Result<Page<Record>, CapabilityError> {
-        let page: WirePage = self.0.call(current_run()?, query_call(query)).await?;
+    async fn query(
+        &self,
+        query: RecordQuery,
+        context: ToolContext,
+    ) -> Result<Page<Record>, CapabilityError> {
+        let page: WirePage = self.0.call(context, query_call(query)).await?;
         page_from(page)
     }
 
-    async fn delete(&self, record_type: &str, id: RecordId) -> Result<(), CapabilityError> {
+    async fn delete(
+        &self,
+        record_type: &str,
+        id: RecordId,
+        context: ToolContext,
+    ) -> Result<(), CapabilityError> {
         let call = CapabilityCall::RecordsDelete {
             record_type: record_type.to_owned(),
             id: id.as_uuid(),
         };
-        self.0.call(current_run()?, call).await
+        self.0.call(context, call).await
     }
 
     async fn link(
@@ -156,13 +122,14 @@ impl RecordsCapability for RemoteRecords {
         relation: &str,
         from: RecordId,
         to: RecordId,
+        context: ToolContext,
     ) -> Result<(), CapabilityError> {
         let call = CapabilityCall::RecordsLink {
             relation: relation.to_owned(),
             from: from.as_uuid(),
             to: to.as_uuid(),
         };
-        self.0.call(current_run()?, call).await
+        self.0.call(context, call).await
     }
 
     async fn neighbors(
@@ -171,6 +138,7 @@ impl RecordsCapability for RemoteRecords {
         id: RecordId,
         direction: Direction,
         page: PageRequest,
+        context: ToolContext,
     ) -> Result<Page<Record>, CapabilityError> {
         let call = CapabilityCall::RecordsNeighbors {
             relation: relation.to_owned(),
@@ -179,7 +147,7 @@ impl RecordsCapability for RemoteRecords {
             limit: page.limit(),
             offset: page.offset(),
         };
-        let page: WirePage = self.0.call(current_run()?, call).await?;
+        let page: WirePage = self.0.call(context, call).await?;
         page_from(page)
     }
 }
@@ -194,7 +162,7 @@ impl HttpCapability for RemoteHttp {
         request: HttpRequest,
         context: ToolContext,
     ) -> Result<HttpResponse, CapabilityError> {
-        let response: WireHttpResponse = self.0.call(context.run, http_call(request)).await?;
+        let response: WireHttpResponse = self.0.call(context, http_call(request)).await?;
         Ok(response.into())
     }
 }
@@ -212,7 +180,7 @@ impl ModelCapability for RemoteModel {
         let call = CapabilityCall::Model {
             prompt: prompt.to_owned(),
         };
-        let reply: WireModelReply = self.0.call(context.run, call).await?;
+        let reply: WireModelReply = self.0.call(context, call).await?;
         Ok(reply.into())
     }
 }
@@ -238,72 +206,25 @@ fn remote_capabilities(manifest: &PluginManifest, link: &Arc<Link>) -> Capabilit
     capabilities
 }
 
-/// The run a tool call is for, from its `_meta`.
-fn run_of(message: &Value) -> Option<RunId> {
-    let context = message.get("params")?.get("_meta")?.get(CONTEXT_META)?;
-    let context: WireContext = serde_json::from_value(context.clone()).ok()?;
-    Some(RunId::from_uuid(context.run))
-}
-
 /// Serves `plugin` over any byte stream until it ends.
 ///
 /// # Errors
 ///
 /// The I/O error, or the problem if the plugin's manifest or tools can't be
 /// used.
-pub async fn serve_plugin<R, W>(
-    plugin: &dyn Plugin,
-    reader: R,
-    mut writer: W,
-) -> std::io::Result<()>
+pub async fn serve_plugin<R, W>(plugin: &dyn Plugin, reader: R, writer: W) -> std::io::Result<()>
 where
     R: AsyncRead + Unpin,
-    W: AsyncWrite + Unpin + Send + 'static,
+    W: AsyncWrite + Unpin,
 {
     let manifest = PluginManifest::from_yaml(plugin.manifest()).map_err(std::io::Error::other)?;
-    let (outgoing, mut queue) = mpsc::channel::<String>(64);
-    let link = Arc::new(Link {
-        outgoing: outgoing.clone(),
-        waiting: Mutex::default(),
-        next_id: AtomicU64::new(1),
-    });
+    let (peer, io) = Peer::new(rpc::Limits::default());
+    let link = Arc::new(Link(Arc::clone(&peer)));
     let tools = plugin
         .tools(&remote_capabilities(&manifest, &link))
         .map_err(std::io::Error::other)?;
     let handler = Arc::new(McpHandler::new(&manifest.name, &manifest.version, tools)?);
-    let writing = tokio::spawn(async move {
-        while let Some(mut line) = queue.recv().await {
-            line.push('\n');
-            if writer.write_all(line.as_bytes()).await.is_err() || writer.flush().await.is_err() {
-                break;
-            }
-        }
-    });
-    let mut reader = BufReader::new(reader);
-    while let Some(line) = read_line(&mut reader).await? {
-        let Ok(message) = serde_json::from_slice::<Value>(&line) else {
-            continue;
-        };
-        if message.get("method").is_none() {
-            link.answer(message);
-            continue;
-        }
-        let (handler, outgoing) = (Arc::clone(&handler), outgoing.clone());
-        tokio::spawn(async move {
-            let reply = match run_of(&message) {
-                Some(run) => CURRENT_RUN.scope(run, handler.handle(&message)).await,
-                None => handler.handle(&message).await,
-            };
-            if let Some(reply) = reply {
-                let _ = outgoing.send(reply).await;
-            }
-        });
-    }
-    // Anyone still waiting on the host hears it's gone.
-    link.waiters().clear();
-    drop(outgoing);
-    writing.abort();
-    Ok(())
+    peer.run(io, reader, writer, handler).await
 }
 
 /// Serves `plugin` as an MCP server on stdin and stdout, with the
@@ -314,4 +235,177 @@ where
 /// The I/O error, or the problem if the plugin can't be set up.
 pub async fn serve_plugin_stdio(plugin: &dyn Plugin) -> std::io::Result<()> {
     serve_plugin(plugin, tokio::io::stdin(), tokio::io::stdout()).await
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, reason = "a test: a panic is how it fails")]
+#[allow(clippy::indexing_slicing, reason = "a test: a panic is how it fails")]
+mod tests {
+    use std::sync::Mutex;
+
+    use protocol::{RunId, Trust};
+    use serde_json::json;
+    use tokio::io::duplex;
+
+    use super::*;
+    use crate::rpc::{Handler, failure, success};
+    use crate::wire::{CONTEXT_META, REFUSED_CODE, WireContext};
+    use crate::{PluginError, Tool, ToolDefinition, ToolFailure, ToolOutput};
+
+    const MANIFEST: &str = r"
+api_version: 1
+name: demo
+version: 1.0.0
+description: d
+tools:
+  - name: demo_ask
+    description: Asks a model.
+    input_schema: {type: object, additionalProperties: false, properties: {q: {type: string, maxLength: 10}}}
+    output_schema: {type: object, additionalProperties: false, properties: {text: {type: string, maxLength: 100}}}
+    effect: read
+capabilities: [model]
+";
+
+    #[derive(Debug)]
+    struct Ask(Arc<dyn ModelCapability>);
+
+    #[async_trait]
+    impl Tool for Ask {
+        fn definition(&self) -> ToolDefinition {
+            PluginManifest::from_yaml(MANIFEST).unwrap().definitions()[0].clone()
+        }
+
+        async fn run(
+            &self,
+            arguments: Value,
+            context: ToolContext,
+        ) -> Result<ToolOutput, ToolFailure> {
+            let prompt = arguments["q"].as_str().unwrap_or_default();
+            let reply = self.0.complete(prompt, context).await?;
+            Ok(ToolOutput::new(
+                json!({ "text": reply.text }),
+                Trust::Untrusted,
+            ))
+        }
+    }
+
+    #[derive(Debug)]
+    struct Demo;
+
+    impl Plugin for Demo {
+        fn manifest(&self) -> &str {
+            MANIFEST
+        }
+
+        fn tools(&self, capabilities: &Capabilities) -> Result<Vec<Arc<dyn Tool>>, PluginError> {
+            Ok(vec![Arc::new(Ask(capabilities.model()?))])
+        }
+    }
+
+    /// The host's side: answers a model call made with the token it sent,
+    /// and refuses any other.
+    #[derive(Default)]
+    struct Host {
+        live: Mutex<Option<String>>,
+        asked: Mutex<Vec<String>>,
+    }
+
+    #[async_trait]
+    impl Handler for Host {
+        async fn handle(&self, message: Value) -> Option<Value> {
+            let id = message.get("id")?.clone();
+            let params = &message["params"];
+            let token = params["token"].as_str().map(str::to_owned);
+            if message["method"] != CAPABILITY_METHOD || token != *self.live.lock().unwrap() {
+                return Some(failure(&id, REFUSED_CODE, "not for a call I sent"));
+            }
+            let prompt = params["call"]["prompt"].as_str().unwrap().to_owned();
+            self.asked.lock().unwrap().push(prompt.clone());
+            let reply = WireModelReply::from(ModelReply::new(format!("re: {prompt}"), "m", 3));
+            Some(success(&id, &serde_json::to_value(reply).unwrap()))
+        }
+    }
+
+    /// The plugin served over an in-memory pipe, and the host's peer.
+    fn connect() -> (Arc<Peer>, Arc<Host>) {
+        let (plugin_end, host_end) = duplex(1 << 16);
+        tokio::spawn(async move {
+            let (reader, writer) = tokio::io::split(plugin_end);
+            serve_plugin(&Demo, reader, writer).await
+        });
+        let host = Arc::new(Host::default());
+        let (peer, io) = Peer::new(rpc::Limits::default());
+        let (running, handler) = (Arc::clone(&peer), Arc::clone(&host));
+        tokio::spawn(async move {
+            let (reader, writer) = tokio::io::split(host_end);
+            running.run(io, reader, writer, handler).await
+        });
+        (peer, host)
+    }
+
+    fn call_params(question: &str, token: Option<uuid::Uuid>) -> Value {
+        let mut params = json!({ "name": "demo_ask", "arguments": { "q": question } });
+        if let Some(token) = token {
+            let context = WireContext {
+                run: RunId::generate().as_uuid(),
+                public: false,
+                budget_usd_micros: 9,
+                call: token,
+            };
+            params["_meta"] = json!({ CONTEXT_META: context });
+        }
+        params
+    }
+
+    #[tokio::test]
+    async fn a_tool_reaches_the_host_with_its_calls_token() {
+        let (peer, host) = connect();
+        let listed = peer.request("tools/list", json!({}), None).await.unwrap();
+        assert_eq!(listed["tools"][0]["name"], "demo_ask");
+
+        let token = uuid::Uuid::new_v4();
+        *host.live.lock().unwrap() = Some(token.to_string());
+        let result = peer
+            .request("tools/call", call_params("hi", Some(token)), None)
+            .await
+            .unwrap();
+        assert_eq!(result["structuredContent"]["text"], "re: hi", "{result}");
+        assert_eq!(host.asked.lock().unwrap().as_slice(), ["hi"]);
+    }
+
+    #[tokio::test]
+    async fn a_call_the_host_didnt_send_gets_no_capability() {
+        let (peer, host) = connect();
+        // No context at all: the process refuses before asking the host.
+        let result = peer
+            .request("tools/call", call_params("hi", None), None)
+            .await
+            .unwrap();
+        assert_eq!(result["isError"], true, "{result}");
+        assert!(
+            result["content"][0]["text"]
+                .as_str()
+                .unwrap()
+                .contains("only a tool call from the host"),
+            "{result}"
+        );
+        // A token the host no longer honours: its refusal comes back as such.
+        let result = peer
+            .request(
+                "tools/call",
+                call_params("hi", Some(uuid::Uuid::new_v4())),
+                None,
+            )
+            .await
+            .unwrap();
+        assert_eq!(result["isError"], true, "{result}");
+        assert!(
+            result["content"][0]["text"]
+                .as_str()
+                .unwrap()
+                .starts_with("refused: not for a call"),
+            "{result}"
+        );
+        assert!(host.asked.lock().unwrap().is_empty());
+    }
 }

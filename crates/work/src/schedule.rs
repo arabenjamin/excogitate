@@ -32,6 +32,10 @@ fn yes() -> bool {
     true
 }
 
+/// The shortest catch-up window: twice the runtime's scheduler tick of five
+/// seconds, so every slot is seen at least once.
+pub const MIN_CATCH_UP_SECONDS: u32 = 10;
+
 /// When to enqueue a job, and which.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -39,7 +43,7 @@ pub struct Schedule {
     /// A cron expression, with an optional seconds field first.
     #[schemars(length(min = 1, max = 128))]
     pub cron: String,
-    /// The IANA time zone it's written in, such as `America/Detroit`. UTC if
+    /// The IANA time zone it's written in, such as `America/New_York`. UTC if
     /// left out.
     #[schemars(length(min = 1, max = 64))]
     pub timezone: Option<String>,
@@ -58,9 +62,10 @@ pub struct Schedule {
     #[schemars(range(min = 1, max = 10))]
     pub max_attempts: u32,
     /// How late a run may start after the runtime was down. An older run is
-    /// skipped.
+    /// skipped. At least [`MIN_CATCH_UP_SECONDS`], so a slot can't fall
+    /// between two of the scheduler's looks.
     #[serde(default = "hour")]
-    #[schemars(range(max = 604_800))]
+    #[schemars(range(min = MIN_CATCH_UP_SECONDS, max = 604_800))]
     pub catch_up_seconds: u32,
     /// Whether it runs.
     #[serde(default = "yes")]
@@ -140,7 +145,9 @@ impl Schedule {
             return Ok(None);
         };
         let slot = slot.with_timezone(&Utc);
-        let oldest = now - TimeDelta::seconds(i64::from(self.catch_up_seconds));
+        // One kept from before the minimum existed still gets a full tick.
+        let window = self.catch_up_seconds.max(MIN_CATCH_UP_SECONDS);
+        let oldest = now - TimeDelta::seconds(i64::from(window));
         Ok((slot >= oldest).then_some(slot))
     }
 }

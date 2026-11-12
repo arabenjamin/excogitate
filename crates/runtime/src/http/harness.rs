@@ -7,7 +7,7 @@ use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post, put};
 use axum::{Json, Router};
 use chrono::Utc;
-use harness::{Attempt, Change, Hold, Request};
+use harness::{Attempt, Change, Hold, Lesson, LessonStatus, Request};
 use protocol::Actor;
 use schemars::JsonSchema;
 use serde::Serialize;
@@ -165,6 +165,17 @@ pub struct ChangeList {
     pub has_more: bool,
 }
 
+/// One page of the lesson library, oldest first.
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+#[schemars(deny_unknown_fields)]
+pub struct LessonList {
+    /// The lessons.
+    #[schemars(length(max = MAX_LIMIT))]
+    pub items: Vec<Lesson>,
+    /// True if there are more past this page.
+    pub has_more: bool,
+}
+
 /// The agents the system leaves alone.
 #[derive(Debug, Clone, Serialize, JsonSchema)]
 #[schemars(deny_unknown_fields)]
@@ -238,10 +249,13 @@ async fn list_changes(
         .transpose()?;
     let status = params.get("status").map(String::as_str);
     if let Some(status) = status
-        && !matches!(status, "live" | "reverted" | "replaced")
+        && !matches!(
+            status,
+            "pending" | "abandoned" | "live" | "reverted" | "replaced"
+        )
     {
         return Err(ApiError::invalid(
-            "status must be live, reverted or replaced",
+            "status must be pending, abandoned, live, reverted or replaced",
         ));
     }
     let found = app
@@ -282,6 +296,31 @@ async fn revert(
     Ok(Json(ChangeView {
         id: id.to_string(),
         change,
+    }))
+}
+
+async fn list_lessons(
+    State(app): State<App>,
+    Query(params): Params,
+) -> Result<Json<LessonList>, ApiError> {
+    only(&params, &["agent", "status", "limit", "offset"])?;
+    let agent = params
+        .get("agent")
+        .map(|name| agent_name(name))
+        .transpose()?;
+    let status = match params.get("status").map(String::as_str) {
+        None => None,
+        Some("active") => Some(LessonStatus::Active),
+        Some("retired") => Some(LessonStatus::Retired),
+        Some(_) => return Err(ApiError::invalid("status must be active or retired")),
+    };
+    let found = app
+        .runtime
+        .lessons(agent, status, page_of(&params)?)
+        .await?;
+    Ok(Json(LessonList {
+        items: found.items,
+        has_more: found.has_more,
     }))
 }
 
@@ -330,6 +369,7 @@ pub(super) fn routes() -> Router<App> {
         .route("/api/v1/harness/changes", get(list_changes))
         .route("/api/v1/harness/changes/{id}", get(get_change))
         .route("/api/v1/harness/changes/{id}/revert", post(revert))
+        .route("/api/v1/harness/lessons", get(list_lessons))
         .route("/api/v1/harness/holds", get(list_holds))
         .route("/api/v1/harness/holds/{agent}", put(hold).delete(release))
 }
