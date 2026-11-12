@@ -356,6 +356,7 @@ async fn start_run(
         lease: None,
         last_error: None,
         result: None,
+        finished_at: None,
     };
     let enqueued = app
         .transport

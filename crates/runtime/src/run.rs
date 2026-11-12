@@ -439,7 +439,9 @@ pub async fn run_server(
             let _ = http_stop.wait_for(|stopping| *stopping).await;
         })
         .into_future();
-    let (served, (), (), ()) = tokio::join!(
+    let pruning =
+        crate::retention::keep_pruning(runtime.clone(), crate::retention::TICK, shutdown.clone());
+    let (served, (), (), (), ()) = tokio::join!(
         async move {
             // A client that won't hang up can't hold the process open.
             let grace = async {
@@ -453,6 +455,7 @@ pub async fn run_server(
         },
         worker.run(shutdown.clone()),
         scheduler.run(SCHEDULER_TICK, shutdown),
+        pruning,
         async {
             stop_signal().await;
             eprintln!("stopping");

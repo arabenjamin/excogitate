@@ -49,7 +49,8 @@ CREATE TABLE links (relation VARCHAR NOT NULL, from_id VARCHAR NOT NULL, to_id V
 /// migration.
 const SPEND_TABLE: &str = "CREATE TABLE IF NOT EXISTS spend (
     provider VARCHAR NOT NULL, day DATE NOT NULL, usd_micros UBIGINT NOT NULL);
-    ALTER TABLE jobs ADD COLUMN IF NOT EXISTS result VARCHAR;";
+    ALTER TABLE jobs ADD COLUMN IF NOT EXISTS result VARCHAR;
+    ALTER TABLE jobs ADD COLUMN IF NOT EXISTS finished_at TIMESTAMP;";
 
 fn quoted(text: &str) -> String {
     text.replace('\'', "''")

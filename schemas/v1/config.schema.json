@@ -305,6 +305,35 @@
         }
       ]
     },
+    "RetentionConfig": {
+      "additionalProperties": false,
+      "description": "How long what the runtime records is kept. The server prunes once an\nhour; `null` keeps that kind forever.",
+      "properties": {
+        "job_days": {
+          "default": 30,
+          "description": "Days a finished job is kept, counted from when it finished. At least\n8: a schedule may fire up to 7 days late, and its job is how it\nknows it already has.",
+          "format": "uint32",
+          "maximum": 36500,
+          "minimum": 8,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "trajectory_days": {
+          "default": 30,
+          "description": "Days a run's trajectory is kept, counted from its start. Trajectories\nhold private data. At least 8, so the week of runs Harness² reads is\nalways there.",
+          "format": "uint32",
+          "maximum": 36500,
+          "minimum": 8,
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
     "ServerConfig": {
       "additionalProperties": false,
       "description": "How the HTTP server behaves.",
@@ -441,6 +470,14 @@
       "maximum": 1.0,
       "minimum": 0.0,
       "type": "number"
+    },
+    "retention": {
+      "$ref": "#/$defs/RetentionConfig",
+      "default": {
+        "job_days": 30,
+        "trajectory_days": 30
+      },
+      "description": "How long what the runtime records is kept."
     },
     "server": {
       "$ref": "#/$defs/ServerConfig",

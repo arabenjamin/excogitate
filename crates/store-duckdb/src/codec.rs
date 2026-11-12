@@ -167,7 +167,7 @@ pub(crate) fn working_at(row: &Row<'_>) -> duckdb::Result<WorkingEntry> {
 }
 
 pub(crate) const JOB_COLUMNS: &str = "id, kind, payload, priority, status, requested_by, run_at, \
-     attempts, max_attempts, lease_worker, lease_until, last_error, result";
+     attempts, max_attempts, lease_worker, lease_until, last_error, result, finished_at";
 
 fn optional_json_at(row: &Row<'_>, index: usize) -> duckdb::Result<Option<Value>> {
     let text: Option<String> = row.get(index)?;
@@ -201,6 +201,7 @@ pub(crate) fn job_at(row: &Row<'_>) -> duckdb::Result<Job> {
             .map(|(worker, until)| Lease { worker, until }),
         last_error: row.get(11)?,
         result: optional_json_at(row, 12)?,
+        finished_at: row.get(13)?,
     })
 }
 

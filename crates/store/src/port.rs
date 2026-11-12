@@ -174,6 +174,16 @@ pub trait JobQueue {
         result: Option<Value>,
         retry_at: DateTime<Utc>,
     ) -> Result<(), StoreError>;
+
+    /// Deletes up to `limit` jobs that finished, succeeded or dead, before
+    /// `before`, oldest first, and says how many went. A job from before
+    /// finish times were kept counts as finished at its `run_at`. A queued
+    /// or claimed job is never pruned.
+    ///
+    /// # Errors
+    ///
+    /// [`StoreError::Backend`] if the store fails.
+    async fn prune_jobs(&self, before: DateTime<Utc>, limit: u32) -> Result<u32, StoreError>;
 }
 
 /// Reads agent and workflow definitions.

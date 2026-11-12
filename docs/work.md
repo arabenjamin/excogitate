@@ -10,7 +10,15 @@ stdio client can still [use it through `connect`](mcp.md#beside-the-server).
 
 A job has a kind, a payload, a priority and `requested_by`. It's queued,
 claimed, then succeeded or dead, and a dead job stays readable with
-`last_error`. A job's `result` is what it produced.
+`last_error`. A job's `result` is what it produced, and `finished_at` is when
+it succeeded or died.
+
+- **Finished jobs are pruned.** The server removes succeeded and dead jobs
+  `retention.job_days` after they finished: 30 by default, and `null` to keep
+  them. Never fewer than 8, because a schedule may fire up to 7 days late and
+  its job is how it knows it already has. An `idempotency_key` protects
+  against a repeat only while its job is kept. Queued and claimed jobs are
+  never pruned.
 
 - **The payload is checked** against its kind's schema before the handler runs.
 - **A job can't outlive its lease.** The handler is stopped at its time limit,

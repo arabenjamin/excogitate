@@ -91,8 +91,12 @@ trajectories, and a person can read one over [REST](api.md#runs).
 - **Long text is cut** at 16,000 characters and says so.
 - **A lost event doesn't stop the run.** The receipt counts it in
   `events_lost`.
-- **Trajectories hold private data,** the same as the run, and they're never
-  deleted yet. Retention is still to come.
+- **Trajectories hold private data,** the same as the run, so they aren't
+  kept forever. The server removes whole runs, every event and the index
+  entry together, `retention.trajectory_days` after they started: 30 by
+  default, at least 8 so the week of runs Harness² reads is always there,
+  and `null` to keep them. It sweeps at start and then hourly, and logs what
+  it removed and anything that failed.
 
 ## Testing against a hostile model
 

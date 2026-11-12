@@ -204,6 +204,7 @@ mod tests {
                 lease: None,
                 last_error: None,
                 result: None,
+                finished_at: None,
             }
         }
 

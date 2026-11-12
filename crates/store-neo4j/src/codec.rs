@@ -297,7 +297,7 @@ pub(crate) const JOB: &str = "j.id AS id, j.kind AS kind, j.payload AS payload, 
      j.priority AS priority, j.status AS status, j.requested_by AS requested_by, \
      j.run_at AS run_at, j.attempts AS attempts, j.max_attempts AS max_attempts, \
      j.lease_worker AS lease_worker, j.lease_until AS lease_until, \
-     j.last_error AS last_error, j.result AS result";
+     j.last_error AS last_error, j.result AS result, j.finished_at AS finished_at";
 
 pub(crate) fn job(row: &Row) -> Result<Job, StoreError> {
     let worker: Option<String> = get(row, "lease_worker")?;
@@ -317,6 +317,7 @@ pub(crate) fn job(row: &Row) -> Result<Job, StoreError> {
             .map(|(worker, until)| Lease { worker, until }),
         last_error: get(row, "last_error")?,
         result: optional_json(row, "result")?,
+        finished_at: optional_time(row, "finished_at")?,
     })
 }
 

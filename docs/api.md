@@ -74,7 +74,8 @@ parameters are refused.
 
 It answers 202 with `{"job_id", "already_existed"}`, once the workflow is known
 to exist and the inputs to fit. Send the same `idempotency_key` for the same
-workflow and it answers 200 with the first run's job, without starting another.
+workflow and it answers 200 with the first run's job, without starting another,
+for as long as that job is kept (`retention.job_days` after it finished).
 A run isn't retried, because that would repeat what its earlier steps did.
 
 ### Jobs

@@ -62,6 +62,8 @@ pub struct Config {
     pub server: ServerConfig,
     /// How Harness² improves agents.
     pub harness: HarnessConfig,
+    /// How long what the runtime records is kept.
+    pub retention: RetentionConfig,
 }
 
 /// How Harness² improves agents.
@@ -99,6 +101,32 @@ impl Default for HarnessConfig {
             time_limit_seconds: 1800,
             adopt: true,
             notify_url: None,
+        }
+    }
+}
+
+/// How long what the runtime records is kept. The server prunes once an
+/// hour; `null` keeps that kind forever.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields, default)]
+pub struct RetentionConfig {
+    /// Days a run's trajectory is kept, counted from its start. Trajectories
+    /// hold private data. At least 8, so the week of runs Harness² reads is
+    /// always there.
+    #[schemars(range(min = 8, max = 36_500))]
+    pub trajectory_days: Option<u32>,
+    /// Days a finished job is kept, counted from when it finished. At least
+    /// 8: a schedule may fire up to 7 days late, and its job is how it
+    /// knows it already has.
+    #[schemars(range(min = 8, max = 36_500))]
+    pub job_days: Option<u32>,
+}
+
+impl Default for RetentionConfig {
+    fn default() -> Self {
+        Self {
+            trajectory_days: Some(30),
+            job_days: Some(30),
         }
     }
 }
@@ -149,6 +177,7 @@ impl Default for Config {
             http: HttpConfig::default(),
             server: ServerConfig::default(),
             harness: HarnessConfig::default(),
+            retention: RetentionConfig::default(),
         }
     }
 }
@@ -220,5 +249,14 @@ mod tests {
     #[test]
     fn spending_is_off_unless_the_owner_turns_it_on() {
         assert_eq!(Config::default().budget.max_usd_micros, 0);
+    }
+
+    #[test]
+    fn retention_keeps_at_least_the_harness_week_or_forever() {
+        let config = Config::from_yaml("retention: {trajectory_days: null}").unwrap();
+        assert_eq!(config.retention.trajectory_days, None);
+        assert_eq!(config.retention.job_days, Some(30));
+        assert!(Config::from_yaml("retention: {job_days: 7}").is_err());
+        assert!(Config::from_yaml("retention: {trajectory_days: 8}").is_ok());
     }
 }

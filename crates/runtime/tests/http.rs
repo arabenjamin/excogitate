@@ -1338,6 +1338,7 @@ impl Running {
             lease: None,
             last_error: None,
             result: None,
+            finished_at: None,
         };
         self.store
             .apply(store::UnitOfWork::new().with(store::WriteOp::EnqueueJob(job)))

@@ -86,6 +86,7 @@ async fn start(
         lease: None,
         last_error: None,
         result: None,
+        finished_at: None,
     };
     app.transport
         .enqueue(job)

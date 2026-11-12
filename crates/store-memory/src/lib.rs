@@ -162,10 +162,11 @@ impl State {
             WriteOp::DeleteWorking { scope, key } => {
                 self.working.remove(&(scope, key));
             }
-            WriteOp::EnqueueJob(job) => {
+            WriteOp::EnqueueJob(mut job) => {
                 if self.jobs.contains_key(&job.id) {
                     return Err(StoreError::Conflict(format!("job {} exists", job.id)));
                 }
+                job.finished_at = None;
                 self.jobs.insert(job.id, job);
             }
             WriteOp::PutDefinition(definition) => {
@@ -255,6 +256,7 @@ impl State {
                 job.status = JobStatus::Dead;
                 job.lease = None;
                 job.last_error = Some("lease lapsed on the last attempt".to_owned());
+                job.finished_at = Some(now);
             }
         }
     }
@@ -496,6 +498,7 @@ impl JobQueue for MemoryStore {
         job.status = JobStatus::Succeeded;
         job.result = Some(result);
         job.lease = None;
+        job.finished_at = Some(Utc::now());
         Ok(())
     }
 
@@ -514,11 +517,29 @@ impl JobQueue for MemoryStore {
         job.result = result;
         if job.attempts >= job.max_attempts {
             job.status = JobStatus::Dead;
+            job.finished_at = Some(Utc::now());
         } else {
             job.status = JobStatus::Queued;
             job.run_at = retry_at;
         }
         Ok(())
+    }
+
+    async fn prune_jobs(&self, before: DateTime<Utc>, limit: u32) -> Result<u32, StoreError> {
+        let mut state = self.state();
+        let mut finished: Vec<(DateTime<Utc>, JobId)> = state
+            .jobs
+            .values()
+            .filter(|job| matches!(job.status, JobStatus::Succeeded | JobStatus::Dead))
+            .map(|job| (job.finished_at.unwrap_or(job.run_at), job.id))
+            .filter(|(at, _)| *at < before)
+            .collect();
+        finished.sort();
+        finished.truncate(usize::try_from(limit).unwrap_or(usize::MAX));
+        for (_, id) in &finished {
+            state.jobs.remove(id);
+        }
+        Ok(u32::try_from(finished.len()).unwrap_or(u32::MAX))
     }
 }
 

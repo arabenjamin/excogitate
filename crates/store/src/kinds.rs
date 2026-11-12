@@ -184,6 +184,9 @@ pub struct Job {
     pub last_error: Option<String>,
     /// What it produced, or what its last failed attempt left behind.
     pub result: Option<Value>,
+    /// When it succeeded or went dead, by the store's clock. Set by the
+    /// store; whatever a new job carries here is ignored.
+    pub finished_at: Option<DateTime<Utc>>,
 }
 
 /// What a definition defines.
