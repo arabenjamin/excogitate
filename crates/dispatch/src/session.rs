@@ -22,6 +22,7 @@ pub use converse::{ChatResult, Conversation};
 use plugin_api::CapabilityUse;
 
 use crate::StopSignal;
+use crate::guardrail::{Enforced, Guardrail};
 use crate::tool::Registered;
 use crate::trajectory::{RunSubject, Step};
 use crate::{
@@ -85,6 +86,9 @@ pub enum SessionError {
     /// A tool offered isn't registered, or too many were offered.
     #[error("invalid offer: {0}")]
     InvalidOffer(String),
+    /// A guardrail can't be enforced, or holds a tool not offered.
+    #[error("invalid guardrail: {0}")]
+    InvalidGuardrail(String),
 }
 
 /// Why a model call didn't produce an answer.
@@ -168,6 +172,10 @@ pub struct Session {
     start_recorded: bool,
     /// How many of the starting messages are on the trajectory already.
     messages_recorded: usize,
+    /// The agent's rules on its tools.
+    guardrails: Vec<Enforced>,
+    /// The skills its instructions include, for its trajectory.
+    skills: Vec<String>,
 }
 
 /// A refusal on its way back to the model.
@@ -175,6 +183,8 @@ struct Refused {
     kind: RefusalKind,
     detail: String,
     extra: Value,
+    /// The guardrail that refused it, if one did.
+    guardrail: Option<String>,
 }
 
 impl Session {
@@ -226,6 +236,8 @@ impl Session {
             by_harness: false,
             start_recorded: false,
             messages_recorded: 0,
+            guardrails: Vec::new(),
+            skills: Vec::new(),
         })
     }
 
@@ -260,6 +272,90 @@ impl Session {
     pub fn with_stop(mut self, stop: StopSignal) -> Self {
         self.stop = Some(stop);
         self
+    }
+
+    /// The same session, holding the agent's calls to `guardrails`.
+    ///
+    /// # Errors
+    ///
+    /// [`SessionError::InvalidGuardrail`] if one can't be enforced, or
+    /// holds a tool this run isn't offered.
+    pub fn with_guardrails(mut self, guardrails: Vec<Guardrail>) -> Result<Self, SessionError> {
+        let offered: Vec<String> = self.offered.iter().cloned().collect();
+        crate::check_guardrails(&guardrails, &offered).map_err(SessionError::InvalidGuardrail)?;
+        self.guardrails = guardrails
+            .into_iter()
+            .map(Enforced::new)
+            .collect::<Result<_, _>>()
+            .map_err(SessionError::InvalidGuardrail)?;
+        Ok(self)
+    }
+
+    /// The same session, its trajectory saying which skills its
+    /// instructions include.
+    #[must_use]
+    pub fn with_skills(mut self, skills: Vec<String>) -> Self {
+        self.skills = skills;
+        self
+    }
+
+    /// Why a guardrail refuses this call, if one does. Only the agent's own
+    /// calls are held to them.
+    fn guardrail_refusal(&self, tool: &str, arguments: &Value) -> Option<Refused> {
+        if self.by_harness {
+            return None;
+        }
+        self.guardrails
+            .iter()
+            .filter(|enforced| enforced.rule.tool == tool)
+            .find_map(|enforced| {
+                enforced.breaks(arguments).map(|(detail, limit)| Refused {
+                    kind: if limit {
+                        RefusalKind::Budget
+                    } else {
+                        RefusalKind::ArgumentsInvalid
+                    },
+                    detail,
+                    extra: json!({ "guardrail": enforced.rule.name }),
+                    guardrail: Some(enforced.rule.name.clone()),
+                })
+            })
+    }
+
+    /// Counts a call that passed its checks, and whether it ran, against
+    /// the guardrails on its tool.
+    fn guardrails_saw(&mut self, tool: &str, ran: bool, counted: bool) {
+        if self.by_harness {
+            return;
+        }
+        for enforced in self
+            .guardrails
+            .iter_mut()
+            .filter(|enforced| enforced.rule.tool == tool)
+        {
+            if counted {
+                enforced.calls = enforced.calls.saturating_add(1);
+            }
+            enforced.ran |= ran;
+        }
+    }
+
+    /// The reminder for a required guardrail whose tool hasn't run, once
+    /// each, if there's room for the agent to act on it: a round to call
+    /// the tool, one to answer, and a tool call.
+    pub(crate) fn reminder(&mut self) -> Option<String> {
+        let budget = self.config.budget;
+        let room = self.totals.rounds.saturating_add(2) <= budget.max_rounds
+            && self.totals.tool_calls < budget.max_tool_calls;
+        if !room {
+            return None;
+        }
+        let enforced = self
+            .guardrails
+            .iter_mut()
+            .find(|enforced| enforced.rule.required && !enforced.ran && !enforced.reminded)?;
+        enforced.reminded = true;
+        Some(enforced.reminder())
     }
 
     fn stopping(&self) -> bool {
@@ -336,6 +432,7 @@ impl Session {
                 purpose: self.config.purpose.clone(),
                 offered: self.offered.iter().cloned().collect(),
                 budget: self.config.budget,
+                skills: self.skills.clone(),
             }));
         }
         let count = u32::try_from(events.len() + 1).unwrap_or(u32::MAX);
@@ -564,6 +661,9 @@ impl Session {
             }
         };
         let effect = registered.tool.effect_of(&arguments);
+        if let Some(refused) = self.guardrail_refusal(&name, &arguments) {
+            return self.refuse(call, name, Some(effect), refused).await;
+        }
         if effect == crate::Effect::Write {
             if self.totals.writes >= self.config.budget.max_writes {
                 let kind = self.mark_hit(BudgetKind::Writes);
@@ -571,11 +671,13 @@ impl Session {
                     kind: RefusalKind::Budget,
                     detail: "the run's write budget is used up".to_owned(),
                     extra: json!({ "budget": kind }),
+                    guardrail: None,
                 };
                 return self.refuse(call, name, Some(effect), refused).await;
             }
             self.totals.writes += 1;
         }
+        self.guardrails_saw(&name, false, true);
         if let Some(probe) = &self.config.probe
             && !probe.nested.contains(&name)
             && (effect == crate::Effect::Write || !probe.reads.contains(&name))
@@ -588,6 +690,8 @@ impl Session {
 
     /// A probe's call that doesn't run: it's recorded, and the model is told.
     async fn stub(&mut self, call: &ToolCall, name: String, effect: crate::Effect) -> ToolReply {
+        // In a probe, a stub stands for the call running.
+        self.guardrails_saw(&name, true, false);
         let index = self.call_index();
         self.tool_calls.push(ToolEntry {
             tool: name.clone(),
@@ -601,6 +705,7 @@ impl Session {
             cost_usd_micros: 0,
             capability_calls: 0,
             detail: None,
+            guardrail: None,
         });
         let content = json!({ "stubbed": true, "detail": STUB_REPLY }).to_string();
         self.emit(Step::Tool {
@@ -630,18 +735,21 @@ impl Session {
                 kind: RefusalKind::NotOffered,
                 detail: "that tool isn't available in this run".to_owned(),
                 extra: json!({ "available": self.offered }),
+                guardrail: None,
             })?;
         if call.arguments.len() > MAX_ARGUMENT_BYTES {
             return Err(Refused {
                 kind: RefusalKind::ArgumentsTooLarge,
                 detail: format!("arguments are limited to {MAX_ARGUMENT_BYTES} bytes"),
                 extra: json!({}),
+                guardrail: None,
             });
         }
         let arguments = parse_arguments(&call.arguments).map_err(|error| Refused {
             kind: RefusalKind::ArgumentsNotJson,
             detail: error,
             extra: json!({}),
+            guardrail: None,
         })?;
         registered
             .input
@@ -650,6 +758,7 @@ impl Session {
                 kind: RefusalKind::ArgumentsInvalid,
                 detail: "the arguments don't meet the tool's schema".to_owned(),
                 extra: problems_json(&refusal),
+                guardrail: None,
             })?;
         Ok((registered, arguments))
     }
@@ -675,6 +784,7 @@ impl Session {
             cost_usd_micros: 0,
             capability_calls: 0,
             detail: Some(detail.clone()),
+            guardrail: refused.guardrail.clone(),
         });
         self.emit(Step::Tool {
             index,
@@ -784,6 +894,7 @@ impl Session {
             abort.abort();
         }
         let finished = self.finished(joined, registered);
+        self.guardrails_saw(&name, finished.status == CallStatus::Ran, false);
         // What it spent counts whether or not it worked, and each call a
         // plugin made through a capability counts as a tool call.
         self.totals.cost_usd_micros = self
@@ -805,6 +916,7 @@ impl Session {
             cost_usd_micros: finished.cost_usd_micros,
             capability_calls,
             detail: finished.detail,
+            guardrail: None,
         });
         self.emit(Step::Tool {
             index,
@@ -852,6 +964,12 @@ impl Session {
             (None, claimed) => claimed,
         };
         self.totals.duration_ms = millis(self.started.elapsed());
+        let guardrails_unmet = self
+            .guardrails
+            .iter()
+            .filter(|enforced| enforced.rule.required && !enforced.ran)
+            .map(|enforced| enforced.rule.name.clone())
+            .collect();
         self.emit(Step::Ended {
             outcome,
             budget_hit: self.hit,
@@ -868,6 +986,7 @@ impl Session {
             calls_not_recorded: self.calls_not_recorded,
             events_lost: self.events_lost,
             totals: self.totals,
+            guardrails_unmet,
         }
     }
 }

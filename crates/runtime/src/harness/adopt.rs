@@ -368,10 +368,7 @@ impl Runtime {
         } = making;
         let name = &attempt.request.agent;
         let root = root.to_path_buf();
-        let edited = Agent {
-            system_prompt: candidate.system_prompt.clone(),
-            ..agent.clone()
-        };
+        let edited = candidate.agent(agent);
         let to_harness = self.workflows.agent_harness(&edited);
         let change_id = RecordId::generate();
         let path = agent_file(&root, name);

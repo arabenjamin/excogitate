@@ -31,6 +31,10 @@ schemas, budgets, and memory. Excogitate is that harness.
   run, tries candidate changes with side effects stubbed, compares the
   runs, and adopts only the changes the evidence supports. It tells you of
   each one, and you can revert any of them.
+- **An agent's rules are kept in code, not hoped for.** A guardrail refuses
+  a call the agent mustn't make, caps a tool, or sends an answer back until
+  a required tool has run. A skill adds instructions only to the tasks that
+  match it, so a small model's prompt stays small.
 - **It needs no database server.** Memory, retrieval and the job queue live
   in an embedded DuckDB file. Other stores plug in behind the same port,
   and a [Neo4j store](docs/store.md#the-neo4j-store) comes with it, behind a

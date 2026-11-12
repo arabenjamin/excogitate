@@ -12,13 +12,16 @@ In order, and the first failure ends it:
    wasn't offered is refused the same as one that doesn't exist.
 3. **Size and form.** Arguments are capped, then parsed.
 4. **Schema.** They must meet the tool's input schema; unknown keys are refused.
-5. **Write budget**, if the tool writes.
-6. **Probe.** In a [Harness² probe](harness.md#probes), a write, or a read
+5. **Guardrails.** An agent's [guardrails](workflows.md#guardrails) on the
+   tool: a denied argument, or a call past its `max_calls`. The receipt
+   names the guardrail.
+6. **Write budget**, if the tool writes.
+7. **Probe.** In a [Harness² probe](harness.md#probes), a write, or a read
    that isn't allowed, stops here as `stubbed`. The model is told it would
    have run.
-7. **Run**, in its own task, so a panic can't take the run with it, and
+8. **Run**, in its own task, so a panic can't take the run with it, and
    within the run's time limit.
-8. **Output.** The result must meet the tool's output schema. Then it's cut
+9. **Output.** The result must meet the tool's output schema. Then it's cut
    to `max_result_chars` if needed, and says so.
 
 The model always gets a JSON reply it can act on: the result, a refusal with
@@ -80,7 +83,9 @@ trajectories, and a person can read one over [REST](api.md#runs).
 
 - **A harness id** is a hash of what decides how a run behaves. For a chat,
   that's Excogitate's prompt, tools, budget and recall settings. For an agent,
-  it's its instructions, tools and own limits. A client's own system message
+  it's its instructions, tools, own limits, skills and guardrails (the last
+  two only when it has any, so an agent's id didn't change when they were
+  added). A client's own system message
   is input, so it's not part of the id. Two runs with the same id ran under the
   same harness.
 - **What ran** is `chat`, `agent:<name>`, `tool:<name>`, or `probe:<name>` for

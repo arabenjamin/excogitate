@@ -32,6 +32,27 @@ pub struct ProbeRun {
 }
 
 impl Engine {
+    /// Checks an agent as it would be checked to run: its schema, its
+    /// tools, its skills and its guardrails.
+    ///
+    /// # Errors
+    ///
+    /// What's wrong with it, in a sentence.
+    pub fn check_candidate(&self, candidate: &Agent) -> Result<(), String> {
+        let raw = serde_json::to_value(candidate).map_err(|error| bounded(&error.to_string()))?;
+        Validator::for_type::<Agent>()
+            .map_err(|error| bounded(&error.to_string()))?
+            .check(&raw)
+            .map_err(|refusal| bounded(&format!("the candidate: {refusal}")))?;
+        let tools: BTreeMap<_, _> = self
+            .registry
+            .definitions()
+            .into_iter()
+            .map(|definition| (definition.name.clone(), definition))
+            .collect();
+        check_agent(candidate, &tools)
+    }
+
     /// Runs `candidate` as the agent `name` on `task`. Every call is checked as
     /// usual. Writes never run, and reads run only if they're in `reads`. The
     /// trajectory is recorded as `probe:<name>`, apart from the agent's real
@@ -48,18 +69,7 @@ impl Engine {
         task: &str,
         reads: BTreeSet<String>,
     ) -> Result<ProbeRun, String> {
-        let raw = serde_json::to_value(candidate).map_err(|error| bounded(&error.to_string()))?;
-        Validator::for_type::<Agent>()
-            .map_err(|error| bounded(&error.to_string()))?
-            .check(&raw)
-            .map_err(|refusal| bounded(&format!("the candidate: {refusal}")))?;
-        let tools: BTreeMap<_, _> = self
-            .registry
-            .definitions()
-            .into_iter()
-            .map(|definition| (definition.name.clone(), definition))
-            .collect();
-        check_agent(candidate, &tools)?;
+        self.check_candidate(candidate)?;
         let own = candidate.budget.unwrap_or(self.limits.agent_budget);
         let left = Left {
             money: own.max_usd_micros,

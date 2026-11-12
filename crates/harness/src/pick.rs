@@ -163,6 +163,7 @@ mod tests {
                     max_request_bytes: 10,
                     max_duration_ms: 10,
                 },
+                skills: vec![],
             }),
             timed(Step::Message {
                 role: Speaker::User,

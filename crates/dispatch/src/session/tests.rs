@@ -1416,3 +1416,161 @@ async fn a_harness_search_before_the_first_round_comes_after_the_task() {
         ]
     );
 }
+
+fn guardrail(value: &Value) -> crate::Guardrail {
+    serde_json::from_value(value.clone()).unwrap()
+}
+
+fn guarded(tool: &Arc<Fixture>, rule: &Value) -> Session {
+    session_with(std::slice::from_ref(tool), &["reader"], budget())
+        .with_guardrails(vec![guardrail(rule)])
+        .unwrap()
+}
+
+#[tokio::test]
+async fn a_guardrail_refuses_a_denied_argument_and_is_named() {
+    let tool = Fixture::new("reader", Effect::Read, Behavior::Good);
+    let rule = json!({
+        "name": "no_bad", "tool": "reader", "because": "Bad is never read.",
+        "deny": { "argument": "text", "matches": "^bad$" }
+    });
+    let mut session = guarded(&tool, &rule);
+    let reply = session.dispatch(&call("reader", r#"{"text":"BAD"}"#)).await;
+    assert_eq!(reply.status, CallStatus::Refused);
+    let body = parsed(&reply);
+    assert!(body.to_string().contains("Bad is never read."), "{body}");
+    assert_eq!(body["info"]["guardrail"], "no_bad");
+    let ok = session.dispatch(&call("reader", GOOD_ARGS)).await;
+    assert_eq!(ok.status, CallStatus::Ran);
+    assert_eq!(tool.run_count(), 1);
+    let receipt = session.finish(Outcome::Answered).await;
+    let refused = &receipt.tool_calls[0];
+    assert_eq!(refused.refusal, Some(RefusalKind::ArgumentsInvalid));
+    assert_eq!(refused.guardrail.as_deref(), Some("no_bad"));
+    assert_eq!(receipt.tool_calls[1].guardrail, None);
+}
+
+#[tokio::test]
+async fn a_guardrail_caps_calls_without_ending_the_run() {
+    let tool = Fixture::new("reader", Effect::Read, Behavior::Good);
+    let rule = json!({
+        "name": "once", "tool": "reader", "because": "One read is enough.", "max_calls": 1
+    });
+    let mut session = guarded(&tool, &rule);
+    assert_eq!(
+        session.dispatch(&call("reader", GOOD_ARGS)).await.status,
+        CallStatus::Ran
+    );
+    let second = session.dispatch(&call("reader", GOOD_ARGS)).await;
+    assert_eq!(second.status, CallStatus::Refused);
+    assert_eq!(tool.run_count(), 1);
+    let receipt = session.finish(Outcome::Answered).await;
+    assert_eq!(receipt.tool_calls[1].refusal, Some(RefusalKind::Budget));
+    assert_eq!(receipt.budget_hit, None);
+}
+
+#[tokio::test]
+async fn a_guardrail_on_a_tool_not_offered_is_refused() {
+    let tool = Fixture::new("reader", Effect::Read, Behavior::Good);
+    let rule = json!({ "name": "r", "tool": "other", "because": "b", "required": true });
+    let refused = session_with(std::slice::from_ref(&tool), &["reader"], budget())
+        .with_guardrails(vec![guardrail(&rule)])
+        .unwrap_err();
+    assert!(matches!(refused, SessionError::InvalidGuardrail(_)));
+}
+
+async fn converse_guarded(client: Arc<Scripted>, tool: &Arc<Fixture>) -> ChatResult {
+    let catalog = Catalog::from_yaml(FREE, |_| None).unwrap();
+    let gateway = Gateway::new(catalog, client, Arc::new(MemoryLedger::new()));
+    let rule = json!({
+        "name": "read_first", "tool": "reader", "because": "Check before you say.",
+        "required": true
+    });
+    guarded(tool, &rule)
+        .converse(
+            &gateway,
+            Conversation {
+                messages: vec![Message::user("hello")],
+                max_output_tokens: 400,
+                temperature: None,
+            },
+        )
+        .await
+}
+
+#[tokio::test]
+async fn an_answer_before_a_required_call_goes_back_once() {
+    let tool = Fixture::new("reader", Effect::Read, Behavior::Good);
+    let client = Scripted::new(vec![
+        says("guessing", FinishReason::Stop),
+        calls("reader"),
+        says("checked", FinishReason::Stop),
+    ]);
+    let result = converse_guarded(Arc::clone(&client), &tool).await;
+    assert_eq!(result.answer.as_deref(), Some("checked"));
+    assert_eq!(result.receipt.outcome, Outcome::Answered);
+    assert_eq!(result.receipt.guardrails_unmet, Vec::<String>::new());
+    let seen = client.seen.lock().unwrap();
+    let reminder = &seen[1].messages.last().unwrap().content;
+    assert!(reminder.contains("[guardrail read_first]") && reminder.contains("reader"));
+}
+
+#[tokio::test]
+async fn a_second_answer_without_the_call_stands_and_says_so() {
+    let tool = Fixture::new("reader", Effect::Read, Behavior::Good);
+    let client = Scripted::new(vec![
+        says("guessing", FinishReason::Stop),
+        says("still guessing", FinishReason::Stop),
+    ]);
+    let result = converse_guarded(Arc::clone(&client), &tool).await;
+    assert_eq!(result.answer.as_deref(), Some("still guessing"));
+    assert_eq!(result.receipt.outcome, Outcome::Answered);
+    assert_eq!(result.receipt.guardrails_unmet, ["read_first"]);
+    assert_eq!(client.seen.lock().unwrap().len(), 2);
+}
+
+#[tokio::test]
+async fn a_call_the_harness_makes_doesnt_meet_a_guardrail() {
+    let tool = Fixture::new("reader", Effect::Read, Behavior::Good);
+    let rule = json!({
+        "name": "read_first", "tool": "reader", "because": "b", "required": true, "max_calls": 1
+    });
+    let mut session = guarded(&tool, &rule);
+    session
+        .dispatch_for_harness(&call("reader", GOOD_ARGS))
+        .await;
+    // The harness's call isn't counted against the agent's limit either.
+    assert_eq!(
+        session.dispatch(&call("reader", GOOD_ARGS)).await.status,
+        CallStatus::Ran
+    );
+    let receipt = session.finish(Outcome::Answered).await;
+    assert_eq!(receipt.guardrails_unmet, Vec::<String>::new());
+    let mut alone = guarded(&tool, &rule);
+    alone.dispatch_for_harness(&call("reader", GOOD_ARGS)).await;
+    assert_eq!(
+        alone.finish(Outcome::Answered).await.guardrails_unmet,
+        ["read_first"]
+    );
+}
+
+#[tokio::test]
+async fn the_start_step_names_the_skills() {
+    let sink = Arc::new(MemorySink::new());
+    let run = RunId::generate();
+    let mut config = config(&[], budget());
+    config.run = run;
+    let mut session = Session::new(Arc::new(ToolRegistry::new()), sink.clone(), config)
+        .unwrap()
+        .with_skills(vec!["citing".to_owned()]);
+    session.begin(&[Message::user("hi")]).await;
+    session.finish(Outcome::Refused).await;
+    let trajectory = crate::read_trajectory(sink.as_ref(), run, 10)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(matches!(
+        &trajectory.steps[0].step,
+        crate::Step::Started { skills, .. } if skills == &["citing"]
+    ));
+}

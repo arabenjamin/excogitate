@@ -2,13 +2,14 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use dispatch::Budget;
+use dispatch::{Budget, Guardrail, check_guardrails};
 use plugin_api::ToolDefinition;
 use schema::{Validator, bounded, check_strict};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+use crate::skill::{Skill, check_skills};
 use crate::template::references;
 
 /// A sub-agent: a chat with its own instructions and tools.
@@ -37,6 +38,14 @@ pub struct Agent {
     /// What its memory reads. Left out, every source the plugins offer.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub memory: Option<AgentMemory>,
+    /// Instructions for some tasks, added when the task matches.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[schemars(length(max = 16))]
+    pub skills: Vec<Skill>,
+    /// Rules on its tools, enforced as it calls them.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[schemars(length(max = 16))]
+    pub guardrails: Vec<Guardrail>,
 }
 
 /// What an agent's memory reads, beside the store.
@@ -166,10 +175,11 @@ pub struct Workflow {
 ///
 /// What's wrong, in a sentence.
 pub fn check_agent(agent: &Agent, tools: &BTreeMap<String, ToolDefinition>) -> Result<(), String> {
-    match agent.tools.iter().find(|name| !tools.contains_key(*name)) {
-        Some(missing) => Err(format!("there is no tool {missing}")),
-        None => Ok(()),
+    if let Some(missing) = agent.tools.iter().find(|name| !tools.contains_key(*name)) {
+        return Err(format!("there is no tool {missing}"));
     }
+    check_skills(&agent.skills)?;
+    check_guardrails(&agent.guardrails, &agent.tools)
 }
 
 /// Checks that the sources an agent's memory names exist.

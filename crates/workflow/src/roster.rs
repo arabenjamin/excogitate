@@ -7,7 +7,16 @@ use std::fmt::Write as _;
 use store::{DefinitionKind, PageRequest};
 
 use crate::engine::Engine;
-use crate::{Agent, DELEGATE_TOOL};
+use crate::{Agent, DELEGATE_TOOL, with_skills};
+
+/// What an agent runs with on one task.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Instructions {
+    /// Its instructions, with the skills that apply and its roster.
+    pub text: String,
+    /// The skills included, by name.
+    pub skills: Vec<String>,
+}
 
 /// The most agents listed.
 pub const ROSTER_LIMIT: u32 = 100;
@@ -63,19 +72,24 @@ impl Engine {
         Ok(roster_text(&lines, listed.has_more))
     }
 
-    /// The instructions agent `name` runs with: its own, and the roster if
-    /// it can delegate.
+    /// The instructions agent `name` runs with on `task`: its own, the
+    /// skills that apply, and the roster if it can delegate.
     ///
     /// # Errors
     ///
     /// Says why, if the roster can't be read.
-    pub async fn instructions(&self, name: &str, agent: &Agent) -> Result<String, String> {
-        let mut instructions = agent.system_prompt.clone();
+    pub async fn instructions(
+        &self,
+        name: &str,
+        agent: &Agent,
+        task: &str,
+    ) -> Result<Instructions, String> {
+        let (mut text, skills) = with_skills(&agent.system_prompt, &agent.skills, task);
         if agent.tools.iter().any(|tool| tool == DELEGATE_TOOL) {
-            instructions.push_str("\n\n");
-            instructions.push_str(&self.roster(name).await?);
+            text.push_str("\n\n");
+            text.push_str(&self.roster(name).await?);
         }
-        Ok(instructions)
+        Ok(Instructions { text, skills })
     }
 }
 

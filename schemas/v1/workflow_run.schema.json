@@ -254,6 +254,15 @@
           "minimum": 0,
           "type": "integer"
         },
+        "guardrails_unmet": {
+          "description": "Required guardrails whose tool never ran for the agent, so an answer\nit gave came without it.",
+          "items": {
+            "maxLength": 64,
+            "type": "string"
+          },
+          "maxItems": 16,
+          "type": "array"
+        },
         "model_calls": {
           "description": "Every model call.",
           "items": {
@@ -454,6 +463,14 @@
             }
           ],
           "description": "What the tool can do, when the tool exists."
+        },
+        "guardrail": {
+          "description": "The guardrail that refused it, if one did. Its refusal is\n`arguments_invalid` for an argument it denies and `budget` for a call\npast its limit.",
+          "maxLength": 64,
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "refusal": {
           "anyOf": [

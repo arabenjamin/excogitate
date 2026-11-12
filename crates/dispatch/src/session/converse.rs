@@ -5,7 +5,7 @@ use model::{ChatRequest, FinishReason, Gateway, Message};
 use schema::bounded;
 
 use super::{ModelStop, Session, event_text};
-use crate::trajectory::Step;
+use crate::trajectory::{Speaker, Step};
 use crate::{BudgetKind, Outcome, Receipt};
 
 /// What a run is asked to do.
@@ -91,6 +91,20 @@ impl Session {
             };
             let response = completion.response;
             if response.tool_calls.is_empty() {
+                // An answer before a required tool ran goes back once.
+                if !response.content.trim().is_empty()
+                    && let Some(reminder) = self.reminder()
+                {
+                    messages.push(Message::assistant(response.content));
+                    self.emit(Step::Message {
+                        role: Speaker::User,
+                        content: event_text(&reminder),
+                        tool_calls: Vec::new(),
+                    })
+                    .await;
+                    messages.push(Message::user(reminder));
+                    continue;
+                }
                 return self.final_reply(response.content, response.finish);
             }
             let mut assistant = Message::assistant(response.content);

@@ -671,13 +671,23 @@ impl Engine {
     /// what this run got.
     #[must_use]
     pub fn agent_harness(&self, agent: &Agent) -> String {
-        harness_id(&json!({
+        let mut parts = json!({
             "system_prompt": agent.system_prompt,
             "tools": agent.tools,
             "budget": agent.budget.unwrap_or(self.limits.agent_budget),
             "max_output_tokens": self.output_tokens(agent),
             "result_chars": self.limits.agent_result_chars,
-        }))
+        });
+        // Only when there are any, so an agent without them keeps its id.
+        if let Some(parts) = parts.as_object_mut() {
+            if !agent.skills.is_empty() {
+                parts.insert("skills".to_owned(), json!(agent.skills));
+            }
+            if !agent.guardrails.is_empty() {
+                parts.insert("guardrails".to_owned(), json!(agent.guardrails));
+            }
+        }
+        harness_id(&parts)
     }
 
     fn output_tokens(&self, agent: &Agent) -> u32 {
@@ -697,26 +707,30 @@ impl Engine {
         left: Left,
         probe: Option<Probe>,
     ) -> Result<ChatResult, String> {
-        let instructions = self.instructions(name, agent).await?;
+        let instructions = self.instructions(name, agent, &question).await?;
         let own = agent.budget.unwrap_or(self.limits.agent_budget);
         let subject = RunSubject {
             agent: subject.to_owned(),
             harness: self.agent_harness(agent),
         };
-        let session = self.session(
-            agent.tools.clone(),
-            left.clip(own),
-            self.limits.agent_result_chars,
-            subject,
-            probe,
-        )?;
+        let session = self
+            .session(
+                agent.tools.clone(),
+                left.clip(own),
+                self.limits.agent_result_chars,
+                subject,
+                probe,
+            )?
+            .with_skills(instructions.skills)
+            .with_guardrails(agent.guardrails.clone())
+            .map_err(|error| bounded(&error.to_string()))?;
         // Held while it runs: its memory reads only the sources it names.
         let _chosen = self.choose_sources(session.run(), agent);
         Ok(session
             .converse(
                 &self.gateway,
                 Conversation {
-                    messages: vec![Message::system(instructions), Message::user(question)],
+                    messages: vec![Message::system(instructions.text), Message::user(question)],
                     max_output_tokens: self.output_tokens(agent),
                     temperature: None,
                 },

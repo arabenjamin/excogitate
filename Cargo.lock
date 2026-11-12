@@ -837,6 +837,7 @@ dependencies = [
  "plugin-api",
  "proptest",
  "protocol",
+ "regex",
  "schema",
  "schemars",
  "serde",

@@ -276,6 +276,15 @@
               "maxLength": 128,
               "type": "string"
             },
+            "skills": {
+              "description": "The skills its instructions include.",
+              "items": {
+                "maxLength": 64,
+                "type": "string"
+              },
+              "maxItems": 16,
+              "type": "array"
+            },
             "type": {
               "const": "started",
               "type": "string"
@@ -293,7 +302,7 @@
         },
         {
           "additionalProperties": false,
-          "description": "A message the model was given at the start, such as its instructions or\nthe question.",
+          "description": "A message the model was given: at the start, such as its instructions\nor the question, or later by the harness, such as a guardrail's\nreminder.",
           "properties": {
             "content": {
               "description": "Its text, cut if long.",

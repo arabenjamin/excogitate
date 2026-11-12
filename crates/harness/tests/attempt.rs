@@ -65,6 +65,14 @@ struct Setup {
 }
 
 async fn setup(script: Vec<ChaosStep>) -> Setup {
+    setup_agent(
+        json!({ "system_prompt": "You help.", "tools": ["look"] }),
+        script,
+    )
+    .await
+}
+
+async fn setup_agent(body: Value, script: Vec<ChaosStep>) -> Setup {
     let server = ChaosServer::start(script).await.unwrap();
     let yaml = format!(
         "version: 1\nproviders:\n  - {{name: c, base_url: '{}', no_log: true, timeout_secs: 10}}\n\
@@ -87,7 +95,7 @@ async fn setup(script: Vec<ChaosStep>) -> Setup {
             kind: DefinitionKind::Agent,
             name: "helper".to_owned(),
         },
-        body: json!({ "system_prompt": "You help.", "tools": ["look"] }),
+        body,
         source: "test".to_owned(),
         updated_at: Utc::now(),
     };
@@ -684,4 +692,99 @@ async fn the_editor_is_shown_the_active_lessons_that_fit() {
     // The agent's own lesson first; another agent's that shares the task's
     // words after it; a retired one never.
     assert_eq!(attempt.lessons_shown, ["fits", "elsewhere"]);
+}
+
+fn look_first_rule() -> Value {
+    json!({ "name": "look_first", "tool": "look", "because": "The answers are in look.",
+            "required": true })
+}
+
+#[tokio::test]
+async fn an_edit_may_add_a_guardrail_and_the_probe_runs_under_it() {
+    let draft = text(&json!({
+        "invariant": { "system_prompt": "You help.", "change": "Make it look first.",
+                       "cites": cite_reference(), "guardrails": [look_first_rule()] },
+        "domain": { "system_prompt": "You help.", "change": "Nothing.", "cites": [] }
+    }));
+    // A0 started, A1 instructions, A2 task, A3 the guess, A4 the reminder,
+    // A5 the call, A6 the look, A7 the answer, A8 the end.
+    let setup = setup(vec![
+        say("I don't know."),
+        draft,
+        say("I don't know."),
+        look(),
+        say("The answer is 42."),
+        composer(
+            &json!([{ "candidate": "A", "effect": "mitigated",
+                      "cite": { "run": "A", "step": 7, "quote": "The answer is 42." } }]),
+            "adopt",
+            Some("A"),
+        ),
+    ])
+    .await;
+    let attempt = attempt(&setup).await;
+    assert_eq!(attempt.status, Status::Supported, "{attempt:#?}");
+    let chosen = attempt.supported().unwrap();
+    assert_eq!(chosen.guardrails.len(), 1);
+    assert_eq!(chosen.skills, vec![]);
+    assert_eq!(setup.look.0.load(Ordering::SeqCst), 1);
+    let base = setup.engine.agent("helper").await.unwrap().unwrap();
+    let edited = chosen.agent(&base);
+    assert_eq!(edited.guardrails[0].name, "look_first");
+    assert_ne!(
+        setup.engine.agent_harness(&edited),
+        setup.engine.agent_harness(&base)
+    );
+}
+
+#[tokio::test]
+async fn an_edit_that_drops_a_guardrail_is_never_run() {
+    let body = json!({ "system_prompt": "You help.", "tools": ["look"],
+                       "guardrails": [look_first_rule()] });
+    let draft = text(&json!({
+        "invariant": { "system_prompt": LOOK_FIRST, "change": "Prose instead.",
+                       "cites": cite_reference(), "guardrails": [] },
+        "domain": { "system_prompt": "You help.", "change": "Nothing.", "cites": [] }
+    }));
+    // The reference is reminded, looks, and answers.
+    let setup = setup_agent(
+        body,
+        vec![
+            say("I don't know."),
+            look(),
+            say("The answer is 42."),
+            draft,
+        ],
+    )
+    .await;
+    let attempt = attempt(&setup).await;
+    assert_eq!(attempt.status, Status::Kept, "{attempt:#?}");
+    assert!(
+        attempt.candidates[0]
+            .refused
+            .as_deref()
+            .unwrap()
+            .contains("removes or changes the guardrail look_first")
+    );
+    assert!(attempt.candidates.iter().all(|c| c.probe.is_none()));
+}
+
+#[tokio::test]
+async fn a_skill_that_wont_compile_is_never_run() {
+    let draft = text(&json!({
+        "invariant": { "system_prompt": "You help.", "change": "A skill.",
+                       "cites": cite_reference(),
+                       "skills": [{ "name": "s", "when": "(", "instructions": "Look." }] },
+        "domain": { "system_prompt": "You help.", "change": "Nothing.", "cites": [] }
+    }));
+    let setup = setup(vec![say("I don't know."), draft]).await;
+    let attempt = attempt(&setup).await;
+    assert!(
+        attempt.candidates[0]
+            .refused
+            .as_deref()
+            .unwrap()
+            .contains("the skill s"),
+        "{attempt:#?}"
+    );
 }
