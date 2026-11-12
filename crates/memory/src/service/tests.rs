@@ -57,6 +57,7 @@ impl Embedder for Fake {
             return Err(EmbedError {
                 message: "too long".to_owned(),
                 try_shorter: true,
+                cost_usd_micros: 0,
             });
         }
         Ok(Embedding {
@@ -222,6 +223,7 @@ impl Embedder for Metered {
             return Err(EmbedError {
                 message: "one at a time".to_owned(),
                 try_shorter: true,
+                cost_usd_micros: 0,
             });
         }
         Ok(Embedding {
@@ -268,6 +270,7 @@ async fn a_dead_embedder_costs_vectors_never_the_note() {
     *fake.fail.lock().unwrap() = Some(EmbedError {
         message: "connection refused".to_owned(),
         try_shorter: false,
+        cost_usd_micros: 0,
     });
     let (memory, _) = memory_with(Some(Arc::clone(&fake)));
     let stored = memory
@@ -419,6 +422,7 @@ async fn a_failing_embedder_shows_in_the_result() {
     *fake.fail.lock().unwrap() = Some(EmbedError {
         message: "it broke".to_owned(),
         try_shorter: false,
+        cost_usd_micros: 0,
     });
     let found = memory
         .search("naps", ClassFilter::Any, SCOPE_PRIVATE, 5)
@@ -666,4 +670,81 @@ async fn a_similarity_threshold_applies_before_the_limit() {
     assert_eq!(found.hits.len(), 1, "{:?}", found.hits);
     assert_eq!(found.hits[0].note_id, close.id);
     assert_eq!(found.not_close_enough, 2);
+}
+
+/// Edits the note it's embedding for, so the update that asked loses the
+/// race and isn't saved.
+#[derive(Debug)]
+struct Interrupting {
+    store: Arc<MemoryStore>,
+    note: Mutex<Option<NoteId>>,
+}
+
+#[async_trait]
+impl Embedder for Interrupting {
+    fn dimension(&self) -> usize {
+        DIM
+    }
+
+    async fn embed(&self, inputs: &[String], _: EmbedScope) -> Result<Embedding, EmbedError> {
+        let target = *self.note.lock().unwrap();
+        if let Some(id) = target {
+            let mut note = self.store.get_note(id).await.unwrap().unwrap();
+            let expected_version = note.version;
+            note.title = "changed meanwhile".to_owned();
+            self.store
+                .apply(
+                    WriteOp::UpdateNote {
+                        note,
+                        expected_version,
+                    }
+                    .into(),
+                )
+                .await
+                .unwrap();
+        }
+        Ok(Embedding {
+            vectors: inputs.iter().map(|text| vector_for(text)).collect(),
+            cost_usd_micros: 7,
+        })
+    }
+}
+
+#[tokio::test]
+async fn an_update_that_isnt_saved_still_reports_its_embedding() {
+    let store = Arc::new(MemoryStore::new(DIM));
+    let embedder = Arc::new(Interrupting {
+        store: Arc::clone(&store),
+        note: Mutex::new(None),
+    });
+    let memory = Memory::new(
+        Arc::clone(&store) as Arc<dyn Store>,
+        Some(Arc::clone(&embedder) as Arc<dyn Embedder>),
+        ChunkConfig {
+            max_tokens: 30,
+            overlap_tokens: 0,
+        },
+    );
+    let stored = memory
+        .store(note("first words"), private(), None, now())
+        .await
+        .unwrap();
+    *embedder.note.lock().unwrap() = Some(stored.id);
+    let edit = NoteEdit {
+        body: Some("second words".to_owned()),
+        ..NoteEdit::default()
+    };
+    let error = memory
+        .update(
+            stored.id,
+            edit,
+            ClassFilter::Any,
+            Trust::Trusted,
+            None,
+            now(),
+        )
+        .await
+        .unwrap_err();
+    assert!(matches!(error, MemoryError::NotSaved { .. }), "{error:?}");
+    assert_eq!(error.cost_usd_micros(), 7);
 }

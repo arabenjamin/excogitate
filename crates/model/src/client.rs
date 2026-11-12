@@ -54,6 +54,14 @@ impl ModelError {
             }
         )
     }
+
+    /// Whether the request may have reached the model, so it may be billed:
+    /// it timed out, or the server answered with something unusable. A
+    /// refusal, a rate limit or a request that never got through isn't.
+    #[must_use]
+    pub const fn reached_the_model(&self) -> bool {
+        matches!(self, Self::Timeout | Self::TooLarge | Self::BadResponse(_))
+    }
 }
 
 /// Talks to a model server. Everything above this is tested against fakes;

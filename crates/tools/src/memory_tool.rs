@@ -241,7 +241,7 @@ fn stored(note: &StoredNote) -> MemoryResult {
 }
 
 fn failure(error: &MemoryError) -> ToolFailure {
-    ToolFailure::new(schema::bounded(&error.to_string()))
+    ToolFailure::new(schema::bounded(&error.to_string())).with_cost(error.cost_usd_micros())
 }
 
 fn missing(what: &str) -> ToolFailure {

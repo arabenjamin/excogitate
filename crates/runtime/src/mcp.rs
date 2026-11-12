@@ -294,6 +294,8 @@ impl Runtime {
         let mut messages = vec![Message::system(system)];
         messages.extend(history);
         messages.push(Message::user(question.clone()));
+        // The task goes on the trajectory before the search made for it.
+        session.begin(&messages).await;
         recall(&self.config, &mut session, &question, &mut messages).await;
         let conversation = Conversation {
             messages,

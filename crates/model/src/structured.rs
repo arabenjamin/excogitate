@@ -61,7 +61,8 @@ pub enum StructuredError {
         first: String,
         /// Why the repair call failed.
         error: GatewayError,
-        /// What the first call cost, in millionths of a dollar.
+        /// What the first call cost, with what the failed repair was
+        /// charged, in millionths of a dollar.
         cost_usd_micros: u64,
     },
     /// Both replies were refused.
@@ -80,9 +81,10 @@ impl StructuredError {
     /// What was spent before it failed, in millionths of a dollar. It's
     /// spent all the same, so a caller keeping accounts must count it.
     #[must_use]
-    pub const fn cost_usd_micros(&self) -> u64 {
+    pub fn cost_usd_micros(&self) -> u64 {
         match self {
-            Self::Gateway(_) | Self::BadSchema(_) => 0,
+            Self::Gateway(error) => error.cost_usd_micros(),
+            Self::BadSchema(_) => 0,
             Self::RepairFailed {
                 cost_usd_micros, ..
             }
@@ -172,8 +174,8 @@ pub async fn generate_structured<T: JsonSchema + DeserializeOwned>(
         Err(error) => {
             return Err(StructuredError::RepairFailed {
                 first: first_problem,
+                cost_usd_micros: total_cost_usd_micros.saturating_add(error.cost_usd_micros()),
                 error,
-                cost_usd_micros: total_cost_usd_micros,
             });
         }
     };

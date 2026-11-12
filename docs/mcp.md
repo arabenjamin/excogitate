@@ -43,7 +43,9 @@ check.
 Before a chat's first round, the harness searches memory for the question.
 Notes close enough in meaning join the transcript as a search already made, so
 a small model has them without having to think of it. The receipt marks that
-call `by_harness`, and it counts against the budget. If nothing is close
+call `by_harness`, and it counts against the budget. On the trajectory the
+search comes after the instructions and the question it was made for. If
+nothing is close
 enough, the model sees nothing, because irrelevant notes make a small model
 say it doesn't know things it does.
 

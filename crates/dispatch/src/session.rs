@@ -166,6 +166,8 @@ pub struct Session {
     answer_cut_off: bool,
     by_harness: bool,
     start_recorded: bool,
+    /// How many of the starting messages are on the trajectory already.
+    messages_recorded: usize,
 }
 
 /// A refusal on its way back to the model.
@@ -223,6 +225,7 @@ impl Session {
             answer_cut_off: false,
             by_harness: false,
             start_recorded: false,
+            messages_recorded: 0,
         })
     }
 
@@ -400,7 +403,10 @@ impl Session {
                 } else {
                     "timed out against the run's time budget"
                 };
-                self.record_model_failure(why.to_owned(), 0);
+                // The day's ledger charges a call cut off here at its
+                // prompt's price; which model it was isn't known here, so
+                // the run's totals can't say.
+                self.record_model_failure(why.to_owned(), 0, 0);
                 return Err(ModelStop::Budget(self.mark_hit(Self::cut_short(stopped))));
             }
         };
@@ -423,12 +429,14 @@ impl Session {
                     GatewayError::Failed(attempts) => attempts.len(),
                     _ => 0,
                 };
-                self.record_model_failure(bounded(&error.to_string()), failed);
+                // A failed attempt that reached a model may be billed.
+                let cost_usd_micros = error.cost_usd_micros();
+                self.record_model_failure(bounded(&error.to_string()), failed, cost_usd_micros);
                 self.emit(Step::Model {
                     model: None,
                     reply: None,
                     tool_calls: 0,
-                    cost_usd_micros: 0,
+                    cost_usd_micros,
                     error: Some(bounded(&error.to_string())),
                 })
                 .await;
@@ -473,13 +481,14 @@ impl Session {
         });
     }
 
-    fn record_model_failure(&mut self, detail: String, failed_attempts: usize) {
+    fn record_model_failure(&mut self, detail: String, failed_attempts: usize, cost: u64) {
+        self.totals.cost_usd_micros = self.totals.cost_usd_micros.saturating_add(cost);
         self.model_calls.push(ModelEntry {
             model: None,
             input_tokens: 0,
             output_tokens: 0,
             tokens_estimated: false,
-            cost_usd_micros: 0,
+            cost_usd_micros: cost,
             failed_attempts: u32::try_from(failed_attempts).unwrap_or(u32::MAX),
             detail: Some(detail),
         });

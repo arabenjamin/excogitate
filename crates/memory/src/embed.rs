@@ -16,6 +16,8 @@ pub struct EmbedError {
     /// Whether a shorter input might work. An over-long input usually comes
     /// back as a server error, and there's no point retrying a dead server.
     pub try_shorter: bool,
+    /// What the failed call was charged, in millionths of a dollar.
+    pub cost_usd_micros: u64,
 }
 
 /// Who an embedding call is for.
@@ -111,6 +113,7 @@ impl Embedder for GatewayEmbedder {
             .map_err(|error| EmbedError {
                 try_shorter: may_be_length(&error),
                 message: bounded(&error.to_string()),
+                cost_usd_micros: error.cost_usd_micros(),
             })
     }
 }

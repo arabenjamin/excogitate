@@ -19,7 +19,9 @@ its own: it never learns the private one exists, and a private note never
 depends on one public runs can change or delete.
 
 Embedding is charged to the run that asked for it. The cost is on the result,
-and each retry can spend only what the attempts before it left.
+and each retry can spend only what the attempts before it left. A note that's
+embedded and then not saved, because the store failed or another edit got
+there first, still reports what the embedding cost.
 
 ## Searching
 

@@ -137,6 +137,7 @@ impl ModelCapability for PluginModel {
             Ok(completion) => completion,
             Err(error) => {
                 let used = CapabilityUse::new(PluginCapability::Model, "no model answered", false)
+                    .with_cost(error.cost_usd_micros())
                     .with_duration_ms(millis(begun));
                 self.meter.record(context.run, used);
                 return Err(CapabilityError::Failed(schema::bounded(&error.to_string())));
