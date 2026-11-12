@@ -1008,4 +1008,46 @@ mod tests {
         let call = serde_json::json!({ "op": "model", "prompt": "hi", "model": "big" });
         assert!(serde_json::from_value::<CapabilityCall>(call).is_err());
     }
+
+    #[test]
+    fn job_note_and_source_answers_survive_the_trip() {
+        let job = WireJobState::from(
+            crate::JobState::new(Uuid::nil(), crate::JobPhase::Dead).with_outcome(
+                Some("it broke".to_owned()),
+                Some(serde_json::json!({ "half": true })),
+            ),
+        );
+        let back: WireJobState =
+            serde_json::from_value(serde_json::to_value(&job).unwrap()).unwrap();
+        assert_eq!(back, job);
+        let job: crate::JobState = back.into();
+        assert_eq!(job.phase, crate::JobPhase::Dead);
+        assert_eq!(job.last_error.as_deref(), Some("it broke"));
+
+        let note =
+            WireNoteStored::from(crate::NoteStored::new(Uuid::nil(), false, 2, 1).with_cost(9));
+        let back: WireNoteStored =
+            serde_json::from_value(serde_json::to_value(note).unwrap()).unwrap();
+        let note: crate::NoteStored = back.into();
+        assert_eq!(
+            (note.chunks, note.unembedded_chunks, note.cost_usd_micros),
+            (2, 1, 9)
+        );
+
+        let item = crate::SourceItem::new("i", "Title", "text")
+            .with_data_class(DataClass::Public)
+            .with_source_url("https://example.com/i")
+            .with_similarity(0.5);
+        let got = WireSourceGot {
+            item: Some(WireSourceItem::from(item.clone())),
+            cost_usd_micros: 4,
+        };
+        let back: WireSourceGot =
+            serde_json::from_value(serde_json::to_value(&got).unwrap()).unwrap();
+        assert_eq!(back, got);
+        assert_eq!(crate::SourceItem::from(back.item.unwrap()), item);
+        // A source answer with a field the host doesn't know is refused.
+        let extra = serde_json::json!({ "item": null, "cost_usd_micros": 0, "score": 1 });
+        assert!(serde_json::from_value::<WireSourceGot>(extra).is_err());
+    }
 }

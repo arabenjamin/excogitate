@@ -12,14 +12,14 @@ use chrono::{DateTime, Utc};
 use protocol::Actor;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
+use serde_json::Value;
 use store::{Definition, DefinitionKey, DefinitionKind, Job, JobId, JobStatus, PageRequest};
 use uuid::Uuid;
 use work::Enqueued;
 use workflow::WorkflowError;
 
 use super::{ApiError, App, json_body};
-use crate::jobs::WORKFLOW_KIND;
+use crate::jobs::workflow_job;
 
 pub(super) const DEFAULT_LIMIT: u32 = 50;
 pub(super) const MAX_LIMIT: u32 = 200;
@@ -314,13 +314,6 @@ async fn get_definition(
         .ok_or_else(|| ApiError::not_found(&format!("there's no {kind} by that name")))
 }
 
-fn job_id_for(workflow: &str, key: Option<&str>) -> JobId {
-    key.map_or_else(JobId::generate, |key| {
-        let seed = format!("api|{workflow}|{key}");
-        JobId::from_uuid(Uuid::new_v5(&Uuid::NAMESPACE_OID, seed.as_bytes()))
-    })
-}
-
 async fn start_run(
     State(app): State<App>,
     Path(workflow): Path<String>,
@@ -341,23 +334,15 @@ async fn start_run(
             WorkflowError::Invalid(_) => ApiError::invalid(&error.to_string()),
             other => ApiError::internal(&other),
         })?;
-    let id = job_id_for(&workflow, request.idempotency_key.as_deref());
-    let job = Job {
-        id,
-        kind: WORKFLOW_KIND.to_owned(),
-        payload: json!({ "workflow": workflow, "inputs": request.inputs }),
-        priority: request.priority,
-        status: JobStatus::Queued,
-        requested_by: Actor::new(OWNER),
-        run_at: Utc::now(),
-        attempts: 0,
-        // A retry would repeat whatever the earlier steps did.
-        max_attempts: 1,
-        lease: None,
-        last_error: None,
-        result: None,
-        finished_at: None,
-    };
+    let key = request.idempotency_key.as_deref().map(|key| ("api", key));
+    let job = workflow_job(
+        &workflow,
+        request.inputs,
+        request.priority,
+        Actor::new(OWNER),
+        key,
+    );
+    let id = job.id;
     let enqueued = app
         .transport
         .enqueue(job)

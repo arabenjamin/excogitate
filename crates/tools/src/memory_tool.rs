@@ -22,15 +22,14 @@ use uuid::Uuid;
 
 use crate::clamp::clamped;
 
-const MAX_TITLE: usize = 256;
-const MAX_TEXT: usize = 100_000;
-const MAX_TAGS: usize = 16;
-const MAX_TAG: usize = 64;
-const MAX_URL: usize = 2048;
+// A note's limits are the same for a model and for a plugin.
+const MAX_TITLE: usize = plugin_api::MAX_NOTE_TITLE;
+const MAX_TEXT: usize = plugin_api::MAX_NOTE_TEXT;
+const MAX_TAGS: usize = plugin_api::MAX_NOTE_TAGS;
+const MAX_TAG: usize = plugin_api::MAX_NOTE_TAG;
+const MAX_URL: usize = plugin_api::MAX_NOTE_URL;
 const MAX_REASON: usize = 512;
 const DEFAULT_LIMIT: u32 = 5;
-/// The longest title made from a note's first line.
-const DERIVED_TITLE: usize = 80;
 
 const DESCRIPTION: &str = "Long-term memory. `store` keeps text (needs `text`). \
 `search` finds notes by meaning and keywords (needs `query`), and items in the sources plugins \
@@ -364,14 +363,6 @@ fn missing(what: &str) -> ToolFailure {
     ToolFailure::new(format!("this operation needs `{what}`"))
 }
 
-/// The first line of `text`, as a title.
-fn title_from(text: &str) -> String {
-    clamped(
-        text.trim().lines().next().unwrap_or_default().to_owned(),
-        DERIVED_TITLE,
-    )
-}
-
 /// What a run may see: a public run only sees what's public.
 const fn classes_for(data_class: DataClass) -> ClassFilter {
     match data_class {
@@ -420,7 +411,7 @@ impl MemoryTool {
         context: ToolContext,
     ) -> Result<(MemoryResult, Trust, u64), ToolFailure> {
         let body = args.text.ok_or_else(|| missing("text"))?;
-        let title = args.title.unwrap_or_else(|| title_from(&body));
+        let title = args.title.unwrap_or_else(|| memory::derived_title(&body));
         let note = NewNote {
             title,
             body,

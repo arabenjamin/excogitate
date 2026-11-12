@@ -40,40 +40,47 @@ impl Runtime {
         let mut swept = Swept::default();
         if let Some(days) = retention.trajectory_days {
             let before = now - TimeDelta::days(i64::from(days));
-            for _ in 0..MAX_BATCHES {
-                match self.sink.prune_runs(before, BATCH).await {
-                    Ok(gone) => {
-                        swept.runs = swept.runs.saturating_add(u64::from(gone));
-                        if gone < BATCH {
-                            break;
-                        }
-                    }
-                    Err(error) => {
-                        swept.problems.push(format!("trajectories: {error}"));
-                        break;
-                    }
-                }
-            }
+            swept.runs = in_batches("trajectories", &mut swept.problems, || {
+                self.sink.prune_runs(before, BATCH)
+            })
+            .await;
         }
         if let Some(days) = retention.job_days {
             let before = now - TimeDelta::days(i64::from(days));
-            for _ in 0..MAX_BATCHES {
-                match self.workflows.store.prune_jobs(before, BATCH).await {
-                    Ok(gone) => {
-                        swept.jobs = swept.jobs.saturating_add(u64::from(gone));
-                        if gone < BATCH {
-                            break;
-                        }
-                    }
-                    Err(error) => {
-                        swept.problems.push(format!("jobs: {error}"));
-                        break;
-                    }
-                }
-            }
+            swept.jobs = in_batches("jobs", &mut swept.problems, || {
+                self.workflows.store.prune_jobs(before, BATCH)
+            })
+            .await;
         }
         swept
     }
+}
+
+/// Prunes a batch at a time until one comes back short, at most
+/// `MAX_BATCHES`, and says how many went. A failure is noted and stops it;
+/// what went before stays gone.
+async fn in_batches<F, Fut, E>(what: &str, problems: &mut Vec<String>, mut prune: F) -> u64
+where
+    F: FnMut() -> Fut,
+    Fut: std::future::Future<Output = Result<u32, E>>,
+    E: std::fmt::Display,
+{
+    let mut gone_all = 0_u64;
+    for _ in 0..MAX_BATCHES {
+        match prune().await {
+            Ok(gone) => {
+                gone_all = gone_all.saturating_add(u64::from(gone));
+                if gone < BATCH {
+                    break;
+                }
+            }
+            Err(error) => {
+                problems.push(format!("{what}: {error}"));
+                break;
+            }
+        }
+    }
+    gone_all
 }
 
 /// Sweeps at once, then every `tick`, until told to stop. Says what it

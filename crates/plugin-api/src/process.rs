@@ -325,10 +325,8 @@ where
     let manifest = PluginManifest::from_yaml(plugin.manifest()).map_err(std::io::Error::other)?;
     let (peer, io) = Peer::new(rpc::Limits::default());
     let link = Arc::new(Link(Arc::clone(&peer)));
-    let tools = plugin
-        .tools(&remote_capabilities(&manifest, &link))
-        .map_err(std::io::Error::other)?;
     let capabilities = remote_capabilities(&manifest, &link);
+    let tools = plugin.tools(&capabilities).map_err(std::io::Error::other)?;
     let sources = plugin
         .sources(&capabilities)
         .map_err(std::io::Error::other)?;

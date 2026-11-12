@@ -896,3 +896,62 @@ fn mitigated_at(run: &str, step: u32) -> Value {
     json!({ "candidate": run, "effect": "mitigated",
             "cite": { "run": run, "step": step, "quote": "The answer is 42." } })
 }
+
+#[tokio::test]
+async fn a_fan_out_steps_items_are_read_as_one_run() {
+    // The reference probe answers twice, once per item; nothing scripted
+    // follows, so the attempt ends there, with the reference read.
+    let setup = setup(vec![say("Otters."), say("Badgers.")]).await;
+    let body = json!({
+        "inputs": { "type": "object", "additionalProperties": false, "required": ["animals"],
+                    "properties": { "animals": { "type": "array", "maxItems": 5,
+                                     "items": { "type": "string", "maxLength": 20 } } } },
+        "steps": [{ "type": "agent", "id": "each", "agent": "helper", "message": "Describe it.",
+                    "context": "{{item}}",
+                    "for_each": { "items": "{{inputs.animals}}", "max_items": 5 } }]
+    });
+    let definition = Definition {
+        key: DefinitionKey {
+            kind: DefinitionKind::Workflow,
+            name: "animals".to_owned(),
+        },
+        body,
+        source: "test".to_owned(),
+        updated_at: Utc::now(),
+    };
+    setup
+        .engine
+        .store
+        .apply(UnitOfWork::new().with(WriteOp::PutDefinition(definition)))
+        .await
+        .unwrap();
+    let settings = Settings {
+        reads: std::collections::BTreeSet::new(),
+        judge_usd_micros: 0,
+    };
+    let looped = Loop {
+        engine: &setup.engine,
+        judges: Judges {
+            gateway: &setup.engine.gateway,
+            max_output_tokens: 4000,
+        },
+        settings: &settings,
+    };
+    let attempt = looped
+        .improve(Request {
+            agent: "animals".to_owned(),
+            task: String::new(),
+            inputs: json!({ "animals": ["otter", "badger"] })
+                .as_object()
+                .cloned(),
+            target: harness::Target::Workflow,
+            why: None,
+        })
+        .await;
+    let reference = attempt
+        .reference
+        .as_ref()
+        .unwrap_or_else(|| panic!("{attempt:#?}"));
+    assert_eq!(reference.runs.len(), 2, "{attempt:#?}");
+    assert_eq!(reference.outcome.as_deref(), Some("completed"));
+}

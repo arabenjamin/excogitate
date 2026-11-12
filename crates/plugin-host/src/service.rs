@@ -579,6 +579,17 @@ pub(crate) async fn start(
     Ok((tools, sources))
 }
 
+/// The context a call carries to a plugin's process, with the host's token
+/// for it.
+fn wire_context(context: ToolContext, call: Uuid) -> WireContext {
+    WireContext {
+        run: context.run.as_uuid(),
+        public: context.data_class == DataClass::Public,
+        budget_usd_micros: context.budget_usd_micros,
+        call,
+    }
+}
+
 /// A source in a plugin's process, reached over its connection.
 #[derive(Debug)]
 struct ServiceSource {
@@ -596,12 +607,7 @@ impl ServiceSource {
         context: ToolContext,
     ) -> Result<T, ToolFailure> {
         let serving = self.connection.host.begin(context);
-        let sent = WireContext {
-            run: context.run.as_uuid(),
-            public: context.data_class == DataClass::Public,
-            budget_usd_micros: context.budget_usd_micros,
-            call: serving.token(),
-        };
+        let sent = wire_context(context, serving.token());
         if let Some(fields) = params.as_object_mut() {
             fields.insert("_meta".to_owned(), json!({ CONTEXT_META: sent }));
         }
@@ -684,12 +690,7 @@ impl Tool for ServiceTool {
         // While the call is out, the process may ask for capabilities on its
         // behalf, with this call's token, and only then.
         let serving = self.connection.host.begin(context);
-        let sent = WireContext {
-            run: context.run.as_uuid(),
-            public: context.data_class == DataClass::Public,
-            budget_usd_micros: context.budget_usd_micros,
-            call: serving.token(),
-        };
+        let sent = wire_context(context, serving.token());
         let params = json!({
             "name": self.definition.name,
             "arguments": arguments,
@@ -1039,5 +1040,92 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(stored.items.len(), 2);
+    }
+
+    /// Keeps what it's asked to store and start, and answers as the
+    /// runtime would.
+    #[derive(Debug, Default)]
+    struct Remembers(Mutex<Vec<String>>);
+
+    #[async_trait]
+    impl plugin_api::MemoryCapability for Remembers {
+        async fn store(
+            &self,
+            note: plugin_api::NoteToStore,
+            _: ToolContext,
+        ) -> Result<plugin_api::NoteStored, CapabilityError> {
+            self.0.lock().unwrap().push(note.text);
+            Ok(plugin_api::NoteStored::new(Uuid::nil(), true, 1, 0).with_cost(3))
+        }
+    }
+
+    #[async_trait]
+    impl plugin_api::JobsCapability for Remembers {
+        async fn run_workflow(
+            &self,
+            run: plugin_api::RunWorkflow,
+            _: ToolContext,
+        ) -> Result<plugin_api::JobStarted, CapabilityError> {
+            self.0.lock().unwrap().push(run.workflow);
+            Ok(plugin_api::JobStarted::new(Uuid::nil(), false))
+        }
+
+        async fn job(
+            &self,
+            job_id: Uuid,
+            _: ToolContext,
+        ) -> Result<Option<plugin_api::JobState>, CapabilityError> {
+            Ok(Some(
+                plugin_api::JobState::new(job_id, plugin_api::JobPhase::Succeeded)
+                    .with_outcome(None, Some(json!({ "answer": 42 }))),
+            ))
+        }
+    }
+
+    #[tokio::test]
+    async fn a_note_and_a_workflow_run_from_a_process_reach_their_capabilities() {
+        use plugin_api::wire::{CapabilityCall, WireJobStarted, WireJobState, WireNoteStored};
+        let both = Arc::new(Remembers::default());
+        let host = HostCalls {
+            capabilities: Capabilities::default()
+                .with_memory(Arc::clone(&both) as Arc<dyn plugin_api::MemoryCapability>)
+                .with_jobs(Arc::clone(&both) as Arc<dyn plugin_api::JobsCapability>),
+            serving: Mutex::default(),
+        };
+        let serving = host.begin(context(RunId::generate()));
+        let ask = |call: CapabilityCall| {
+            capability_request(serving.token(), &serde_json::to_value(call).unwrap())
+        };
+        let stored = host
+            .reply_to(&ask(CapabilityCall::MemoryStore {
+                title: String::new(),
+                text: "Otters hold hands.".to_owned(),
+                tags: vec![],
+                source_url: None,
+            }))
+            .await;
+        let stored: WireNoteStored = serde_json::from_value(stored["result"].clone())
+            .unwrap_or_else(|error| panic!("{error}: {stored}"));
+        assert_eq!((stored.chunks, stored.cost_usd_micros), (1, 3));
+        let started = host
+            .reply_to(&ask(CapabilityCall::JobsRunWorkflow {
+                workflow: "learn".to_owned(),
+                inputs: json!({}),
+                priority: 0,
+                idempotency_key: Some("k".to_owned()),
+            }))
+            .await;
+        let started: WireJobStarted = serde_json::from_value(started["result"].clone())
+            .unwrap_or_else(|error| panic!("{error}: {started}"));
+        assert!(!started.already_existed);
+        let state = host
+            .reply_to(&ask(CapabilityCall::JobsGet {
+                job_id: started.job_id,
+            }))
+            .await;
+        let state: Option<WireJobState> = serde_json::from_value(state["result"].clone())
+            .unwrap_or_else(|error| panic!("{error}: {state}"));
+        assert_eq!(state.unwrap().result, Some(json!({ "answer": 42 })));
+        assert_eq!(*both.0.lock().unwrap(), ["Otters hold hands.", "learn"]);
     }
 }

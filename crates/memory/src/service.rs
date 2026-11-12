@@ -222,6 +222,23 @@ struct StoreLists {
     vector: Option<(Vec<f32>, String)>,
 }
 
+/// The longest title made from a note's first line.
+pub const DERIVED_TITLE_CHARS: usize = 80;
+
+/// A title for a note given none: its first line that isn't blank, trimmed
+/// and cut to [`DERIVED_TITLE_CHARS`]. Every caller that stores notes uses
+/// this, so a note's title is the same however it came in.
+#[must_use]
+pub fn derived_title(text: &str) -> String {
+    text.lines()
+        .map(str::trim)
+        .find(|line| !line.is_empty())
+        .unwrap_or_default()
+        .chars()
+        .take(DERIVED_TITLE_CHARS)
+        .collect()
+}
+
 fn content_hash(body: &str) -> String {
     format!("{:x}", Sha256::digest(body.trim().as_bytes()))
 }

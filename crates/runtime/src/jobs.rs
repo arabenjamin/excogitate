@@ -4,11 +4,14 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use async_trait::async_trait;
+use chrono::Utc;
 use dispatch::Outcome;
+use protocol::Actor;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use store::Job;
+use store::{Job, JobId, JobStatus};
+use uuid::Uuid;
 use work::{JobFailure, JobHandler};
 use workflow::RunOutcome;
 
@@ -22,6 +25,40 @@ const MARGIN: Duration = Duration::from_secs(10);
 
 /// The kind of job that runs a workflow.
 pub(crate) const WORKFLOW_KIND: &str = "workflow";
+
+/// A queued workflow run, never retried: a retry would repeat whatever the
+/// earlier steps did. With a key, its id is the same each time for the same
+/// `scope`, workflow and key, so a start made twice is one job.
+pub(crate) fn workflow_job(
+    workflow: &str,
+    inputs: Value,
+    priority: i32,
+    requested_by: Actor,
+    key: Option<(&str, &str)>,
+) -> Job {
+    let id = key.map_or_else(JobId::generate, |(scope, key)| {
+        let seed = format!("{scope}|{workflow}|{key}");
+        JobId::from_uuid(Uuid::new_v5(&Uuid::NAMESPACE_OID, seed.as_bytes()))
+    });
+    Job {
+        id,
+        kind: WORKFLOW_KIND.to_owned(),
+        payload: Value::Object(serde_json::Map::from_iter([
+            ("workflow".to_owned(), Value::String(workflow.to_owned())),
+            ("inputs".to_owned(), inputs),
+        ])),
+        priority,
+        status: JobStatus::Queued,
+        requested_by,
+        run_at: Utc::now(),
+        attempts: 0,
+        max_attempts: 1,
+        lease: None,
+        last_error: None,
+        result: None,
+        finished_at: None,
+    }
+}
 
 /// What a workflow job says to run.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]

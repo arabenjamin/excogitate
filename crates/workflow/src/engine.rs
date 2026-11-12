@@ -751,19 +751,18 @@ impl Engine {
             agent: subject.to_owned(),
             harness: self.agent_harness(agent),
         };
-        let session = self
-            .session(
-                agent.tools.clone(),
-                left.clip(own),
-                self.limits.agent_result_chars,
-                subject,
-                probe,
-            )?
-            .with_skills(instructions.skills)
-            .with_guardrails(agent.guardrails.clone())
+        let session = self.session(
+            agent.tools.clone(),
+            left.clip(own),
+            self.limits.agent_result_chars,
+            subject,
+            probe,
+        )?;
+        // The choice is held while it runs: its memory reads only the
+        // sources it names.
+        let (session, _chosen) = self
+            .ready_agent(session, agent, instructions.skills)
             .map_err(|error| bounded(&error.to_string()))?;
-        // Held while it runs: its memory reads only the sources it names.
-        let _chosen = self.choose_sources(session.run(), agent);
         Ok(session
             .converse(
                 &self.gateway,
@@ -822,6 +821,28 @@ impl Engine {
         };
         self.converse_as(name, &subject, &agent, question, left, probe)
             .await
+    }
+
+    /// Readies `session` to run `agent`: the skills its instructions
+    /// included, its guardrails, and its choice of sources, held for as long
+    /// as what's returned is. Every place that runs an agent goes through
+    /// here, so none forgets a part of it.
+    ///
+    /// # Errors
+    ///
+    /// [`dispatch::SessionError`] if a guardrail names a tool the session
+    /// doesn't offer.
+    pub fn ready_agent(
+        &self,
+        session: Session,
+        agent: &Agent,
+        skills: Vec<String>,
+    ) -> Result<(Session, Option<ChoiceHeld>), dispatch::SessionError> {
+        let session = session
+            .with_skills(skills)
+            .with_guardrails(agent.guardrails.clone())?;
+        let chosen = self.choose_sources(session.run(), agent);
+        Ok((session, chosen))
     }
 
     /// Limits `run`'s memory to the sources `agent` names, if it names any,

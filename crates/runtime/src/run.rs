@@ -384,6 +384,21 @@ async fn stop_signal() {
     }
 }
 
+/// The server's owner key, checked, and the address it listens on.
+fn server_settings(product: &str) -> Result<(String, String), RunError> {
+    let prefix = product.to_uppercase();
+    let owner_key = std::env::var(format!("{prefix}_OWNER_KEY")).unwrap_or_default();
+    check_owner_key(&owner_key).map_err(|problem| RunError::OwnerKey {
+        variable: format!("{prefix}_OWNER_KEY"),
+        problem,
+    })?;
+    let bind = std::env::var(format!("{prefix}_BIND"))
+        .ok()
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| DEFAULT_BIND.to_owned());
+    Ok((owner_key, bind))
+}
+
 /// Serves HTTP and runs the scheduler and workers, until the process is told
 /// to stop. The store takes one process, so they all share this one.
 ///
@@ -395,16 +410,7 @@ pub async fn run_server(
     version: &str,
     plugins: &[Arc<dyn Plugin>],
 ) -> Result<(), RunError> {
-    let prefix = product.to_uppercase();
-    let owner_key = std::env::var(format!("{prefix}_OWNER_KEY")).unwrap_or_default();
-    check_owner_key(&owner_key).map_err(|problem| RunError::OwnerKey {
-        variable: format!("{prefix}_OWNER_KEY"),
-        problem,
-    })?;
-    let bind = std::env::var(format!("{prefix}_BIND"))
-        .ok()
-        .filter(|value| !value.is_empty())
-        .unwrap_or_else(|| DEFAULT_BIND.to_owned());
+    let (owner_key, bind) = server_settings(product)?;
     let Opened {
         store,
         runtime,
@@ -420,11 +426,9 @@ pub async fn run_server(
             path: bind.clone(),
             source,
         })?;
-    let installed = runtime.plugins().join(", ");
-    let installed = if installed.is_empty() {
-        "none".to_owned()
-    } else {
-        installed
+    let installed = match runtime.plugins().join(", ") {
+        none if none.is_empty() => "none".to_owned(),
+        listed => listed,
     };
     eprintln!(
         "{count} definitions loaded, plugins: {installed}, {workers} workers, listening on {bind}"

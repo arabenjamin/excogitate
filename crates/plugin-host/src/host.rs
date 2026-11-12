@@ -251,37 +251,30 @@ impl PluginHost {
                     }
                     capabilities.records = Some(Arc::new(scoped));
                 }
-                PluginCapability::Http => {
+                PluginCapability::Http
+                | PluginCapability::Model
+                | PluginCapability::Memory
+                | PluginCapability::Jobs => {
+                    // The runtime makes these, each charged to the plugin's
+                    // one meter.
                     let source = self
                         .source
                         .as_ref()
                         .ok_or_else(|| not_available(capability))?;
                     let meter = Arc::clone(meter.get_or_insert_with(Arc::default));
-                    capabilities.http = Some(source.http(&manifest.name, meter));
-                }
-                PluginCapability::Model => {
-                    let source = self
-                        .source
-                        .as_ref()
-                        .ok_or_else(|| not_available(capability))?;
-                    let meter = Arc::clone(meter.get_or_insert_with(Arc::default));
-                    capabilities.model = Some(source.model(&manifest.name, meter));
-                }
-                PluginCapability::Memory => {
-                    let source = self
-                        .source
-                        .as_ref()
-                        .ok_or_else(|| not_available(capability))?;
-                    let meter = Arc::clone(meter.get_or_insert_with(Arc::default));
-                    capabilities.memory = Some(source.memory(&manifest.name, meter));
-                }
-                PluginCapability::Jobs => {
-                    let source = self
-                        .source
-                        .as_ref()
-                        .ok_or_else(|| not_available(capability))?;
-                    let meter = Arc::clone(meter.get_or_insert_with(Arc::default));
-                    capabilities.jobs = Some(source.jobs(&manifest.name, meter));
+                    let name = &manifest.name;
+                    match capability {
+                        PluginCapability::Http => {
+                            capabilities.http = Some(source.http(name, meter));
+                        }
+                        PluginCapability::Model => {
+                            capabilities.model = Some(source.model(name, meter));
+                        }
+                        PluginCapability::Memory => {
+                            capabilities.memory = Some(source.memory(name, meter));
+                        }
+                        _ => capabilities.jobs = Some(source.jobs(name, meter)),
+                    }
                 }
                 // Offered, not handed out: its sources are checked when built.
                 PluginCapability::Sources => {}
