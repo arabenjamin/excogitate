@@ -64,6 +64,97 @@
       ],
       "type": "object"
     },
+    "SkippedSource": {
+      "additionalProperties": false,
+      "description": "A source that was searched and gave nothing.",
+      "properties": {
+        "source": {
+          "description": "The source, as `plugin.name`.",
+          "maxLength": 64,
+          "type": "string"
+        },
+        "why": {
+          "description": "Why.",
+          "maxLength": 512,
+          "type": "string"
+        }
+      },
+      "required": [
+        "source",
+        "why"
+      ],
+      "type": "object"
+    },
+    "SourceHit": {
+      "additionalProperties": false,
+      "description": "An item a plugin's source holds. Always untrusted.",
+      "properties": {
+        "id": {
+          "description": "The item's id within it: `open` reads it whole.",
+          "maxLength": 256,
+          "type": "string"
+        },
+        "score": {
+          "description": "Its score, comparable with the notes' within this search. None when\nread with `open`.",
+          "format": "float",
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "similarity": {
+          "description": "How close it is in meaning to the query, if the source searched\nwith the query's vector.",
+          "format": "float",
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "source": {
+          "description": "The source, as `plugin.name`.",
+          "maxLength": 64,
+          "type": "string"
+        },
+        "source_url": {
+          "description": "The URL it came from.",
+          "maxLength": 2048,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "text": {
+          "description": "The part that matched, or all of it when read with `open`.",
+          "maxLength": 100000,
+          "type": "string"
+        },
+        "title": {
+          "description": "Its title.",
+          "maxLength": 256,
+          "type": "string"
+        },
+        "truncated": {
+          "description": "Read with `open`: true if the item is longer than `text`. A search\nhit's text is only the part that matched.",
+          "type": "boolean"
+        },
+        "updated_at": {
+          "description": "When it last changed, if the source knows.",
+          "format": "date-time",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "source",
+        "id",
+        "title",
+        "text",
+        "truncated"
+      ],
+      "type": "object"
+    },
     "TrustLabel": {
       "description": "Whether a note may be treated as instructions.",
       "enum": [
@@ -149,12 +240,30 @@
         "result": {
           "const": "found",
           "type": "string"
+        },
+        "sources": {
+          "description": "Items in plugins' sources, ranked with the notes: compare\n`score`. `open` lists the one item read here.",
+          "items": {
+            "$ref": "#/$defs/SourceHit"
+          },
+          "maxItems": 50,
+          "type": "array"
+        },
+        "sources_skipped": {
+          "description": "Sources searched that gave nothing, and why.",
+          "items": {
+            "$ref": "#/$defs/SkippedSource"
+          },
+          "maxItems": 50,
+          "type": "array"
         }
       },
       "required": [
         "result",
         "hits",
-        "has_more"
+        "has_more",
+        "sources",
+        "sources_skipped"
       ],
       "type": "object"
     },

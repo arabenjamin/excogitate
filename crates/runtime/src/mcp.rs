@@ -6,6 +6,7 @@ use dispatch::{
     Budget, CallStatus, ChatResult, Conversation, Outcome, Receipt, RunSubject, Session,
     SessionConfig, SessionError, harness_id,
 };
+use memory::ChoiceHeld;
 use model::{Message, ToolCall};
 use plugin_api::{Effect, Tool, ToolContext, ToolDefinition, ToolFailure, ToolOutput};
 use protocol::{DataClass, RunId, Trust};
@@ -266,7 +267,8 @@ impl Runtime {
             max_output_tokens,
             time_cap_ms,
         } = input;
-        let (mut session, instructions) = if let Some(name) = &self.config.front_door {
+        // `_chosen` holds the front door's choice of sources for the chat.
+        let (mut session, instructions, _chosen) = if let Some(name) = &self.config.front_door {
             self.front_door(name, purpose, time_cap_ms).await?
         } else {
             // Without a front door there's no roster, so nothing to delegate to.
@@ -285,7 +287,7 @@ impl Runtime {
                 self.config.max_result_chars,
                 subject,
             )?;
-            (session, self.config.system_prompt.clone())
+            (session, self.config.system_prompt.clone(), None)
         };
         let system = match extra_system {
             Some(extra) => format!("{instructions}\n\n{extra}"),
@@ -315,7 +317,7 @@ impl Runtime {
         name: &str,
         purpose: &str,
         time_cap_ms: Option<u64>,
-    ) -> Result<(Session, String), ToolFailure> {
+    ) -> Result<(Session, String, Option<ChoiceHeld>), ToolFailure> {
         let agent = self
             .workflows
             .agent(name)
@@ -343,13 +345,14 @@ impl Runtime {
             .map_err(ToolFailure::new)?;
         let session = session_with(
             self,
-            agent.tools,
+            agent.tools.clone(),
             budget,
             purpose,
             self.config.max_result_chars,
             subject,
         )?;
-        Ok((session, instructions))
+        let chosen = self.workflows.choose_sources(session.run(), &agent);
+        Ok((session, instructions, chosen))
     }
 }
 

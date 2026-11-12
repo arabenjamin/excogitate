@@ -13,9 +13,16 @@ counts against the run's write budget.
 ## `memory`
 
 One flat argument object, with an `operation` of `store`, `search`, `get`,
-`update` or `delete`. The schema states which fields each one needs. A search
-can set `min_similarity` to keep only notes close in meaning, and each hit
-reports its `similarity`.
+`update`, `delete` or `open`. The schema states which fields each one needs. A
+search can set `min_similarity` to keep only notes close in meaning, and each
+hit reports its `similarity`.
+
+A search also reads the sources plugins offer. Their items come back under
+`sources`, ranked with the notes, so `score` compares across both; each says
+which source it's from and its `id` there. `sources_skipped` names any source
+that failed or ran out of time. `open` reads one item whole, given its
+`source` and `item`. Items from a source are always untrusted, and a result
+holding one is too.
 
 | Excogitate sets | To |
 |---|---|

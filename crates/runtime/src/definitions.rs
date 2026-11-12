@@ -11,7 +11,7 @@ use schemars::JsonSchema;
 use serde::de::DeserializeOwned;
 use store::DefinitionKind;
 use work::{DefinitionError, DefinitionFile, Schedule, read_definition_files, save_definitions};
-use workflow::{Agent, Workflow, check_agent, check_workflow};
+use workflow::{Agent, Workflow, check_agent, check_agent_sources, check_workflow};
 
 use crate::Runtime;
 use crate::jobs::{WORKFLOW_KIND, WorkflowArgs};
@@ -66,7 +66,10 @@ fn check_files(files: &[DefinitionFile], runtime: &Runtime) -> Result<(), Defini
         .collect();
     let mut agents = BTreeSet::new();
     for file in of_kind(DefinitionKind::Agent) {
-        check_agent(&parse::<Agent>(file)?, &tools).map_err(|problem| invalid(file, problem))?;
+        let agent = parse::<Agent>(file)?;
+        check_agent(&agent, &tools)
+            .and_then(|()| check_agent_sources(&agent, &runtime.sources))
+            .map_err(|problem| invalid(file, problem))?;
         agents.insert(file.name.clone());
     }
     if let Some(front_door) = &runtime.config.front_door
@@ -266,6 +269,21 @@ mod tests {
         let fixture = Fixture::new("agent-tool");
         fixture.write("agents/helper.yaml", "system_prompt: x\ntools: [nope]\n");
         assert_invalid(fixture.load().await, "no tool nope");
+    }
+
+    #[tokio::test]
+    async fn an_agent_can_name_only_sources_that_exist() {
+        let fixture = Fixture::new("agent-source");
+        fixture.write(
+            "agents/helper.yaml",
+            "system_prompt: x\ntools: [memory]\nmemory: {sources: [lake.notes]}\n",
+        );
+        assert_invalid(fixture.load().await, "no plugin offers");
+        fixture.write(
+            "agents/helper.yaml",
+            "system_prompt: x\ntools: [memory]\nmemory: {sources: []}\n",
+        );
+        assert_eq!(fixture.load().await.unwrap(), 1, "none at all is a choice");
     }
 
     #[tokio::test]

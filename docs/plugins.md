@@ -15,7 +15,8 @@ host and dispatcher.
 - **Every tool**, with strict input and output schemas and its `effect` (`read`
   or `write`). Every string and array needs a maximum, and unknown keys must be
   refused.
-- **The capabilities it needs**, and its record types if it keeps any.
+- **The capabilities it needs**, its record types if it keeps any, and the
+  sources it offers memory, if any.
 
 The manifest is the authority. A plugin whose tools differ from it isn't
 installed.
@@ -34,6 +35,7 @@ nothing.
 | `model` | One-shot model calls through the gateway, under the calling run's privacy class and within what's left of its budget. |
 | `memory` | Notes in the runtime's long-term memory, so its search finds what the plugin brought in. A note is kept under the calling run's privacy class, marked untrusted, and stored by `plugin:<name>`; its embedding is paid from what the run has left. The limits are the `memory` tool's: text up to 100,000 characters, a title up to 256 (the first line when empty), 16 tags. |
 | `jobs` | Starting workflow runs, each its own job, as `POST /api/v1/workflows/{name}/runs` starts them: the workflow must exist and the inputs fit. A run is held to its workflow's own budget, not to what the calling run has left, and is never retried. The plugin reads back only the jobs it started. |
+| `sources` | Offering memory the sources its manifest declares, to search beside its own notes. Nothing is handed to the plugin; see [Sources](#sources). |
 
 **Loading a lot.** A plugin bringing in data in bulk, such as rows from a
 lake, writes them in batches: `put_many` returns the ids in order, then
@@ -74,6 +76,55 @@ provider serves them only if its `paid_for` lists that.
 
 No capability lets a plugin call another tool. Excogitate sets each record's
 provenance, and the privacy class comes from the run.
+
+## Sources
+
+A source is something memory reads that lives outside the store, such as a
+data lake. The plugin keeps it and its own ingestion; memory searches it
+beside its notes and fuses the hits by rank, one more list in the same
+reciprocal rank fusion. A source only reads, and nothing writes to it.
+
+```yaml
+capabilities: [sources]
+sources:
+  - name: glossary         # memory calls it example.glossary
+    description: A few words the runtime uses, and what they mean.
+    public: false          # the default: every item it returns is private
+    words: true            # it can be searched by words
+    vectors:               # left out if it holds no vectors
+      model: an-embedder   # as the model catalog names it, or its wire model
+      dimension: 1024
+```
+
+The plugin builds each one in `Plugin::sources`, implementing `Source`:
+`search(query, context)` returns hits best first, and `get(id, context)`
+returns one item whole. A plugin run as a process answers `sources/search`
+and `sources/get` over the same connection as its tools, and
+`serve_plugin_stdio` does that for it.
+
+- **Privacy is checked twice.** The source gets the run's class in its
+  `ToolContext`, and memory then drops any item the run may not see. An
+  item's own class counts only from a source declared `public`; from any
+  other, every item is private. Items are always untrusted.
+- **Vectors are optional.** Memory sends the query's vector only when the
+  model that made it is the one the source names, at its width. Otherwise a
+  source is searched by words, and a source with only vectors from a model
+  the deployment doesn't have stops the server at startup. A manifest
+  declaring neither words nor vectors is refused.
+- **Bounds.** A search asks for at most 50 hits and keeps what it asked
+  for. Ids are up to 256 characters, titles are cut to 256, a hit's text to
+  8,000 and an item read whole to 100,000, marked `truncated`.
+- **Time and money.** Each search of a source has its own limit inside the
+  memory call's: `source_time_limit_secs` for that plugin in `plugins.yaml`,
+  5 by default. A source that fails or runs out of time is left out and
+  named in `sources_skipped`, and the rest of the search goes on. What a
+  source reports it spent, and what its metered capability calls cost, go on
+  the memory call's cost.
+- **Agents choose.** An agent's `memory.sources` names the sources its
+  memory reads; left out, it reads them all. See
+  [workflows.md](workflows.md#agents).
+- **Not in the hook:** SQL, table schemas or any query language. A query is
+  text and maybe a vector, and an item is text.
 
 ## The contract
 

@@ -11,6 +11,7 @@ publish = false
 [dependencies]
 dispatch = { path = "../dispatch" }
 events = { path = "../events" }
+memory = { path = "../memory" }
 model = { path = "../model" }
 plugin-api = { path = "../plugin-api" }
 protocol = { path = "../protocol" }

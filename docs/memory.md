@@ -33,6 +33,24 @@ labelled when it comes back into a prompt.
 When vectors aren't available, search uses keywords and `SearchMode` says why.
 A half-blind search must not look like a healthy one.
 
+### Sources
+
+Plugins can offer memory sources, such as a data lake
+([plugins.md](plugins.md#sources)). The `memory` tool's search reads them
+too: each source's hits are one more ranked list in the fusion, so an item
+competes with notes on rank alone, and a source's own scores are never
+compared with anything. Sources are searched at once, each within its own
+time limit, and a source that fails or is too slow is named in the result,
+not left to look like it found nothing.
+
+An item keeps the similarity its source reports only if the source was sent
+the query's vector, so `min_similarity` can't be met by a source's own
+claim. An item from a source that wasn't declared public is private, and an
+item the run may not see is dropped, whatever the source says.
+
+The runtime's own loops and a plugin's `memory` capability search the store
+alone.
+
 ## The eval
 
 `eval/retrieval_golden.yaml` holds made-up notes and questions.

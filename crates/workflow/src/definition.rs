@@ -34,6 +34,19 @@ pub struct Agent {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(range(min = 1, max = 1_000_000))]
     pub max_output_tokens: Option<u32>,
+    /// What its memory reads. Left out, every source the plugins offer.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub memory: Option<AgentMemory>,
+}
+
+/// What an agent's memory reads, beside the store.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct AgentMemory {
+    /// The sources it searches, as `plugin.name`. Empty means none, so a
+    /// narrow agent isn't flooded by a large lake.
+    #[schemars(length(max = 16), inner(length(min = 1, max = 64)))]
+    pub sources: Vec<String>,
 }
 
 /// The most items one step may run for.
@@ -155,6 +168,24 @@ pub struct Workflow {
 pub fn check_agent(agent: &Agent, tools: &BTreeMap<String, ToolDefinition>) -> Result<(), String> {
     match agent.tools.iter().find(|name| !tools.contains_key(*name)) {
         Some(missing) => Err(format!("there is no tool {missing}")),
+        None => Ok(()),
+    }
+}
+
+/// Checks that the sources an agent's memory names exist.
+///
+/// # Errors
+///
+/// What's wrong, in a sentence.
+pub fn check_agent_sources(agent: &Agent, sources: &[String]) -> Result<(), String> {
+    let named = agent.memory.iter().flat_map(|memory| &memory.sources);
+    match named.clone().find(|name| !sources.contains(*name)) {
+        Some(missing) => Err(format!(
+            "its memory names the source {missing}, which no plugin offers"
+        )),
+        None if named.clone().count() > 0 && !agent.tools.iter().any(|tool| tool == "memory") => {
+            Err("its memory names sources, and it doesn't have the memory tool".to_owned())
+        }
         None => Ok(()),
     }
 }

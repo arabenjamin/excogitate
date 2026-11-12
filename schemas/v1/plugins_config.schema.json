@@ -27,6 +27,11 @@
           "const": "jobs",
           "description": "Workflow runs started as jobs, and the state of the ones it started.",
           "type": "string"
+        },
+        {
+          "const": "sources",
+          "description": "Offering memory the sources its manifest declares.",
+          "type": "string"
         }
       ]
     },
@@ -58,6 +63,14 @@
             }
           ],
           "description": "How to start it as its own process. Left out, it's a plugin compiled\ninto the binary."
+        },
+        "source_time_limit_secs": {
+          "default": 5,
+          "description": "How long one search of one of its sources may take, in seconds,\ninside the memory call's own limit. Over it, memory goes on\nwithout that source and says so.",
+          "format": "uint32",
+          "maximum": 60,
+          "minimum": 1,
+          "type": "integer"
         }
       },
       "required": [

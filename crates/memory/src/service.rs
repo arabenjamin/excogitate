@@ -1,7 +1,6 @@
 //! The memory service: what the `memory` tool and the runtime's own loops use.
 
-use std::collections::{HashMap, HashSet};
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 use chrono::{DateTime, Utc};
 use protocol::{Actor, DataClass, Trust};
@@ -12,7 +11,14 @@ use store::{
     StoreError, UnitOfWork, WriteOp,
 };
 
-use crate::{ChunkConfig, EmbedError, EmbedScope, Embedder, Piece, chunk_text, fuse};
+use crate::{ChunkConfig, EmbedError, EmbedScope, Embedder, Piece, chunk_text};
+
+mod lake;
+
+pub use lake::{
+    ChoiceHeld, Found, ItemHit, LakeResults, LakeSearch, LakeSource, OpenedItem, SkippedSource,
+    SourceChoices,
+};
 
 /// The most notes one search may return.
 pub const MAX_SEARCH_LIMIT: u32 = 50;
@@ -132,6 +138,16 @@ pub enum MemoryError {
     /// The store failed or refused.
     #[error(transparent)]
     Store(#[from] StoreError),
+    /// A source failed or ran out of time.
+    #[error("source {name}: {error}")]
+    Source {
+        /// The source, as `plugin.name`.
+        name: String,
+        /// What went wrong.
+        error: String,
+        /// What it was charged, in millionths of a dollar.
+        cost_usd_micros: u64,
+    },
     /// The note was embedded, then the store failed or refused to save it.
     /// The embedding was paid for all the same.
     #[error("the note wasn't saved: {error}")]
@@ -151,6 +167,9 @@ impl MemoryError {
         match self {
             Self::NotSaved {
                 cost_usd_micros, ..
+            }
+            | Self::Source {
+                cost_usd_micros, ..
             } => *cost_usd_micros,
             _ => 0,
         }
@@ -163,6 +182,17 @@ pub struct Memory {
     store: Arc<dyn Store>,
     embedder: Option<Arc<dyn Embedder>>,
     chunking: ChunkConfig,
+    sources: Arc<OnceLock<Vec<LakeSource>>>,
+}
+
+/// The store's two lists for a query, and what making them found out.
+struct StoreLists {
+    text: Page<ChunkHit>,
+    vectors: Page<ChunkHit>,
+    mode: SearchMode,
+    cost: u64,
+    /// The query's vector and the model that made it, if there is one.
+    vector: Option<(Vec<f32>, String)>,
 }
 
 fn content_hash(body: &str) -> String {
@@ -207,6 +237,7 @@ impl Memory {
             store,
             embedder,
             chunking,
+            sources: Arc::default(),
         }
     }
 
@@ -497,14 +528,13 @@ impl Memory {
         Ok(())
     }
 
-    /// The vector search, or why there isn't one.
-    async fn vector_hits(
+    /// The query's vector, the model that made it, and what it cost, or
+    /// why there isn't one.
+    async fn query_vector(
         &self,
         query: &str,
-        classes: ClassFilter,
         scope: EmbedScope,
-        pool: PageRequest,
-    ) -> Result<(Page<ChunkHit>, u64), String> {
+    ) -> Result<(Vec<f32>, Option<String>, u64), String> {
         let Some(embedder) = &self.embedder else {
             return Err("no embedder is configured".to_owned());
         };
@@ -513,17 +543,57 @@ impl Memory {
             .embed(&input, scope)
             .await
             .map_err(|error| format!("the embedder failed: {error}"))?;
-        let cost = embedding.cost_usd_micros;
         let vector = embedding
             .vectors
             .into_iter()
             .next()
             .ok_or_else(|| "the embedder returned nothing".to_owned())?;
-        self.store
-            .search_vector(&vector, classes, pool)
-            .await
-            .map(|page| (page, cost))
-            .map_err(|error| format!("vector search failed: {error}"))
+        Ok((vector, embedding.model, embedding.cost_usd_micros))
+    }
+
+    /// The store's text and vector lists for a query. A vector failure
+    /// isn't an error: the lists say keyword-only and why.
+    async fn store_lists(
+        &self,
+        query: &str,
+        classes: ClassFilter,
+        scope: EmbedScope,
+        pool: PageRequest,
+    ) -> Result<StoreLists, MemoryError> {
+        let text = self.store.search_text(query, classes, pool).await?;
+        let nothing = Page {
+            items: Vec::new(),
+            has_more: false,
+        };
+        let keyword_only = |reason: &str| SearchMode::KeywordOnly {
+            reason: bounded(reason),
+        };
+        let (vector, model, cost) = match self.query_vector(query, scope).await {
+            Ok(made) => made,
+            Err(reason) => {
+                return Ok(StoreLists {
+                    text,
+                    vectors: nothing,
+                    mode: keyword_only(&reason),
+                    cost: 0,
+                    vector: None,
+                });
+            }
+        };
+        let (vectors, mode) = match self.store.search_vector(&vector, classes, pool).await {
+            Ok(page) => (page, SearchMode::Hybrid),
+            Err(error) => (
+                nothing,
+                keyword_only(&format!("vector search failed: {error}")),
+            ),
+        };
+        Ok(StoreLists {
+            text,
+            vectors,
+            mode,
+            cost,
+            vector: model.map(|model| (vector, model)),
+        })
     }
 
     /// Searches notes. `scope` is the run's own, and decides who may embed
@@ -546,7 +616,7 @@ impl Memory {
     /// The same, keeping only notes at least `min_similarity` close to the
     /// query by vector. The threshold applies before the limit, so it never
     /// costs a note that qualifies; a note found only by its words has no
-    /// similarity, so a threshold leaves it out.
+    /// similarity, so a threshold leaves it out. Sources aren't read.
     ///
     /// # Errors
     ///
@@ -559,80 +629,22 @@ impl Memory {
         limit: u32,
         min_similarity: Option<f32>,
     ) -> Result<SearchResults, MemoryError> {
-        if limit == 0 || limit > MAX_SEARCH_LIMIT {
-            return Err(MemoryError::Invalid(format!(
-                "limit must be 1 to {MAX_SEARCH_LIMIT}"
-            )));
-        }
-        if query.trim().is_empty() {
-            return Err(MemoryError::Invalid("a search needs a query".to_owned()));
-        }
-        // A pool wider than the answer: fusing only the top few loses notes
-        // that rank well in one list and appear in the other.
-        let pool = PageRequest::new((limit * 3).max(10), 0)?;
-        let text = self.store.search_text(query, classes, pool).await?;
-        let (vector, mode, cost_usd_micros) =
-            match self.vector_hits(query, classes, scope, pool).await {
-                Ok((page, cost)) => (page, SearchMode::Hybrid, cost),
-                Err(reason) => (
-                    Page {
-                        items: Vec::new(),
-                        has_more: false,
-                    },
-                    SearchMode::KeywordOnly {
-                        reason: bounded(&reason),
-                    },
-                    0,
-                ),
-            };
-        let similarity: HashMap<ChunkId, f32> = vector
-            .items
-            .iter()
-            .map(|hit| (hit.chunk.id, hit.score))
-            .collect();
-        let fused = fuse(&[text.items.as_slice(), vector.items.as_slice()]);
-
-        // Walk in fused order: rebuilding from any other order loses the rank.
-        let mut seen = HashSet::new();
-        let mut best = Vec::new();
-        let mut not_close_enough = 0_u32;
-        for chunk in fused {
-            if !seen.insert(chunk.hit.chunk.note_id) {
-                continue;
-            }
-            let close = similarity.get(&chunk.hit.chunk.id).copied();
-            if min_similarity.is_some_and(|min| close.is_none_or(|close| close < min)) {
-                not_close_enough = not_close_enough.saturating_add(1);
-                continue;
-            }
-            best.push(chunk);
-        }
-        let wanted = limit as usize;
-        let has_more = best.len() > wanted || text.has_more || vector.has_more;
-        best.truncate(wanted);
-
-        let mut hits = Vec::with_capacity(best.len());
-        for chunk in best {
-            // A note deleted since the search is simply gone.
-            if let Some(note) = self.store.get_note(chunk.hit.chunk.note_id).await? {
-                hits.push(NoteHit {
-                    note_id: note.id,
-                    title: note.title,
-                    text: chunk.hit.chunk.text,
-                    tags: note.tags,
-                    source_url: note.source_url,
-                    provenance: chunk.hit.provenance,
-                    similarity: similarity.get(&chunk.hit.chunk.id).copied(),
-                    score: chunk.score,
-                });
-            }
-        }
+        let found = self
+            .search_lake(query, classes, scope, limit, min_similarity, None)
+            .await?;
         Ok(SearchResults {
-            hits,
-            mode,
-            has_more,
-            not_close_enough,
-            cost_usd_micros,
+            hits: found
+                .hits
+                .into_iter()
+                .filter_map(|hit| match hit {
+                    Found::Note(note) => Some(note),
+                    Found::Item(_) => None,
+                })
+                .collect(),
+            mode: found.mode,
+            has_more: found.has_more,
+            not_close_enough: found.not_close_enough,
+            cost_usd_micros: found.cost_usd_micros,
         })
     }
 }

@@ -32,6 +32,16 @@ pub struct PluginConfig {
     /// into the binary.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub process: Option<ProcessConfig>,
+    /// How long one search of one of its sources may take, in seconds,
+    /// inside the memory call's own limit. Over it, memory goes on
+    /// without that source and says so.
+    #[serde(default = "default_source_time_limit")]
+    #[schemars(range(min = 1, max = 60))]
+    pub source_time_limit_secs: u32,
+}
+
+const fn default_source_time_limit() -> u32 {
+    5
 }
 
 /// A plugin that runs as its own process.
@@ -81,6 +91,18 @@ impl PluginsConfig {
     /// [`HostError::Config`] if it isn't YAML or fails its schema.
     pub fn from_yaml(text: &str) -> Result<Self, HostError> {
         schema::parse_yaml(text).map_err(|error| HostError::Config(error.to_string()))
+    }
+
+    /// How long one search of the plugin's sources may take.
+    pub(crate) fn source_time_limit(&self, plugin: &str) -> std::time::Duration {
+        let seconds = self
+            .plugins
+            .iter()
+            .find(|config| config.name == plugin)
+            .map_or(default_source_time_limit(), |config| {
+                config.source_time_limit_secs
+            });
+        std::time::Duration::from_secs(u64::from(seconds))
     }
 
     pub(crate) fn granted(&self, plugin: &str, capability: PluginCapability) -> bool {

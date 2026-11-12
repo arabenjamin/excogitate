@@ -1854,7 +1854,9 @@ version = "0.4.0"
 dependencies = [
  "async-trait",
  "chrono",
+ "futures-util",
  "model",
+ "plugin-api",
  "proptest",
  "protocol",
  "schema",
@@ -4132,6 +4134,7 @@ dependencies = [
  "chrono",
  "dispatch",
  "events",
+ "memory",
  "model",
  "plugin-api",
  "proptest",

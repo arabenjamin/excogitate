@@ -101,7 +101,8 @@ port](docs/models.md), [memory and retrieval](docs/memory.md), [dispatch](docs/d
 ## Writing a plugin
 
 A plugin has a manifest with a schema, a declared schema for every tool's
-input and output, and narrow capabilities granted by name. Plugins live in
+input and output, and narrow capabilities granted by name. It can also offer
+memory a source to read beside its own notes, such as a data lake. Plugins live in
 your own repo: run one as its own process on the stock image, listed in
 `plugins.yaml`, or compile them into a small binary of your own. Either way,
 nothing in Excogitate changes. Start by copying [`plugins/example`](plugins/example), and

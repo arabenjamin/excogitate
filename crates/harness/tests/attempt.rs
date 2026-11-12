@@ -107,6 +107,7 @@ async fn setup(script: Vec<ChaosStep>) -> Setup {
             time_limit: Duration::from_secs(20),
         },
         stop: dispatch::StopSignal::new(),
+        sources: workflow::SourceChoices::default(),
     };
     Setup {
         engine,

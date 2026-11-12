@@ -249,6 +249,12 @@ impl Session {
         self.hit
     }
 
+    /// The run it's for.
+    #[must_use]
+    pub const fn run(&self) -> RunId {
+        self.config.run
+    }
+
     /// The same session, ended early when `stop` is given.
     #[must_use]
     pub fn with_stop(mut self, stop: StopSignal) -> Self {

@@ -8,7 +8,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::{Capabilities, CapabilityError, PluginCapability};
+use crate::{Capabilities, CapabilityError, PluginCapability, Source};
 
 /// What a tool can do to the world. A write counts against the write budget
 /// and is stubbed when Harness² probes a candidate.
@@ -338,4 +338,14 @@ pub trait Plugin: Send + Sync + std::fmt::Debug {
     ///
     /// [`PluginError`] if it can't be set up.
     fn tools(&self, capabilities: &Capabilities) -> Result<Vec<Arc<dyn Tool>>, PluginError>;
+
+    /// Builds its sources, using only the capabilities it's handed. They
+    /// must be exactly the sources its manifest declares. None by default.
+    ///
+    /// # Errors
+    ///
+    /// [`PluginError`] if they can't be set up.
+    fn sources(&self, _capabilities: &Capabilities) -> Result<Vec<Arc<dyn Source>>, PluginError> {
+        Ok(Vec::new())
+    }
 }

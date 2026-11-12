@@ -5,9 +5,10 @@
 //! fields each operation needs is stated with conditionals in that schema.
 
 use async_trait::async_trait;
-use chrono::Utc;
+use chrono::{DateTime, Utc};
 use memory::{
-    EmbedScope, Memory, MemoryError, NewNote, NoteEdit, NoteHit, NoteOrigin, SearchMode, StoredNote,
+    EmbedScope, Found, ItemHit, LakeSearch, Memory, MemoryError, NewNote, NoteEdit, NoteHit,
+    NoteOrigin, SearchMode, SourceChoices, StoredNote,
 };
 use plugin_api::{Effect, Tool, ToolContext, ToolDefinition, ToolFailure, ToolOutput};
 use protocol::{Actor, DataClass, Trust};
@@ -30,7 +31,9 @@ const DEFAULT_LIMIT: u32 = 5;
 const DERIVED_TITLE: usize = 80;
 
 const DESCRIPTION: &str = "Long-term memory. `store` keeps text (needs `text`). \
-`search` finds notes by meaning and keywords (needs `query`). `get` reads one note (needs `id`). \
+`search` finds notes by meaning and keywords (needs `query`), and items in the sources plugins \
+offer, listed under `sources`. `get` reads one note (needs `id`). `open` reads one source item \
+whole (needs `source` and `item`). \
 `update` changes one (needs `id` and at least one of `title`, `text`, `tags`). \
 `delete` forgets one (needs `id`). Notes written by the owner can't be changed or deleted here.";
 
@@ -42,14 +45,21 @@ enum Operation {
     Get,
     Update,
     Delete,
+    Open,
 }
 
+/// The longest source name.
+const MAX_SOURCE: usize = 64;
+/// The most source items or skipped sources one result lists.
+const MAX_LISTED: usize = 50;
+
 /// The fields each operation can't do without.
-const REQUIRED: [(&str, &[&str]); 4] = [
+const REQUIRED: [(&str, &[&str]); 5] = [
     ("store", &["text"]),
     ("search", &["query"]),
     ("get", &["id"]),
     ("delete", &["id"]),
+    ("open", &["source", "item"]),
 ];
 
 /// Adds the per-operation requirements. A field that's required must also
@@ -108,6 +118,12 @@ struct MemoryArgs {
     /// found by keyword alone has no similarity, so it's left out.
     #[schemars(range(min = 0.0, max = 1.0))]
     min_similarity: Option<f32>,
+    /// For `open`: the source the item is in, as a search named it.
+    #[schemars(length(min = 1, max = MAX_SOURCE))]
+    source: Option<String>,
+    /// For `open`: the item's id, as a search gave it.
+    #[schemars(length(min = 1, max = plugin_api::MAX_ITEM_ID))]
+    item: Option<String>,
 }
 
 /// Whether a note may be treated as instructions.
@@ -153,6 +169,50 @@ struct Hit {
     similarity: Option<f32>,
 }
 
+/// An item a plugin's source holds. Always untrusted.
+#[derive(Debug, Serialize, JsonSchema)]
+#[schemars(deny_unknown_fields)]
+struct SourceHit {
+    /// The source, as `plugin.name`.
+    #[schemars(length(max = MAX_SOURCE))]
+    source: String,
+    /// The item's id within it: `open` reads it whole.
+    #[schemars(length(max = plugin_api::MAX_ITEM_ID))]
+    id: String,
+    /// Its title.
+    #[schemars(length(max = MAX_TITLE))]
+    title: String,
+    /// The part that matched, or all of it when read with `open`.
+    #[schemars(length(max = MAX_TEXT))]
+    text: String,
+    /// Read with `open`: true if the item is longer than `text`. A search
+    /// hit's text is only the part that matched.
+    truncated: bool,
+    /// The URL it came from.
+    #[schemars(length(max = MAX_URL))]
+    source_url: Option<String>,
+    /// When it last changed, if the source knows.
+    updated_at: Option<DateTime<Utc>>,
+    /// Its score, comparable with the notes' within this search. None when
+    /// read with `open`.
+    score: Option<f32>,
+    /// How close it is in meaning to the query, if the source searched
+    /// with the query's vector.
+    similarity: Option<f32>,
+}
+
+/// A source that was searched and gave nothing.
+#[derive(Debug, Serialize, JsonSchema)]
+#[schemars(deny_unknown_fields)]
+struct SkippedSource {
+    /// The source, as `plugin.name`.
+    #[schemars(length(max = MAX_SOURCE))]
+    source: String,
+    /// Why.
+    #[schemars(length(max = MAX_REASON))]
+    why: String,
+}
+
 /// What the tool did.
 #[derive(Debug, Serialize, JsonSchema)]
 #[serde(tag = "result", rename_all = "snake_case", deny_unknown_fields)]
@@ -182,6 +242,13 @@ enum MemoryResult {
         /// than `min_similarity`.
         #[serde(default)]
         not_close_enough: u32,
+        /// Items in plugins' sources, ranked with the notes: compare
+        /// `score`. `open` lists the one item read here.
+        #[schemars(length(max = MAX_LISTED))]
+        sources: Vec<SourceHit>,
+        /// Sources searched that gave nothing, and why.
+        #[schemars(length(max = MAX_LISTED))]
+        sources_skipped: Vec<SkippedSource>,
     },
     /// One note.
     Note {
@@ -231,6 +298,20 @@ fn hit(found: NoteHit) -> Hit {
     }
 }
 
+fn item_hit(found: ItemHit) -> SourceHit {
+    SourceHit {
+        source: clamped(found.source, MAX_SOURCE),
+        id: found.id,
+        title: clamped(found.title, MAX_TITLE),
+        text: clamped(found.text, MAX_TEXT),
+        truncated: false,
+        source_url: found.source_url.map(|url| clamped(url, MAX_URL)),
+        updated_at: found.updated_at,
+        score: Some(found.score),
+        similarity: found.similarity,
+    }
+}
+
 fn stored(note: &StoredNote) -> MemoryResult {
     MemoryResult::Stored {
         id: note.id.as_uuid(),
@@ -268,13 +349,25 @@ const fn classes_for(data_class: DataClass) -> ClassFilter {
 #[derive(Debug, Clone)]
 pub struct MemoryTool {
     memory: Memory,
+    choices: SourceChoices,
 }
 
 impl MemoryTool {
     /// The tool, over this memory.
     #[must_use]
-    pub const fn new(memory: Memory) -> Self {
-        Self { memory }
+    pub fn new(memory: Memory) -> Self {
+        Self {
+            memory,
+            choices: SourceChoices::default(),
+        }
+    }
+
+    /// The same tool, reading for each run only the sources `choices` names
+    /// for it, if it names any.
+    #[must_use]
+    pub fn with_choices(mut self, choices: SourceChoices) -> Self {
+        self.choices = choices;
+        self
     }
 
     /// The tool's input and output schemas, as published.
@@ -322,32 +415,57 @@ impl MemoryTool {
             data_class: context.data_class,
             budget_usd_micros: Some(context.budget_usd_micros),
         };
+        let chosen = self.choices.of(context.run);
+        let lake = LakeSearch {
+            context,
+            chosen: chosen.as_deref(),
+        };
         let results = self
             .memory
-            .search_close(
+            .search_lake(
                 &query,
                 classes_for(context.data_class),
                 scope,
                 args.limit.unwrap_or(DEFAULT_LIMIT),
                 args.min_similarity,
+                Some(lake),
             )
             .await
             .map_err(|error| failure(&error))?;
-        let kept: Vec<NoteHit> = results.hits;
-        let all_trusted = !kept.is_empty()
-            && kept
+        let (mut notes, mut items): (Vec<NoteHit>, Vec<ItemHit>) = (Vec::new(), Vec::new());
+        for found in results.hits {
+            match found {
+                Found::Note(note) => notes.push(note),
+                Found::Item(item) => items.push(item),
+            }
+        }
+        // An item from a source is never trusted.
+        let all_trusted = items.is_empty()
+            && !notes.is_empty()
+            && notes
                 .iter()
                 .all(|found| found.provenance.trust == Trust::Trusted);
         let keyword_only_because = match results.mode {
             SearchMode::Hybrid => None,
             SearchMode::KeywordOnly { reason } => Some(clamped(reason, MAX_REASON)),
         };
+        let sources_skipped = results
+            .sources_skipped
+            .into_iter()
+            .take(MAX_LISTED)
+            .map(|skipped| SkippedSource {
+                source: clamped(skipped.source, MAX_SOURCE),
+                why: clamped(skipped.why, MAX_REASON),
+            })
+            .collect();
         Ok((
             MemoryResult::Found {
-                hits: kept.into_iter().map(hit).collect(),
+                hits: notes.into_iter().map(hit).collect(),
                 keyword_only_because,
                 has_more: results.has_more,
                 not_close_enough: results.not_close_enough,
+                sources: items.into_iter().map(item_hit).collect(),
+                sources_skipped,
             },
             if all_trusted {
                 Trust::Trusted
@@ -434,6 +552,54 @@ impl MemoryTool {
         Ok((stored(&done), Trust::Trusted, done.cost_usd_micros))
     }
 
+    async fn open(
+        &self,
+        args: MemoryArgs,
+        context: ToolContext,
+    ) -> Result<(MemoryResult, Trust, u64), ToolFailure> {
+        let source = args.source.ok_or_else(|| missing("source"))?;
+        let item = args.item.ok_or_else(|| missing("item"))?;
+        let chosen = self.choices.of(context.run);
+        let lake = LakeSearch {
+            context,
+            chosen: chosen.as_deref(),
+        };
+        let opened = self
+            .memory
+            .open(&source, &item, classes_for(context.data_class), lake)
+            .await
+            .map_err(|error| failure(&error))?;
+        let Some(found) = opened.item else {
+            return Err(ToolFailure::new(format!(
+                "{source} has no item {item} visible to this run"
+            ))
+            .with_cost(opened.cost_usd_micros));
+        };
+        let whole = SourceHit {
+            source: clamped(source, MAX_SOURCE),
+            id: found.id,
+            title: clamped(found.title, MAX_TITLE),
+            text: clamped(found.text, MAX_TEXT),
+            truncated: opened.truncated,
+            source_url: found.source_url.map(|url| clamped(url, MAX_URL)),
+            updated_at: found.updated_at,
+            score: None,
+            similarity: None,
+        };
+        Ok((
+            MemoryResult::Found {
+                hits: Vec::new(),
+                keyword_only_because: None,
+                has_more: false,
+                not_close_enough: 0,
+                sources: vec![whole],
+                sources_skipped: Vec::new(),
+            },
+            Trust::Untrusted,
+            opened.cost_usd_micros,
+        ))
+    }
+
     async fn delete(
         &self,
         id: NoteId,
@@ -460,7 +626,7 @@ impl Tool for MemoryTool {
 
     fn effect_of(&self, arguments: &Value) -> Effect {
         match arguments.get("operation").and_then(Value::as_str) {
-            Some("search" | "get") => Effect::Read,
+            Some("search" | "get" | "open") => Effect::Read,
             _ => Effect::Write,
         }
     }
@@ -472,6 +638,7 @@ impl Tool for MemoryTool {
         let (result, trust, cost_usd_micros) = match args.operation {
             Operation::Store => self.store(args, context).await?,
             Operation::Search => self.search(args, context).await?,
+            Operation::Open => self.open(args, context).await?,
             Operation::Get => self.get(id.ok_or_else(|| missing("id"))?, context).await?,
             Operation::Update => {
                 self.update(id.ok_or_else(|| missing("id"))?, args, context)

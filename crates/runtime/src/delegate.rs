@@ -89,6 +89,8 @@ pub(crate) struct DelegateTool {
     pub(crate) stop: StopSignal,
     /// The reads a probed hand-off may really make, as Harness² allows.
     pub(crate) probe_reads: BTreeSet<String>,
+    /// The sources each agent's run may read.
+    pub(crate) sources: workflow::SourceChoices,
 }
 
 impl DelegateTool {
@@ -100,6 +102,7 @@ impl DelegateTool {
             store: Arc::clone(&self.store),
             limits: self.limits,
             stop: self.stop.clone(),
+            sources: self.sources.clone(),
         })
     }
 }

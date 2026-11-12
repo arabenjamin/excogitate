@@ -1,5 +1,25 @@
 {
   "$defs": {
+    "AgentMemory": {
+      "additionalProperties": false,
+      "description": "What an agent's memory reads, beside the store.",
+      "properties": {
+        "sources": {
+          "description": "The sources it searches, as `plugin.name`. Empty means none, so a\nnarrow agent isn't flooded by a large lake.",
+          "items": {
+            "maxLength": 64,
+            "minLength": 1,
+            "type": "string"
+          },
+          "maxItems": 16,
+          "type": "array"
+        }
+      },
+      "required": [
+        "sources"
+      ],
+      "type": "object"
+    },
     "Budget": {
       "additionalProperties": false,
       "description": "What one run may use. Every field is required: a run doesn't get an\nunlimited anything by leaving it out. Calls are capped at 512 so a receipt\nis always bounded.",
@@ -91,6 +111,17 @@
         "integer",
         "null"
       ]
+    },
+    "memory": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/AgentMemory"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "What its memory reads. Left out, every source the plugins offer."
     },
     "system_prompt": {
       "description": "Its instructions.",

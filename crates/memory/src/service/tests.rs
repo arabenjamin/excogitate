@@ -63,6 +63,7 @@ impl Embedder for Fake {
         Ok(Embedding {
             vectors: inputs.iter().map(|text| vector_for(text)).collect(),
             cost_usd_micros: 7,
+            model: None,
         })
     }
 }
@@ -229,6 +230,7 @@ impl Embedder for Metered {
         Ok(Embedding {
             vectors: vec![vec![1.0, 0.0, 0.0]],
             cost_usd_micros: 5,
+            model: None,
         })
     }
 }
@@ -706,6 +708,7 @@ impl Embedder for Interrupting {
         Ok(Embedding {
             vectors: inputs.iter().map(|text| vector_for(text)).collect(),
             cost_usd_micros: 7,
+            model: None,
         })
     }
 }

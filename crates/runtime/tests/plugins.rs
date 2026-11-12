@@ -15,7 +15,8 @@ use store_memory::MemoryStore;
 const MODELS: &str = "version: 1\nproviders:\n  - {name: c, base_url: 'http://127.0.0.1:9/v1', no_log: true, timeout_secs: 1}\n\
      models:\n  - {name: c, provider: c, wire_model: x, capabilities: [chat, tools], context_tokens: 1000, max_output_tokens: 10}\n";
 
-const GRANT_RECORDS: &str = "version: 1\nplugins:\n  - {name: example, capabilities: [records]}\n";
+const GRANTED: &str =
+    "version: 1\nplugins:\n  - {name: example, capabilities: [records, sources]}\n";
 
 async fn build(grants: &str, config: Config) -> Result<Runtime, RuntimeError> {
     Runtime::build(
@@ -54,7 +55,7 @@ async fn call(runtime: &Runtime, tool: &str, arguments: &Value) -> Value {
 
 #[tokio::test]
 async fn a_granted_plugin_is_installed_and_its_tools_are_offered() {
-    let runtime = build(GRANT_RECORDS, Config::default()).await.unwrap();
+    let runtime = build(GRANTED, Config::default()).await.unwrap();
     assert_eq!(runtime.plugins(), ["example"]);
     let names: Vec<String> = runtime
         .mcp_tools()
@@ -73,7 +74,7 @@ async fn a_granted_plugin_is_installed_and_its_tools_are_offered() {
 
 #[tokio::test]
 async fn a_plugin_tool_runs_through_dispatch_and_keeps_its_records() {
-    let runtime = build(GRANT_RECORDS, Config::default()).await.unwrap();
+    let runtime = build(GRANTED, Config::default()).await.unwrap();
     let counted = call(
         &runtime,
         "example_word_count",
@@ -98,6 +99,46 @@ async fn a_plugin_tool_runs_through_dispatch_and_keeps_its_records() {
 }
 
 #[tokio::test]
+async fn memory_finds_and_opens_what_a_plugins_source_holds() {
+    let runtime = build(GRANTED, Config::default()).await.unwrap();
+    let found = call(
+        &runtime,
+        "memory",
+        &json!({ "operation": "search", "query": "what does a receipt hold" }),
+    )
+    .await;
+    assert_eq!(found["isError"], false, "{found}");
+    let envelope = &found["structuredContent"];
+    assert_eq!(envelope["untrusted"], true, "a source's items never are");
+    let first = &envelope["result"]["sources"][0];
+    assert_eq!(first["source"], "example.glossary", "{envelope}");
+    assert_eq!(first["id"], "receipt");
+    assert_eq!(envelope["result"]["sources_skipped"], json!([]));
+
+    let opened = call(
+        &runtime,
+        "memory",
+        &json!({ "operation": "open", "source": "example.glossary", "item": "trajectory" }),
+    )
+    .await;
+    assert_eq!(opened["isError"], false, "{opened}");
+    let whole = &opened["structuredContent"]["result"]["sources"][0];
+    assert!(
+        whole["text"].as_str().unwrap().starts_with("Every step"),
+        "{whole}"
+    );
+    assert_eq!(whole["truncated"], false);
+
+    let missing = call(
+        &runtime,
+        "memory",
+        &json!({ "operation": "open", "source": "example.glossary", "item": "nothing" }),
+    )
+    .await;
+    assert_eq!(missing["isError"], true, "{missing}");
+}
+
+#[tokio::test]
 async fn a_plugin_without_its_grant_stops_the_build() {
     let error = build("version: 1\nplugins: []\n", Config::default())
         .await
@@ -114,7 +155,7 @@ async fn settings_can_name_a_plugin_tool() {
         },
         ..Config::default()
     };
-    assert!(build(GRANT_RECORDS, config).await.is_ok());
+    assert!(build(GRANTED, config).await.is_ok());
 }
 
 fn manifest_file(name: &str, text: &str) -> String {
@@ -142,7 +183,7 @@ async fn build_processes(grants: &str) -> Result<Runtime, RuntimeError> {
 async fn a_process_plugin_whose_manifest_names_another_is_refused() {
     let path = manifest_file("other", plugin_example::MANIFEST);
     let grants = format!(
-        "version: 1\nplugins:\n  - name: notexample\n    capabilities: [records]\n    process: {{command: /bin/true, manifest: '{path}'}}\n"
+        "version: 1\nplugins:\n  - name: notexample\n    capabilities: [records, sources]\n    process: {{command: /bin/true, manifest: '{path}'}}\n"
     );
     let error = build_processes(&grants).await.unwrap_err();
     assert!(error.to_string().contains("names it example"), "{error}");
@@ -150,7 +191,7 @@ async fn a_process_plugin_whose_manifest_names_another_is_refused() {
 
 #[tokio::test]
 async fn a_process_plugin_without_its_manifest_says_which_file() {
-    let grants = "version: 1\nplugins:\n  - name: example\n    capabilities: [records]\n    process: {command: /bin/true, manifest: /nonexistent/plugin.yaml}\n";
+    let grants = "version: 1\nplugins:\n  - name: example\n    capabilities: [records, sources]\n    process: {command: /bin/true, manifest: /nonexistent/plugin.yaml}\n";
     let error = build_processes(grants).await.unwrap_err();
     assert!(
         error.to_string().contains("/nonexistent/plugin.yaml"),
@@ -163,7 +204,7 @@ async fn a_process_plugin_is_started_from_plugins_yaml() {
     // A program that exits at once: the host started it, and says it stopped.
     let path = manifest_file("start", plugin_example::MANIFEST);
     let grants = format!(
-        "version: 1\nplugins:\n  - name: example\n    capabilities: [records]\n    process: {{command: /bin/true, manifest: '{path}'}}\n"
+        "version: 1\nplugins:\n  - name: example\n    capabilities: [records, sources]\n    process: {{command: /bin/true, manifest: '{path}'}}\n"
     );
     let error = build_processes(&grants).await.unwrap_err();
     assert!(error.to_string().contains("stopped"), "{error}");

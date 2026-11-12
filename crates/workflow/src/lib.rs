@@ -14,11 +14,16 @@ mod probe;
 mod roster;
 mod template;
 
-pub use definition::{Agent, ForEach, MAX_ITEMS, Step, Workflow, check_agent, check_workflow};
+pub use definition::{
+    Agent, AgentMemory, ForEach, MAX_ITEMS, Step, Workflow, check_agent, check_agent_sources,
+    check_workflow,
+};
 pub use engine::{
     DELEGATE_TOOL, Engine, EngineLimits, RunOutcome, StepReport, StepStatus, WorkflowError,
     WorkflowRun, check_workflow_run,
 };
+/// The sources each agent's run may read; the memory tool reads it.
+pub use memory::SourceChoices;
 pub use probe::ProbeRun;
 pub use roster::ROSTER_LIMIT;
 pub use template::{TemplateError, render_text, render_value};
