@@ -515,6 +515,155 @@ pub trait MemoryCapability: Send + Sync + std::fmt::Debug {
     ) -> Result<NoteStored, CapabilityError>;
 }
 
+/// The most jobs one plugin may have waiting or running at once. Past it a
+/// start is refused, so a workflow that calls the plugin again can't
+/// multiply without end.
+pub const MAX_OUTSTANDING_JOBS: usize = 100;
+/// The longest idempotency key.
+pub const MAX_IDEMPOTENCY_KEY: usize = 128;
+
+/// A workflow run for a plugin to start. It runs as its own job, held to its
+/// workflow's budget, and is retried never, since a retry would repeat what
+/// its earlier steps did.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct RunWorkflow {
+    /// The workflow.
+    pub workflow: String,
+    /// Its inputs, checked against the workflow's inputs schema.
+    pub inputs: Value,
+    /// Higher runs first, from -1000 to 1000.
+    pub priority: i32,
+    /// The same key for the same workflow starts it once: a second start
+    /// returns the first run's job, for as long as that job is kept.
+    pub idempotency_key: Option<String>,
+}
+
+impl RunWorkflow {
+    /// A run of `workflow` with `inputs`, at priority 0.
+    #[must_use]
+    pub fn new(workflow: impl Into<String>, inputs: Value) -> Self {
+        Self {
+            workflow: workflow.into(),
+            inputs,
+            priority: 0,
+            idempotency_key: None,
+        }
+    }
+
+    /// The same run, at this priority.
+    #[must_use]
+    pub const fn with_priority(mut self, priority: i32) -> Self {
+        self.priority = priority;
+        self
+    }
+
+    /// The same run, started once per key.
+    #[must_use]
+    pub fn with_idempotency_key(mut self, key: impl Into<String>) -> Self {
+        self.idempotency_key = Some(key.into());
+        self
+    }
+}
+
+/// A run that was started, or found already started.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct JobStarted {
+    /// Its job.
+    pub job_id: uuid::Uuid,
+    /// True when its idempotency key had started it already.
+    pub already_existed: bool,
+}
+
+impl JobStarted {
+    /// What a start did.
+    #[must_use]
+    pub const fn new(job_id: uuid::Uuid, already_existed: bool) -> Self {
+        Self {
+            job_id,
+            already_existed,
+        }
+    }
+}
+
+/// Where a job stands.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum JobPhase {
+    /// Waiting to run.
+    Queued,
+    /// Running.
+    Running,
+    /// Finished.
+    Succeeded,
+    /// Failed for good.
+    Dead,
+}
+
+/// A job a plugin started, as it stands.
+#[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
+pub struct JobState {
+    /// The job.
+    pub job_id: uuid::Uuid,
+    /// Where it stands.
+    pub phase: JobPhase,
+    /// Why its last attempt failed, if it did.
+    pub last_error: Option<String>,
+    /// What it produced, once it's finished.
+    pub result: Option<Value>,
+}
+
+impl JobState {
+    /// A job's state.
+    #[must_use]
+    pub const fn new(job_id: uuid::Uuid, phase: JobPhase) -> Self {
+        Self {
+            job_id,
+            phase,
+            last_error: None,
+            result: None,
+        }
+    }
+
+    /// The same, with why it failed and what it produced.
+    #[must_use]
+    pub fn with_outcome(mut self, last_error: Option<String>, result: Option<Value>) -> Self {
+        self.last_error = last_error;
+        self.result = result;
+        self
+    }
+}
+
+/// Starting work: workflow runs, each its own job. A plugin sees only the
+/// jobs it started.
+#[async_trait]
+pub trait JobsCapability: Send + Sync + std::fmt::Debug {
+    /// Starts a workflow run, once the workflow exists and the inputs fit.
+    ///
+    /// # Errors
+    ///
+    /// [`CapabilityError::Refused`] if there's no such workflow, the inputs
+    /// don't fit, or the plugin has [`MAX_OUTSTANDING_JOBS`] already.
+    async fn run_workflow(
+        &self,
+        run: RunWorkflow,
+        context: ToolContext,
+    ) -> Result<JobStarted, CapabilityError>;
+
+    /// A job this plugin started; none for any other, or one not kept.
+    ///
+    /// # Errors
+    ///
+    /// [`CapabilityError`] if it fails.
+    async fn job(
+        &self,
+        job_id: uuid::Uuid,
+        context: ToolContext,
+    ) -> Result<Option<JobState>, CapabilityError>;
+}
+
 /// The capabilities handed to a plugin: those it declared and was granted.
 #[derive(Debug, Clone, Default)]
 #[non_exhaustive]
@@ -527,6 +676,8 @@ pub struct Capabilities {
     pub model: Option<Arc<dyn ModelCapability>>,
     /// Long-term memory, if granted.
     pub memory: Option<Arc<dyn MemoryCapability>>,
+    /// Starting work, if granted.
+    pub jobs: Option<Arc<dyn JobsCapability>>,
 }
 
 impl Capabilities {
@@ -556,6 +707,24 @@ impl Capabilities {
     pub fn with_memory(mut self, memory: Arc<dyn MemoryCapability>) -> Self {
         self.memory = Some(memory);
         self
+    }
+
+    /// The same set, with the jobs capability.
+    #[must_use]
+    pub fn with_jobs(mut self, jobs: Arc<dyn JobsCapability>) -> Self {
+        self.jobs = Some(jobs);
+        self
+    }
+
+    /// The jobs capability.
+    ///
+    /// # Errors
+    ///
+    /// [`CapabilityError::NotGranted`] if the plugin doesn't have it.
+    pub fn jobs(&self) -> Result<Arc<dyn JobsCapability>, CapabilityError> {
+        self.jobs
+            .clone()
+            .ok_or(CapabilityError::NotGranted(PluginCapability::Jobs))
     }
 
     /// The memory capability.

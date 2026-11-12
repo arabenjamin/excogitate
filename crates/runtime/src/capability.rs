@@ -1,7 +1,8 @@
-//! The `http`, `model` and `memory` capabilities a plugin can be granted,
-//! made from the runtime's own parts: HTTP is the `http_request` tool, with
-//! its network rules; model calls go through the gateway, routed and charged
-//! like the runtime's own; and notes go into the runtime's own memory.
+//! The `http`, `model`, `memory` and `jobs` capabilities a plugin can be
+//! granted, made from the runtime's own parts: HTTP is the `http_request`
+//! tool, with its network rules; model calls go through the gateway, routed
+//! and charged like the runtime's own; notes go into the runtime's own
+//! memory; and workflow runs are queued as the REST API queues them.
 
 use std::sync::Arc;
 use std::time::Instant;
@@ -11,12 +12,20 @@ use chrono::Utc;
 use memory::{Memory, NewNote, NoteOrigin};
 use model::{ChatRequest, Gateway, Message, RoutePolicy};
 use plugin_api::{
-    CapabilityError, CapabilityUse, HttpCapability, HttpRequest, HttpResponse, MemoryCapability,
-    ModelCapability, ModelReply, NoteStored, NoteToStore, PluginCapability, ToolContext,
+    CapabilityError, CapabilityUse, HttpCapability, HttpRequest, HttpResponse, JobPhase,
+    JobStarted, JobState, JobsCapability, MAX_IDEMPOTENCY_KEY, MAX_OUTSTANDING_JOBS,
+    MemoryCapability, ModelCapability, ModelReply, NoteStored, NoteToStore, PluginCapability,
+    RunWorkflow, ToolContext,
 };
 use plugin_host::{CapabilityMeter, CapabilitySource};
 use protocol::{Actor, Trust};
+use serde_json::json;
+use store::{Job, JobId, JobStatus, PageRequest, Store};
 use tools::HttpRequestTool;
+use uuid::Uuid;
+use work::{Enqueued, JobTransport, StoreTransport};
+
+use crate::jobs::WORKFLOW_KIND;
 
 /// Makes both capabilities for any plugin that's granted them.
 #[derive(Debug)]
@@ -25,6 +34,7 @@ pub(crate) struct RuntimeCapabilities {
     pub(crate) gateway: Arc<Gateway>,
     pub(crate) max_output_tokens: u32,
     pub(crate) memory: Memory,
+    pub(crate) store: Arc<dyn Store>,
 }
 
 impl CapabilitySource for RuntimeCapabilities {
@@ -48,6 +58,15 @@ impl CapabilitySource for RuntimeCapabilities {
         Arc::new(PluginMemory {
             memory: self.memory.clone(),
             stored_by: Actor::new(purpose(plugin)),
+            meter,
+        })
+    }
+
+    fn jobs(&self, plugin: &str, meter: Arc<CapabilityMeter>) -> Arc<dyn JobsCapability> {
+        Arc::new(PluginJobs {
+            store: Arc::clone(&self.store),
+            plugin: plugin.to_owned(),
+            requested_by: Actor::new(purpose(plugin)),
             meter,
         })
     }
@@ -254,12 +273,182 @@ impl MemoryCapability for PluginMemory {
     }
 }
 
+/// Jobs read per page when counting a plugin's outstanding ones.
+const COUNT_PAGE: u32 = 500;
+
+#[derive(Debug)]
+struct PluginJobs {
+    store: Arc<dyn Store>,
+    plugin: String,
+    requested_by: Actor,
+    meter: Arc<CapabilityMeter>,
+}
+
+fn failed(error: impl std::fmt::Display) -> CapabilityError {
+    CapabilityError::Failed(schema::bounded(&error.to_string()))
+}
+
+impl PluginJobs {
+    /// How many of this plugin's jobs are waiting or running. Counting stops
+    /// once it reaches the cap, and a queue too long to count to it counts
+    /// as full, so a start is never let through on a guess.
+    async fn outstanding(&self) -> Result<usize, CapabilityError> {
+        let mut mine = 0;
+        for status in [JobStatus::Queued, JobStatus::Claimed] {
+            let mut offset = 0;
+            loop {
+                let page = PageRequest::new(COUNT_PAGE, offset).map_err(failed)?;
+                let found = self
+                    .store
+                    .list_jobs(Some(status), page)
+                    .await
+                    .map_err(failed)?;
+                mine += found
+                    .items
+                    .iter()
+                    .filter(|job| job.requested_by == self.requested_by)
+                    .count();
+                if mine >= MAX_OUTSTANDING_JOBS {
+                    return Ok(mine);
+                }
+                if !found.has_more {
+                    break;
+                }
+                offset = offset.saturating_add(COUNT_PAGE);
+                if offset >= COUNT_PAGE.saturating_mul(10) {
+                    return Ok(MAX_OUTSTANDING_JOBS);
+                }
+            }
+        }
+        Ok(mine)
+    }
+
+    /// The job's id: one per key, for this plugin and workflow.
+    fn job_id(&self, workflow: &str, key: Option<&str>) -> JobId {
+        key.map_or_else(JobId::generate, |key| {
+            let seed = format!("plugin|{}|{workflow}|{key}", self.plugin);
+            JobId::from_uuid(Uuid::new_v5(&Uuid::NAMESPACE_OID, seed.as_bytes()))
+        })
+    }
+
+    fn check(run: &RunWorkflow) -> Result<(), CapabilityError> {
+        if !(-1000..=1000).contains(&run.priority) {
+            return Err(CapabilityError::Refused(
+                "a priority is from -1000 to 1000".to_owned(),
+            ));
+        }
+        if run
+            .idempotency_key
+            .as_deref()
+            .is_some_and(|key| key.is_empty() || key.chars().count() > MAX_IDEMPOTENCY_KEY)
+        {
+            return Err(CapabilityError::Refused(format!(
+                "an idempotency key is 1 to {MAX_IDEMPOTENCY_KEY} characters"
+            )));
+        }
+        Ok(())
+    }
+
+    async fn start(
+        &self,
+        run: RunWorkflow,
+        context: ToolContext,
+    ) -> Result<JobStarted, CapabilityError> {
+        Self::check(&run)?;
+        workflow::check_workflow_run(self.store.as_ref(), &run.workflow, &run.inputs)
+            .await
+            .map_err(|error| CapabilityError::Refused(schema::bounded(&error.to_string())))?;
+        // A Harness² probe starts nothing: the run passes its checks only.
+        if context.probing {
+            return Ok(JobStarted::new(Uuid::new_v4(), false));
+        }
+        let id = self.job_id(&run.workflow, run.idempotency_key.as_deref());
+        // A start already made returns its job, whatever the count.
+        if self.store.get_job(id).await.map_err(failed)?.is_some() {
+            return Ok(JobStarted::new(id.as_uuid(), true));
+        }
+        if self.outstanding().await? >= MAX_OUTSTANDING_JOBS {
+            return Err(CapabilityError::Refused(format!(
+                "plugin {} has {MAX_OUTSTANDING_JOBS} jobs waiting or running already",
+                self.plugin
+            )));
+        }
+        let job = Job {
+            id,
+            kind: WORKFLOW_KIND.to_owned(),
+            payload: json!({ "workflow": run.workflow, "inputs": run.inputs }),
+            priority: run.priority,
+            status: JobStatus::Queued,
+            requested_by: self.requested_by.clone(),
+            run_at: Utc::now(),
+            attempts: 0,
+            // A retry would repeat whatever the earlier steps did.
+            max_attempts: 1,
+            lease: None,
+            last_error: None,
+            result: None,
+            finished_at: None,
+        };
+        let enqueued = StoreTransport(Arc::clone(&self.store))
+            .enqueue(job)
+            .await
+            .map_err(failed)?;
+        Ok(JobStarted::new(
+            id.as_uuid(),
+            enqueued == Enqueued::AlreadyThere,
+        ))
+    }
+}
+
+#[async_trait]
+impl JobsCapability for PluginJobs {
+    async fn run_workflow(
+        &self,
+        run: RunWorkflow,
+        context: ToolContext,
+    ) -> Result<JobStarted, CapabilityError> {
+        // One start at a time per run, so two can't both pass the count.
+        let _turn = self.meter.turn(context.run).await;
+        check_calls_left(&self.meter, context)?;
+        let begun = Instant::now();
+        let what = schema::bounded(&run.workflow);
+        let started = self.start(run, context).await;
+        let used = CapabilityUse::new(PluginCapability::Jobs, what, started.is_ok())
+            .with_duration_ms(millis(begun));
+        self.meter.record(context.run, used);
+        started
+    }
+
+    async fn job(&self, job_id: Uuid, _: ToolContext) -> Result<Option<JobState>, CapabilityError> {
+        let found = self
+            .store
+            .get_job(JobId::from_uuid(job_id))
+            .await
+            .map_err(failed)?;
+        // Another's job is as good as not there.
+        let Some(job) = found.filter(|job| job.requested_by == self.requested_by) else {
+            return Ok(None);
+        };
+        let phase = match job.status {
+            JobStatus::Queued => JobPhase::Queued,
+            JobStatus::Claimed => JobPhase::Running,
+            JobStatus::Succeeded => JobPhase::Succeeded,
+            JobStatus::Dead => JobPhase::Dead,
+        };
+        let last_error = job.last_error.map(|error| schema::bounded(&error));
+        Ok(Some(
+            JobState::new(job_id, phase).with_outcome(last_error, job.result),
+        ))
+    }
+}
+
 #[cfg(test)]
 #[allow(clippy::unwrap_used, reason = "a test: a panic is how it fails")]
+#[allow(clippy::indexing_slicing, reason = "a test: a panic is how it fails")]
 mod tests {
     use memory::ChunkConfig;
     use protocol::{DataClass, RunId};
-    use store::{ClassFilter, NoteId, NoteReader, Store};
+    use store::{ClassFilter, JobQueue, NoteId, NoteReader, Store};
     use store_memory::MemoryStore;
 
     use super::*;
@@ -362,5 +551,155 @@ mod tests {
             matches!(&refused, Err(CapabilityError::Refused(m)) if m.contains("tool calls")),
             "{refused:?}"
         );
+    }
+
+    fn jobs_for(plugin: &str, store: &Arc<MemoryStore>) -> PluginJobs {
+        PluginJobs {
+            store: Arc::clone(store) as Arc<dyn Store>,
+            plugin: plugin.to_owned(),
+            requested_by: Actor::new(purpose(plugin)),
+            meter: Arc::new(CapabilityMeter::default()),
+        }
+    }
+
+    async fn with_workflow() -> Arc<MemoryStore> {
+        let store = Arc::new(MemoryStore::new(3));
+        let body = json!({
+            "inputs": {
+                "type": "object", "additionalProperties": false, "required": ["url"],
+                "properties": { "url": { "type": "string", "maxLength": 100 } }
+            },
+            "steps": [{ "type": "tool", "id": "look", "tool": "memory",
+                        "arguments": { "operation": "search", "query": "{{inputs.url}}" } }]
+        });
+        let definition = store::Definition {
+            key: store::DefinitionKey {
+                kind: store::DefinitionKind::Workflow,
+                name: "learn".to_owned(),
+            },
+            body,
+            source: "test".to_owned(),
+            updated_at: Utc::now(),
+        };
+        store
+            .apply(store::UnitOfWork::new().with(store::WriteOp::PutDefinition(definition)))
+            .await
+            .unwrap();
+        store
+    }
+
+    fn here() -> ToolContext {
+        ToolContext::new(RunId::generate(), DataClass::Private, 0)
+    }
+
+    #[tokio::test]
+    async fn a_started_run_is_a_workflow_job_of_the_plugins() {
+        let store = with_workflow().await;
+        let jobs = jobs_for("feeds", &store);
+        let run = RunWorkflow::new("learn", json!({ "url": "https://example.com/a" }));
+        let started = jobs.run_workflow(run, here()).await.unwrap();
+        assert!(!started.already_existed);
+        let job = store
+            .get_job(JobId::from_uuid(started.job_id))
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(job.kind, WORKFLOW_KIND);
+        assert_eq!(job.requested_by.as_str(), "plugin:feeds");
+        assert_eq!(job.max_attempts, 1, "a run is never retried");
+        assert_eq!(job.payload["inputs"]["url"], "https://example.com/a");
+        let state = jobs.job(started.job_id, here()).await.unwrap().unwrap();
+        assert_eq!(state.phase, JobPhase::Queued);
+        // Another plugin can't see it.
+        let other = jobs_for("other", &store);
+        assert_eq!(other.job(started.job_id, here()).await.unwrap(), None);
+    }
+
+    #[tokio::test]
+    async fn a_key_starts_a_run_once_per_plugin() {
+        let store = with_workflow().await;
+        let jobs = jobs_for("feeds", &store);
+        let run = || {
+            RunWorkflow::new("learn", json!({ "url": "https://example.com/v/1" }))
+                .with_idempotency_key("video-1")
+        };
+        let first = jobs.run_workflow(run(), here()).await.unwrap();
+        let again = jobs.run_workflow(run(), here()).await.unwrap();
+        assert_eq!(again.job_id, first.job_id);
+        assert!(again.already_existed);
+        let theirs = jobs_for("other", &store)
+            .run_workflow(run(), here())
+            .await
+            .unwrap();
+        assert_ne!(theirs.job_id, first.job_id, "keys don't cross plugins");
+    }
+
+    #[tokio::test]
+    async fn a_start_that_cant_run_is_refused_and_a_probe_starts_nothing() {
+        let store = with_workflow().await;
+        let jobs = jobs_for("feeds", &store);
+        let refused = |result: Result<JobStarted, CapabilityError>| {
+            assert!(
+                matches!(result, Err(CapabilityError::Refused(_))),
+                "{result:?}"
+            );
+        };
+        refused(
+            jobs.run_workflow(RunWorkflow::new("missing", json!({})), here())
+                .await,
+        );
+        refused(
+            jobs.run_workflow(RunWorkflow::new("learn", json!({ "url": 5 })), here())
+                .await,
+        );
+        refused(
+            jobs.run_workflow(
+                RunWorkflow::new("learn", json!({ "url": "u" })).with_priority(5000),
+                here(),
+            )
+            .await,
+        );
+        let probe = here().with_probing(true);
+        let stubbed = jobs
+            .run_workflow(RunWorkflow::new("learn", json!({ "url": "u" })), probe)
+            .await
+            .unwrap();
+        assert_eq!(
+            store
+                .get_job(JobId::from_uuid(stubbed.job_id))
+                .await
+                .unwrap(),
+            None
+        );
+        // A probe's start is still checked.
+        refused(
+            jobs.run_workflow(RunWorkflow::new("missing", json!({})), probe)
+                .await,
+        );
+    }
+
+    #[tokio::test]
+    async fn a_plugin_with_too_many_jobs_waiting_starts_no_more() {
+        let store = with_workflow().await;
+        let jobs = jobs_for("feeds", &store);
+        for n in 0..MAX_OUTSTANDING_JOBS {
+            let run = RunWorkflow::new("learn", json!({ "url": format!("u{n}") }));
+            jobs.run_workflow(run, here()).await.unwrap();
+        }
+        let past = jobs
+            .run_workflow(
+                RunWorkflow::new("learn", json!({ "url": "one more" })),
+                here(),
+            )
+            .await;
+        assert!(
+            matches!(&past, Err(CapabilityError::Refused(m)) if m.contains("waiting or running")),
+            "{past:?}"
+        );
+        // Another plugin isn't held up by this one's queue.
+        jobs_for("other", &store)
+            .run_workflow(RunWorkflow::new("learn", json!({ "url": "u" })), here())
+            .await
+            .unwrap();
     }
 }

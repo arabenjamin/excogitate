@@ -33,6 +33,7 @@ nothing.
 | `http` | HTTP through `http_request` itself, in raw mode: the same address guard, redirect checks, credentials and size limits a model's call gets, and the same argument schema. |
 | `model` | One-shot model calls through the gateway, under the calling run's privacy class and within what's left of its budget. |
 | `memory` | Notes in the runtime's long-term memory, so its search finds what the plugin brought in. A note is kept under the calling run's privacy class, marked untrusted, and stored by `plugin:<name>`; its embedding is paid from what the run has left. The limits are the `memory` tool's: text up to 100,000 characters, a title up to 256 (the first line when empty), 16 tags. |
+| `jobs` | Starting workflow runs, each its own job, as `POST /api/v1/workflows/{name}/runs` starts them: the workflow must exist and the inputs fit. A run is held to its workflow's own budget, not to what the calling run has left, and is never retried. The plugin reads back only the jobs it started. |
 
 **Loading a lot.** A plugin bringing in data in bulk, such as rows from a
 lake, writes them in batches: `put_many` returns the ids in order, then
@@ -43,12 +44,21 @@ anything is written. A batch must also fit in one message to the runtime,
 batches. Records calls don't count against a run's tool calls; `http` and
 `model` calls do.
 
+**Starting work.** `run_workflow` queues a run and returns its job; with an
+idempotency key, the same key starts the workflow once for that plugin,
+which is how a feed fans out to one run per new item without repeats. A
+plugin may have at most 100 jobs waiting or running at once; past that a
+start is refused, so a workflow that calls the plugin again can't multiply
+without end. Only workflow runs can be started, never Harness² or any other
+kind of job. `job` reads a job back, with its result once it's finished.
+
 **In a Harness² probe,** a plugin's tools may run only if they're on the
 probe's read list, and even then a write through `records` or `memory`
-passes its checks and isn't made, as a probe's other writes aren't.
+passes its checks and isn't made, and a run passes its checks and isn't
+started, as a probe's other writes aren't.
 
-**What the host enforces for `http`, `model` and `memory`.** A plugin holding
-any of them can bring in text from outside or from a model, so everything its
+**What the host enforces for `http`, `model`, `memory` and `jobs`.** A plugin
+holding any of them can bring in text from outside or from a model, so everything its
 tools return is labelled untrusted, whatever the plugin says. What its model
 calls and its notes' embedding cost is charged to the run's receipt and
 budget, even if the plugin reports less, and whether the tool call worked or

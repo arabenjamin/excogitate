@@ -7,8 +7,8 @@ use std::sync::{Arc, Mutex, PoisonError};
 
 use async_trait::async_trait;
 use plugin_api::{
-    CapabilityUse, HttpCapability, MemoryCapability, ModelCapability, Tool, ToolContext,
-    ToolDefinition, ToolFailure, ToolOutput,
+    CapabilityUse, HttpCapability, JobsCapability, MemoryCapability, ModelCapability, Tool,
+    ToolContext, ToolDefinition, ToolFailure, ToolOutput,
 };
 use protocol::{RunId, Trust};
 use serde_json::Value;
@@ -99,6 +99,10 @@ pub trait CapabilitySource: Send + Sync + std::fmt::Debug {
     /// Long-term memory for the plugin named. Each note stored is recorded
     /// in `meter` with what its embedding cost, and counts as a tool call.
     fn memory(&self, plugin: &str, meter: Arc<CapabilityMeter>) -> Arc<dyn MemoryCapability>;
+
+    /// Starting workflow runs for the plugin named. Each start is recorded
+    /// in `meter`, and counts as a tool call.
+    fn jobs(&self, plugin: &str, meter: Arc<CapabilityMeter>) -> Arc<dyn JobsCapability>;
 }
 
 /// A tool of a plugin that holds `http` or `model`. What it returns came

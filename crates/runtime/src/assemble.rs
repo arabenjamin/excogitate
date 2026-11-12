@@ -155,6 +155,7 @@ impl Runtime {
             gateway: Arc::clone(&gateway),
             max_output_tokens: config.max_output_tokens,
             memory,
+            store: Arc::clone(&store),
         };
         let processes: Vec<(String, ProcessConfig)> = plugins
             .grants

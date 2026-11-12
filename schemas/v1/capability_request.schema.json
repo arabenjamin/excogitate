@@ -328,6 +328,69 @@
         },
         {
           "additionalProperties": false,
+          "description": "`JobsCapability::run_workflow`.",
+          "properties": {
+            "idempotency_key": {
+              "description": "Starts it once per key.",
+              "maxLength": 128,
+              "minLength": 1,
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "inputs": {
+              "description": "Its inputs.",
+              "x-extension": "checked against the workflow's inputs schema"
+            },
+            "op": {
+              "const": "jobs_run_workflow",
+              "type": "string"
+            },
+            "priority": {
+              "description": "Higher runs first.",
+              "format": "int32",
+              "maximum": 1000,
+              "minimum": -1000,
+              "type": "integer"
+            },
+            "workflow": {
+              "description": "The workflow.",
+              "maxLength": 64,
+              "minLength": 1,
+              "type": "string"
+            }
+          },
+          "required": [
+            "op",
+            "workflow",
+            "inputs",
+            "priority"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "`JobsCapability::job`.",
+          "properties": {
+            "job_id": {
+              "description": "The job.",
+              "format": "uuid",
+              "type": "string"
+            },
+            "op": {
+              "const": "jobs_get",
+              "type": "string"
+            }
+          },
+          "required": [
+            "op",
+            "job_id"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
           "description": "`MemoryCapability::store`.",
           "properties": {
             "op": {

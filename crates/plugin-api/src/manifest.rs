@@ -99,6 +99,8 @@ pub enum PluginCapability {
     Model,
     /// Notes in the runtime's long-term memory, which its search finds.
     Memory,
+    /// Workflow runs started as jobs, and the state of the ones it started.
+    Jobs,
 }
 
 /// A manifest that can't be used.
