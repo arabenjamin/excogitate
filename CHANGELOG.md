@@ -3,6 +3,24 @@
 All notable changes are listed here. The file is generated from the
 Conventional Commits by [git-cliff](https://git-cliff.org) (`cliff.toml`).
 
+## [0.4.0] - 2026-11-11
+
+### Added
+
+- **store:** A Neo4j store behind the neo4j feature
+- **runtime:** Plugins in the running runtime, and a binary of your own
+- **plugins:** The http and model capabilities
+- **runtime:** A front door that delegates
+- **plugins:** Process plugins with capabilities, on the stock image
+
+### Changed
+
+- Call the core the runtime, and the config config.yaml (breaking)
+
+### Fixed
+
+- The review's fixes before v0.4.0 (breaking)
+
 ## [0.3.0] - 2026-11-11
 
 ### Added
