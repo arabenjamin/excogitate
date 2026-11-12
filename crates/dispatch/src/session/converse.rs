@@ -103,10 +103,21 @@ impl Session {
         }
     }
 
+    /// Records the messages a run starts from, before anything the harness
+    /// does for it, such as a memory search, so its trajectory shows the
+    /// task before the calls made for it. [`Session::converse`] records only
+    /// the messages added after these.
+    pub async fn begin(&mut self, messages: &[Message]) {
+        self.record_messages(messages).await;
+    }
+
     /// Records what the model is given to start from, so a trajectory shows
-    /// the task and the instructions it ran under.
+    /// the task and the instructions it ran under. Messages already recorded
+    /// by [`Session::begin`] aren't recorded again.
     async fn record_messages(&mut self, messages: &[Message]) {
-        for message in messages {
+        let new = messages.get(self.messages_recorded..).unwrap_or_default();
+        self.messages_recorded = messages.len();
+        for message in new {
             self.emit(Step::Message {
                 role: message.role.into(),
                 content: event_text(&message.content),

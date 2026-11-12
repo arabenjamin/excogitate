@@ -1313,3 +1313,72 @@ async fn a_probe_stubs_writes_but_still_holds_the_write_budget() {
     assert!(second.content.contains("write budget"));
     assert_eq!(writer.runs.lock().unwrap().len(), 0);
 }
+
+#[tokio::test]
+async fn a_harness_search_before_the_first_round_comes_after_the_task() {
+    let client = Scripted::new(vec![says("done", FinishReason::Stop)]);
+    let reader = Fixture::new("reader", Effect::Read, Behavior::Good);
+    let mut registry = ToolRegistry::new();
+    registry.register(reader as Arc<dyn Tool>).unwrap();
+    let sink = Arc::new(MemorySink::new());
+    let run_config = config(&["reader"], budget());
+    let run = run_config.run;
+    let mut session = Session::new(
+        Arc::new(registry),
+        Arc::clone(&sink) as Arc<dyn EventSink>,
+        run_config,
+    )
+    .unwrap();
+    // As a chat with recall does: the task first, then the search made for
+    // it, then the conversation with the search's turn added.
+    let mut messages = vec![Message::system("be brief"), Message::user("hello")];
+    session.begin(&messages).await;
+    let searched = call("reader", GOOD_ARGS);
+    let reply = session.dispatch_for_harness(&searched).await.unwrap();
+    let mut turn = Message::assistant("Let me check memory first.");
+    turn.tool_calls.push(searched);
+    messages.push(turn);
+    messages.push(Message::tool(reply.call_id, reply.content));
+    let catalog = Catalog::from_yaml(FREE, |_| None).unwrap();
+    let gateway = Gateway::new(catalog, client, Arc::new(MemoryLedger::new()));
+    session
+        .converse(
+            &gateway,
+            Conversation {
+                messages,
+                max_output_tokens: 400,
+                temperature: None,
+            },
+        )
+        .await;
+    let trajectory = crate::read_trajectory(sink.as_ref(), run, 100)
+        .await
+        .unwrap()
+        .unwrap();
+    let roles: Vec<String> = trajectory
+        .steps
+        .iter()
+        .map(|timed| match &timed.step {
+            crate::Step::Started { .. } => "started".to_owned(),
+            crate::Step::Message { role, .. } => format!("{role:?}"),
+            crate::Step::Tool { by_harness, .. } => format!("tool by_harness={by_harness}"),
+            crate::Step::Model { .. } => "model".to_owned(),
+            crate::Step::Ended { .. } => "ended".to_owned(),
+            crate::Step::Capability { .. } => "capability".to_owned(),
+        })
+        .collect();
+    // Each message once, and the search after the task it was for.
+    assert_eq!(
+        roles,
+        [
+            "started",
+            "System",
+            "User",
+            "tool by_harness=true",
+            "Assistant",
+            "Tool",
+            "model",
+            "ended",
+        ]
+    );
+}

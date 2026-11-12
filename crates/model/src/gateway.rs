@@ -22,6 +22,9 @@ pub struct FailedAttempt {
     pub model: String,
     /// What went wrong.
     pub error: ModelError,
+    /// What it was charged, in millionths of a dollar: the prompt's price
+    /// when the request may have reached the model, otherwise nothing.
+    pub cost_usd_micros: u64,
 }
 
 /// A call could not be answered.
@@ -34,6 +37,24 @@ pub enum GatewayError {
     /// Models were tried, and they failed.
     #[error("every model tried failed: {}", explain(.0))]
     Failed(Vec<FailedAttempt>),
+}
+
+impl GatewayError {
+    /// What the failed attempts were charged, in millionths of a dollar.
+    /// It's spent all the same, so a caller keeping accounts must count it.
+    #[must_use]
+    pub fn cost_usd_micros(&self) -> u64 {
+        match self {
+            Self::NoRoute(_) => 0,
+            Self::Failed(attempts) => failed_cost(attempts),
+        }
+    }
+}
+
+fn failed_cost(attempts: &[FailedAttempt]) -> u64 {
+    attempts.iter().fold(0, |sum, attempt| {
+        sum.saturating_add(attempt.cost_usd_micros)
+    })
 }
 
 fn explain(attempts: &[FailedAttempt]) -> String {
@@ -51,8 +72,9 @@ pub struct Completion {
     pub response: ChatResponse,
     /// The model that gave it.
     pub model: String,
-    /// What it cost, in millionths of a dollar. When the server doesn't
-    /// report usage, the worst case is charged.
+    /// What it cost, in millionths of a dollar, including what the models
+    /// that failed first were charged. When the server doesn't report
+    /// usage, the worst case is charged.
     pub cost_usd_micros: u64,
     /// The models that failed first.
     pub failed_attempts: Vec<FailedAttempt>,
@@ -65,7 +87,8 @@ pub struct Embedded {
     pub vectors: Vec<Vec<f32>>,
     /// The model that made them.
     pub model: String,
-    /// What it cost, in millionths of a dollar.
+    /// What it cost, in millionths of a dollar, including what the models
+    /// that failed first were charged.
     pub cost_usd_micros: u64,
 }
 
@@ -225,16 +248,25 @@ impl Gateway {
                     return Ok(Answered {
                         value,
                         model: model_name,
-                        cost_usd_micros,
+                        cost_usd_micros: cost_usd_micros
+                            .saturating_add(failed_cost(&failed_attempts)),
                         failed_attempts,
                     });
                 }
                 Err(error) => {
-                    self.settle(&candidate, 0, reserved_at).await;
+                    // A request that may have reached the model may be
+                    // billed: charge the least such a call costs.
+                    let charged = if error.reached_the_model() {
+                        candidate.input_usd_micros
+                    } else {
+                        0
+                    };
+                    self.settle(&candidate, charged, reserved_at).await;
                     let go_on = error.worth_trying_elsewhere();
                     failed_attempts.push(FailedAttempt {
                         model: model_name,
                         error,
+                        cost_usd_micros: charged,
                     });
                     if !go_on {
                         break;
@@ -584,6 +616,58 @@ models:
     }
 
     #[tokio::test]
+    async fn a_paid_call_that_reached_the_model_is_charged_its_prompt() {
+        for (error, charged) in [
+            (ModelError::Timeout, true),
+            (ModelError::BadResponse("no choices".to_owned()), true),
+            (ModelError::RateLimited, false),
+            (ModelError::Transport("refused".to_owned()), false),
+        ] {
+            let ledger = Arc::new(Settlements::default());
+            let gateway = Gateway::new(
+                catalog(YAML),
+                Arc::new(Scripted::new([Err(error.clone())])),
+                Arc::clone(&ledger) as Arc<dyn SpendLedger>,
+            );
+            let failed = gateway
+                .chat(&priced_policy(), &request())
+                .await
+                .unwrap_err();
+            let settled = ledger.0.lock().unwrap().clone();
+            assert_eq!(settled.len(), 1, "{error}: {settled:?}");
+            let (_, actual) = settled[0];
+            // What the run is told it spent is what the ledger was charged.
+            assert_eq!(failed.cost_usd_micros(), actual, "{error}");
+            assert_eq!(actual > 0, charged, "{error}: {settled:?}");
+        }
+    }
+
+    #[tokio::test]
+    async fn an_answer_counts_what_the_failures_before_it_were_charged() {
+        // Two priced models: the cheaper times out, the other answers.
+        let yaml = YAML
+            .replace(
+                "spend_cap_usd_micros_per_day: 100,",
+                "spend_cap_usd_micros_per_day: 1000000,",
+            )
+            .replace(
+                "  - {name: second, provider: two, wire_model: b, capabilities: [chat],\n     context_tokens: 2000000, max_output_tokens: 10}",
+                "  - {name: second, provider: paid, wire_model: b, capabilities: [chat, investigative],\n     context_tokens: 2000000, max_output_tokens: 10,\n     price: {input_usd_micros_per_mtok: 80, output_usd_micros_per_mtok: 0}}",
+            );
+        let gateway = Gateway::new(
+            catalog(&yaml),
+            Arc::new(Scripted::new([Err(ModelError::Timeout), Ok(text("hi"))])),
+            Arc::new(MemoryLedger::new()),
+        );
+        let done = gateway.chat(&priced_policy(), &request()).await.unwrap();
+        assert_eq!(done.model, "second");
+        let timed_out = done.failed_attempts[0].cost_usd_micros;
+        assert!(timed_out > 0);
+        // The answer's own usage: a million input tokens at 80 per million.
+        assert_eq!(done.cost_usd_micros, timed_out + 80);
+    }
+
+    #[tokio::test]
     async fn spend_counts_against_the_daily_cap() {
         let client = Arc::new(Scripted::new([Ok(text("a")), Ok(text("b")), Ok(text("c"))]));
         let gateway = gateway(Arc::clone(&client));
@@ -643,8 +727,9 @@ models:
 
     #[tokio::test]
     async fn a_failed_call_gives_its_reservation_back() {
+        // A refusal never reached the model, so it's charged nothing.
         let client = Arc::new(Scripted::new([
-            Err(ModelError::Timeout),
+            Err(ModelError::RateLimited),
             Ok(text("a")),
             Ok(text("b")),
         ]));

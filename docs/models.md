@@ -29,6 +29,13 @@ the same model to upstreams at different prices, and the listed price is only
 the lowest: in one run, calls billed 1.2 to 6 times it. So a cap counts what was
 billed, never less.
 
+A call that fails after it may have reached the model (a timeout, or a reply
+too large or malformed to use) may still be billed, so it settles at what its
+prompt costs, the least such a call is billed. A refusal, a rate limit or a
+request that never got through settles at nothing. Either way the failed
+attempt's charge is on the run's receipt: added to the answer's cost when a
+later model answers, and on the failed call when none does.
+
 If a call fails, the next model is tried, up to three, unless the server
 said the request itself was bad. When no model can take a call, the error
 names every model and why.

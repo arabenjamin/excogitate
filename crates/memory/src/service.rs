@@ -132,6 +132,29 @@ pub enum MemoryError {
     /// The store failed or refused.
     #[error(transparent)]
     Store(#[from] StoreError),
+    /// The note was embedded, then the store failed or refused to save it.
+    /// The embedding was paid for all the same.
+    #[error("the note wasn't saved: {error}")]
+    NotSaved {
+        /// Why the store didn't save it.
+        error: StoreError,
+        /// What embedding it cost, in millionths of a dollar.
+        cost_usd_micros: u64,
+    },
+}
+
+impl MemoryError {
+    /// What was spent before it failed, in millionths of a dollar. It's
+    /// spent all the same, so a caller keeping accounts must count it.
+    #[must_use]
+    pub const fn cost_usd_micros(&self) -> u64 {
+        match self {
+            Self::NotSaved {
+                cost_usd_micros, ..
+            } => *cost_usd_micros,
+            _ => 0,
+        }
+    }
 }
 
 /// Long-term memory.
@@ -204,10 +227,13 @@ impl Memory {
                     *spent = spent.saturating_add(embedding.cost_usd_micros);
                     return embedding.vectors.into_iter().next();
                 }
-                Err(EmbedError {
-                    try_shorter: false, ..
-                }) => return None,
-                Err(_) => input = front_half(&input),
+                Err(error) => {
+                    *spent = spent.saturating_add(error.cost_usd_micros);
+                    if !error.try_shorter {
+                        return None;
+                    }
+                    input = front_half(&input);
+                }
             }
             if input.is_empty() {
                 return None;
@@ -232,12 +258,17 @@ impl Memory {
                 embedding.vectors.into_iter().map(Some).collect(),
                 embedding.cost_usd_micros,
             ),
-            Ok(_)
-            | Err(EmbedError {
-                try_shorter: false, ..
-            }) => (vec![None; pieces.len()], 0),
-            Err(_) => {
-                let mut spent = 0;
+            // A batch with the wrong count of vectors was still paid for.
+            Ok(embedding) => (vec![None; pieces.len()], embedding.cost_usd_micros),
+            Err(EmbedError {
+                try_shorter: false,
+                cost_usd_micros,
+                ..
+            }) => (vec![None; pieces.len()], cost_usd_micros),
+            Err(EmbedError {
+                cost_usd_micros, ..
+            }) => {
+                let mut spent = cost_usd_micros;
                 let mut one_by_one = Vec::with_capacity(pieces.len());
                 for piece in pieces {
                     one_by_one.push(
@@ -339,7 +370,13 @@ impl Memory {
                     note_id: id,
                     chunks,
                 });
-        self.store.apply(unit).await?;
+        self.store
+            .apply(unit)
+            .await
+            .map_err(|error| MemoryError::NotSaved {
+                error,
+                cost_usd_micros,
+            })?;
         Ok(StoredNote {
             id,
             created: true,
@@ -433,7 +470,13 @@ impl Memory {
                 0,
             )
         };
-        self.store.apply(unit).await?;
+        self.store
+            .apply(unit)
+            .await
+            .map_err(|error| MemoryError::NotSaved {
+                error,
+                cost_usd_micros,
+            })?;
         Ok(StoredNote {
             id,
             created: false,
