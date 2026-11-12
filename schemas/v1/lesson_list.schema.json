@@ -1,0 +1,126 @@
+{
+  "$defs": {
+    "Cite": {
+      "additionalProperties": false,
+      "description": "A step in a run, and the words in it that show something.",
+      "properties": {
+        "quote": {
+          "description": "Words copied exactly from that step.",
+          "maxLength": 300,
+          "minLength": 1,
+          "type": "string"
+        },
+        "run": {
+          "description": "The run's label, such as `R`.",
+          "maxLength": 4,
+          "minLength": 1,
+          "type": "string"
+        },
+        "step": {
+          "description": "The step's number in that run.",
+          "format": "uint32",
+          "maximum": 4096,
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "run",
+        "step",
+        "quote"
+      ],
+      "type": "object"
+    },
+    "Lesson": {
+      "additionalProperties": false,
+      "description": "What one adopted change taught.",
+      "properties": {
+        "agent": {
+          "description": "The agent that was changed.",
+          "maxLength": 64,
+          "type": "string"
+        },
+        "at": {
+          "description": "When it was adopted.",
+          "format": "date-time",
+          "type": "string"
+        },
+        "change_id": {
+          "description": "The change that taught it.",
+          "maxLength": 36,
+          "type": "string"
+        },
+        "evidence": {
+          "description": "The moments in the runs that supported it.",
+          "items": {
+            "$ref": "#/$defs/Cite"
+          },
+          "maxItems": 8,
+          "type": "array"
+        },
+        "lesson": {
+          "description": "What was changed, as the editor put it.",
+          "maxLength": 1000,
+          "type": "string"
+        },
+        "situation": {
+          "description": "When it applies: the task, and the problem reported, if one was.",
+          "maxLength": 2400,
+          "type": "string"
+        },
+        "status": {
+          "$ref": "#/$defs/LessonStatus",
+          "description": "Whether it still counts."
+        }
+      },
+      "required": [
+        "agent",
+        "change_id",
+        "at",
+        "situation",
+        "lesson",
+        "evidence",
+        "status"
+      ],
+      "type": "object"
+    },
+    "LessonStatus": {
+      "description": "Whether a lesson still counts.",
+      "oneOf": [
+        {
+          "const": "active",
+          "description": "Its change is in effect.",
+          "type": "string"
+        },
+        {
+          "const": "retired",
+          "description": "Its change was reverted or edited away, so it no longer counts.",
+          "type": "string"
+        }
+      ]
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "One page of the lesson library, oldest first.",
+  "properties": {
+    "has_more": {
+      "description": "True if there are more past this page.",
+      "type": "boolean"
+    },
+    "items": {
+      "description": "The lessons.",
+      "items": {
+        "$ref": "#/$defs/Lesson"
+      },
+      "maxItems": 200,
+      "type": "array"
+    }
+  },
+  "required": [
+    "items",
+    "has_more"
+  ],
+  "title": "LessonList",
+  "type": "object"
+}

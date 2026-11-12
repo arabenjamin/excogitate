@@ -1,0 +1,118 @@
+{
+  "$defs": {
+    "HeaderArg": {
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "description": "Its name.",
+          "maxLength": 64,
+          "minLength": 1,
+          "type": "string"
+        },
+        "value": {
+          "description": "Its value.",
+          "maxLength": 1024,
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "value"
+      ],
+      "type": "object"
+    },
+    "Method": {
+      "description": "An HTTP method.",
+      "oneOf": [
+        {
+          "const": "GET",
+          "description": "Reads.",
+          "type": "string"
+        },
+        {
+          "const": "HEAD",
+          "description": "Reads the headers only.",
+          "type": "string"
+        },
+        {
+          "const": "POST",
+          "description": "Creates or submits.",
+          "type": "string"
+        },
+        {
+          "const": "PUT",
+          "description": "Replaces.",
+          "type": "string"
+        },
+        {
+          "const": "PATCH",
+          "description": "Changes part of something.",
+          "type": "string"
+        },
+        {
+          "const": "DELETE",
+          "description": "Removes.",
+          "type": "string"
+        }
+      ]
+    },
+    "Mode": {
+      "description": "How much of the page the model wants.",
+      "oneOf": [
+        {
+          "const": "text",
+          "description": "The readable text of a page.",
+          "type": "string"
+        },
+        {
+          "const": "raw",
+          "description": "The response as it came.",
+          "type": "string"
+        }
+      ]
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "What the model asks for.",
+  "properties": {
+    "body": {
+      "description": "The request body.",
+      "maxLength": 64000,
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "headers": {
+      "default": [],
+      "description": "Extra request headers.",
+      "items": {
+        "$ref": "#/$defs/HeaderArg"
+      },
+      "maxItems": 16,
+      "type": "array"
+    },
+    "method": {
+      "$ref": "#/$defs/Method",
+      "default": "GET",
+      "description": "The method."
+    },
+    "mode": {
+      "$ref": "#/$defs/Mode",
+      "default": "text",
+      "description": "`text` for a page's readable text, `raw` for the response as it came."
+    },
+    "url": {
+      "description": "The address, http or https.",
+      "maxLength": 2048,
+      "minLength": 1,
+      "type": "string"
+    }
+  },
+  "required": [
+    "url"
+  ],
+  "title": "HttpArgs",
+  "type": "object"
+}

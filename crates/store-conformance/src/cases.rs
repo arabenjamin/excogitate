@@ -10,7 +10,8 @@ use store::{
 };
 
 use crate::fixtures::{
-    ITEM, OWNER, OWNS, at, chunk, decls, item, job, note, note_with_text, page, provenance, record,
+    ITEM, OWNER, OWNS, at, chunk, decls, item, job, kinds, note, note_with_text, page, provenance,
+    record,
 };
 
 #[allow(
@@ -542,7 +543,7 @@ pub async fn jobs_claim_by_priority_then_time(store: &dyn Store) {
     }
     for want in [high_early.id, high_late.id, low.id] {
         let claimed = store
-            .claim_job("w", at(10), at(100))
+            .claim_job("w", &kinds(), at(10), at(100))
             .await
             .unwrap()
             .unwrap();
@@ -550,7 +551,54 @@ pub async fn jobs_claim_by_priority_then_time(store: &dyn Store) {
         assert_eq!(claimed.status, JobStatus::Claimed);
         assert_eq!(claimed.attempts, 1);
     }
-    assert_eq!(store.claim_job("w", at(10), at(100)).await.unwrap(), None);
+    assert_eq!(
+        store
+            .claim_job("w", &kinds(), at(10), at(100))
+            .await
+            .unwrap(),
+        None
+    );
+}
+
+/// A worker claims only the kinds it runs, and the rest wait for theirs.
+pub async fn a_job_is_claimed_only_by_a_worker_for_its_kind(store: &dyn Store) {
+    let mut other = job(9, 1);
+    other.kind = "elsewhere".to_owned();
+    let other_id = other.id;
+    let ours = job(0, 1);
+    let ours_id = ours.id;
+    store
+        .apply(
+            UnitOfWork::new()
+                .with(WriteOp::EnqueueJob(other))
+                .with(WriteOp::EnqueueJob(ours)),
+        )
+        .await
+        .unwrap();
+    // The other kind ranks first, and is left for a worker that runs it.
+    let claimed = store
+        .claim_job("w", &kinds(), at(10), at(100))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(claimed.id, ours_id);
+    assert_eq!(
+        store
+            .claim_job("w", &kinds(), at(10), at(100))
+            .await
+            .unwrap(),
+        None
+    );
+    assert_eq!(
+        store.claim_job("w", &[], at(10), at(100)).await.unwrap(),
+        None
+    );
+    let theirs = store
+        .claim_job("x", &["elsewhere".to_owned()], at(10), at(100))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(theirs.id, other_id);
 }
 
 /// A job waits for its time.
@@ -559,10 +607,16 @@ pub async fn a_future_job_is_not_claimed(store: &dyn Store) {
         .apply(WriteOp::EnqueueJob(job(0, 50)).into())
         .await
         .unwrap();
-    assert_eq!(store.claim_job("w", at(49), at(100)).await.unwrap(), None);
+    assert_eq!(
+        store
+            .claim_job("w", &kinds(), at(49), at(100))
+            .await
+            .unwrap(),
+        None
+    );
     assert!(
         store
-            .claim_job("w", at(50), at(100))
+            .claim_job("w", &kinds(), at(50), at(100))
             .await
             .unwrap()
             .is_some()
@@ -575,7 +629,8 @@ pub async fn a_job_is_claimed_once(store: &dyn Store) {
         .apply(WriteOp::EnqueueJob(job(0, 0)).into())
         .await
         .unwrap();
-    let claim = |worker| store.claim_job(worker, at(1), at(100));
+    let kinds = kinds();
+    let claim = |worker| store.claim_job(worker, &kinds, at(1), at(100));
     let (a, b, c, d) = tokio::join!(claim("a"), claim("b"), claim("c"), claim("d"));
     let won = [a, b, c, d]
         .into_iter()
@@ -591,16 +646,19 @@ pub async fn a_lapsed_lease_is_claimed_again(store: &dyn Store) {
         .await
         .unwrap();
     store
-        .claim_job("first", at(1), at(10))
+        .claim_job("first", &kinds(), at(1), at(10))
         .await
         .unwrap()
         .unwrap();
     assert_eq!(
-        store.claim_job("second", at(9), at(20)).await.unwrap(),
+        store
+            .claim_job("second", &kinds(), at(9), at(20))
+            .await
+            .unwrap(),
         None
     );
     let again = store
-        .claim_job("second", at(10), at(20))
+        .claim_job("second", &kinds(), at(10), at(20))
         .await
         .unwrap()
         .unwrap();
@@ -616,7 +674,7 @@ pub async fn completing_needs_the_lease(store: &dyn Store) {
         .await
         .unwrap();
     store
-        .claim_job("holder", at(1), at(10))
+        .claim_job("holder", &kinds(), at(1), at(10))
         .await
         .unwrap()
         .unwrap();
@@ -635,6 +693,131 @@ pub async fn completing_needs_the_lease(store: &dyn Store) {
     is_not_found(store.complete_job(job(0, 0).id, "holder", json!(1)).await);
 }
 
+/// Two jobs alike in priority and time go to the lower id first.
+pub async fn a_claim_tie_goes_to_the_lowest_id(store: &dyn Store) {
+    let (one, two) = (job(3, 5), job(3, 5));
+    let lower = one.id.min(two.id);
+    store
+        .apply(
+            UnitOfWork::new()
+                .with(WriteOp::EnqueueJob(two))
+                .with(WriteOp::EnqueueJob(one)),
+        )
+        .await
+        .unwrap();
+    let first = store
+        .claim_job("w", &kinds(), at(10), at(100))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(first.id, lower);
+}
+
+/// Failing needs the lease, as completing does.
+pub async fn failing_needs_the_lease(store: &dyn Store) {
+    let j = job(0, 0);
+    store
+        .apply(WriteOp::EnqueueJob(j.clone()).into())
+        .await
+        .unwrap();
+    is_not_found(
+        store
+            .fail_job(job(0, 0).id, "holder", "x", None, at(5))
+            .await,
+    );
+    store
+        .claim_job("holder", &kinds(), at(1), at(10))
+        .await
+        .unwrap()
+        .unwrap();
+    is_conflict(store.fail_job(j.id, "other", "x", None, at(5)).await);
+    store.complete_job(j.id, "holder", json!(1)).await.unwrap();
+    is_conflict(store.fail_job(j.id, "holder", "x", None, at(5)).await);
+}
+
+/// A holder whose lease lapsed can still finish, until someone else has the
+/// job; then it can't.
+pub async fn a_lapsed_holder_finishes_only_until_the_job_is_claimed_again(store: &dyn Store) {
+    let early = job(0, 0);
+    let retaken = job(0, 0);
+    store
+        .apply(WriteOp::EnqueueJob(early.clone()).into())
+        .await
+        .unwrap();
+    store
+        .claim_job("slow", &kinds(), at(1), at(10))
+        .await
+        .unwrap()
+        .unwrap();
+    // Past the lease, and nobody else has claimed it.
+    store
+        .complete_job(early.id, "slow", json!("late"))
+        .await
+        .unwrap();
+    assert_eq!(
+        store.get_job(early.id).await.unwrap().unwrap().status,
+        JobStatus::Succeeded
+    );
+
+    store
+        .apply(WriteOp::EnqueueJob(retaken.clone()).into())
+        .await
+        .unwrap();
+    store
+        .claim_job("slow", &kinds(), at(20), at(30))
+        .await
+        .unwrap()
+        .unwrap();
+    let again = store
+        .claim_job("fast", &kinds(), at(30), at(40))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(again.id, retaken.id);
+    is_conflict(store.complete_job(retaken.id, "slow", json!(1)).await);
+    store
+        .complete_job(retaken.id, "fast", json!(2))
+        .await
+        .unwrap();
+}
+
+/// Each list goes on from an offset where the page before it stopped.
+pub async fn lists_page_on_from_an_offset(store: &dyn Store) {
+    for name in ["c", "a", "b"] {
+        store
+            .apply(WriteOp::PutDefinition(definition(DefinitionKind::Agent, name, 1)).into())
+            .await
+            .unwrap();
+    }
+    let names = |offset| async move {
+        let listed = store
+            .list_definitions(
+                DefinitionKind::Agent,
+                store::PageRequest::new(2, offset).unwrap(),
+            )
+            .await
+            .unwrap();
+        let names: Vec<String> = listed.items.into_iter().map(|d| d.key.name).collect();
+        (names, listed.has_more)
+    };
+    assert_eq!(names(0).await, (vec!["a".to_owned(), "b".to_owned()], true));
+    assert_eq!(names(2).await, (vec!["c".to_owned()], false));
+    assert_eq!(names(3).await, (Vec::<String>::new(), false));
+
+    for n in 0..3 {
+        store
+            .apply(WriteOp::EnqueueJob(job(0, n)).into())
+            .await
+            .unwrap();
+    }
+    let second = store
+        .list_jobs(None, store::PageRequest::new(2, 2).unwrap())
+        .await
+        .unwrap();
+    assert_eq!(second.items.len(), 1);
+    assert!(!second.has_more);
+}
+
 /// A failure retries at the time given, and the last one stays visible.
 pub async fn a_failing_job_retries_then_dies(store: &dyn Store) {
     let j = job(0, 0);
@@ -642,15 +825,29 @@ pub async fn a_failing_job_retries_then_dies(store: &dyn Store) {
         .apply(WriteOp::EnqueueJob(j.clone()).into())
         .await
         .unwrap();
-    store.claim_job("w", at(1), at(10)).await.unwrap().unwrap();
+    store
+        .claim_job("w", &kinds(), at(1), at(10))
+        .await
+        .unwrap()
+        .unwrap();
     store
         .fail_job(j.id, "w", "first failure", None, at(30))
         .await
         .unwrap();
     let queued = store.get_job(j.id).await.unwrap().unwrap();
     assert_eq!((queued.status, queued.run_at), (JobStatus::Queued, at(30)));
-    assert_eq!(store.claim_job("w", at(29), at(40)).await.unwrap(), None);
-    store.claim_job("w", at(30), at(40)).await.unwrap().unwrap();
+    assert_eq!(
+        store
+            .claim_job("w", &kinds(), at(29), at(40))
+            .await
+            .unwrap(),
+        None
+    );
+    store
+        .claim_job("w", &kinds(), at(30), at(40))
+        .await
+        .unwrap()
+        .unwrap();
     store
         .fail_job(
             j.id,
@@ -665,7 +862,13 @@ pub async fn a_failing_job_retries_then_dies(store: &dyn Store) {
     assert_eq!(dead.status, JobStatus::Dead);
     assert_eq!(dead.last_error.as_deref(), Some("last failure"));
     assert_eq!(dead.result, Some(json!({ "left": "this" })));
-    assert_eq!(store.claim_job("w", at(60), at(70)).await.unwrap(), None);
+    assert_eq!(
+        store
+            .claim_job("w", &kinds(), at(60), at(70))
+            .await
+            .unwrap(),
+        None
+    );
 }
 
 /// A job can't be retried forever by workers that vanish.
@@ -675,9 +878,23 @@ pub async fn a_lease_lapsing_on_the_last_attempt_is_dead(store: &dyn Store) {
         .apply(WriteOp::EnqueueJob(j.clone()).into())
         .await
         .unwrap();
-    store.claim_job("w", at(1), at(10)).await.unwrap().unwrap();
-    store.claim_job("w", at(10), at(20)).await.unwrap().unwrap();
-    assert_eq!(store.claim_job("w", at(20), at(30)).await.unwrap(), None);
+    store
+        .claim_job("w", &kinds(), at(1), at(10))
+        .await
+        .unwrap()
+        .unwrap();
+    store
+        .claim_job("w", &kinds(), at(10), at(20))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        store
+            .claim_job("w", &kinds(), at(20), at(30))
+            .await
+            .unwrap(),
+        None
+    );
     let dead = store.get_job(j.id).await.unwrap().unwrap();
     assert_eq!(dead.status, JobStatus::Dead);
     assert!(dead.last_error.is_some());
@@ -685,7 +902,7 @@ pub async fn a_lease_lapsing_on_the_last_attempt_is_dead(store: &dyn Store) {
 
 /// A lease that's already over is a caller's bug.
 pub async fn a_lease_must_end_after_now(store: &dyn Store) {
-    is_invalid(store.claim_job("w", at(5), at(5)).await);
+    is_invalid(store.claim_job("w", &kinds(), at(5), at(5)).await);
 }
 
 // ---- definitions ----
@@ -827,19 +1044,13 @@ pub async fn redeclaring_is_fine_but_changing_conflicts(store: &dyn Store) {
 }
 
 fn filter(field: &str, op: FieldOp, value: FieldValue) -> FieldFilter {
-    FieldFilter {
-        field: field.to_owned(),
-        op,
-        value,
-    }
+    FieldFilter::new(field, op, value)
 }
 
 fn query(filters: Vec<FieldFilter>) -> RecordQuery {
-    RecordQuery {
-        record_type: ITEM.to_owned(),
-        filters,
-        page: page(10),
-    }
+    let mut query = RecordQuery::new(ITEM, page(10));
+    query.filters = filters;
+    query
 }
 
 async fn put(store: &dyn Store, record: &Record) {
@@ -1082,7 +1293,11 @@ pub async fn jobs_list_newest_first_and_by_status(store: &dyn Store) {
             .await
             .unwrap();
     }
-    let claimed = store.claim_job("w", at(10), at(20)).await.unwrap().unwrap();
+    let claimed = store
+        .claim_job("w", &kinds(), at(10), at(20))
+        .await
+        .unwrap()
+        .unwrap();
     assert_eq!(claimed.id, done.id, "the highest priority");
     store.complete_job(done.id, "w", json!(1)).await.unwrap();
 

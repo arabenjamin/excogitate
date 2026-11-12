@@ -29,7 +29,10 @@ when they drift. After changing a type behind one, run
 `cargo run -p schema-gen -- --write` and commit the result.
 
 `pre-commit` refuses any file over 1 MiB, then runs a secret scan of what's
-staged, the format check, the name check and the unit tests. `commit-msg` checks the message format.
+staged, the format check, the name check and the unit tests. A clone's own
+checks, which don't belong in the repo, go in an executable
+`.git/hooks/pre-commit.local`, which `pre-commit` runs before the tests.
+`commit-msg` checks the message format.
 
 ## Branches and commits
 

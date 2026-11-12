@@ -7,9 +7,11 @@
 
 mod strict;
 mod validate;
+mod yaml;
 
 pub use strict::{EXTENSION_KEY, Violation, check_strict, for_model};
 pub use validate::{InvalidSchema, Problem, Refusal, Validator, bounded};
+pub use yaml::{YamlError, parse_yaml};
 
 use schemars::JsonSchema;
 use serde_json::Value;

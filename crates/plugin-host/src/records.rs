@@ -68,18 +68,18 @@ impl RecordsCapability for ScopedRecords {
     ) -> Result<RecordId, CapabilityError> {
         self.own(record_type)?;
         let id = id.unwrap_or_else(RecordId::generate);
-        let record = Record {
-            record_type: record_type.to_owned(),
+        let record = Record::new(
+            record_type.to_owned(),
             id,
             data,
-            provenance: Provenance {
+            Provenance {
                 data_class: context.data_class,
                 // A plugin's data may hold what a model wrote or it fetched.
                 trust: Trust::Untrusted,
                 stored_by: self.actor.clone(),
                 stored_at: Utc::now(),
             },
-        };
+        );
         self.write(WriteOp::PutRecord(record)).await?;
         Ok(id)
     }
@@ -88,6 +88,7 @@ impl RecordsCapability for ScopedRecords {
         &self,
         record_type: &str,
         id: RecordId,
+        _: ToolContext,
     ) -> Result<Option<Record>, CapabilityError> {
         self.own(record_type)?;
         self.store
@@ -96,12 +97,21 @@ impl RecordsCapability for ScopedRecords {
             .map_err(map_error)
     }
 
-    async fn query(&self, query: RecordQuery) -> Result<Page<Record>, CapabilityError> {
+    async fn query(
+        &self,
+        query: RecordQuery,
+        _: ToolContext,
+    ) -> Result<Page<Record>, CapabilityError> {
         self.own(&query.record_type)?;
         self.store.query_records(query).await.map_err(map_error)
     }
 
-    async fn delete(&self, record_type: &str, id: RecordId) -> Result<(), CapabilityError> {
+    async fn delete(
+        &self,
+        record_type: &str,
+        id: RecordId,
+        _: ToolContext,
+    ) -> Result<(), CapabilityError> {
         self.own(record_type)?;
         self.write(WriteOp::DeleteRecord {
             record_type: record_type.to_owned(),
@@ -115,6 +125,7 @@ impl RecordsCapability for ScopedRecords {
         relation: &str,
         from: RecordId,
         to: RecordId,
+        _: ToolContext,
     ) -> Result<(), CapabilityError> {
         self.own(relation)?;
         self.write(WriteOp::Link {
@@ -131,6 +142,7 @@ impl RecordsCapability for ScopedRecords {
         id: RecordId,
         direction: Direction,
         page: PageRequest,
+        _: ToolContext,
     ) -> Result<Page<Record>, CapabilityError> {
         self.own(relation)?;
         self.store

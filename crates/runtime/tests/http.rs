@@ -1072,6 +1072,20 @@ async fn adopting(name: &str, script: Vec<ChaosStep>) -> Running {
     running
 }
 
+/// The change's lesson is in the library, active, with its evidence.
+async fn lesson_is_kept(running: &Running, change_id: &str) {
+    let lessons = body_of(running.get("/api/v1/harness/lessons?agent=helper").await).await;
+    let lesson = &lessons["items"][0];
+    assert_eq!(lesson["change_id"], change_id, "{lessons}");
+    assert_eq!(lesson["status"], "active");
+    assert_eq!(lesson["evidence"][0]["quote"], "It is 42.");
+    assert_ne!(lesson["lesson"], "");
+    Validator::from_schema(&schema::schema_of::<runtime::LessonList>())
+        .unwrap()
+        .check(&lessons)
+        .unwrap();
+}
+
 #[tokio::test]
 async fn a_supported_edit_is_adopted_logged_and_can_be_reverted() {
     let script = [
@@ -1112,6 +1126,9 @@ async fn a_supported_edit_is_adopted_logged_and_can_be_reverted() {
         .check(&listed)
         .unwrap();
 
+    // What it taught is in the library, with its evidence.
+    lesson_is_kept(&running, &change_id).await;
+
     // The owner reverts it: the file is back exactly, and the agent is held.
     let reverted = running
         .post(
@@ -1135,14 +1152,23 @@ async fn a_supported_edit_is_adopted_logged_and_can_be_reverted() {
         why["message"]
             .as_str()
             .unwrap()
-            .contains("only a live change"),
+            .contains("only a change in effect"),
         "{why}"
     );
     let holds = body_of(running.get("/api/v1/harness/holds").await).await;
     assert_eq!(holds["items"][0]["agent"], "helper", "{holds}");
+    // A reverted change's lesson no longer counts.
+    let retired = body_of(running.get("/api/v1/harness/lessons?status=retired").await).await;
+    assert_eq!(
+        retired["items"][0]["change_id"],
+        change_id.as_str(),
+        "{retired}"
+    );
 
-    // While it's held, the same evidence changes nothing.
+    // While it's held, the same evidence changes nothing, and the retired
+    // lesson isn't shown to the editor.
     let second = running.improve().await;
+    assert_eq!(second["lessons_shown"], json!([]), "{second}");
     assert_eq!(second["status"], "supported");
     assert_eq!(second["adoption"]["adopted"], false);
     assert!(

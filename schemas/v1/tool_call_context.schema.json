@@ -1,0 +1,35 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "The context a tool call carries to a plugin process, in `_meta`.",
+  "properties": {
+    "budget_usd_micros": {
+      "description": "What's left of the run's budget.",
+      "format": "uint64",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "call": {
+      "description": "The host's token for this tool call. A capability call made for it\nmust carry it back, and it's good only while the call runs.",
+      "format": "uuid",
+      "type": "string"
+    },
+    "public": {
+      "description": "`true` if the run's data is public.",
+      "type": "boolean"
+    },
+    "run": {
+      "description": "The run.",
+      "format": "uuid",
+      "type": "string"
+    }
+  },
+  "required": [
+    "run",
+    "public",
+    "budget_usd_micros",
+    "call"
+  ],
+  "title": "WireContext",
+  "type": "object"
+}

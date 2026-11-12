@@ -1,0 +1,45 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "What comes back.",
+  "properties": {
+    "agent": {
+      "description": "The agent that ran.",
+      "maxLength": 64,
+      "type": "string"
+    },
+    "answer": {
+      "description": "Its answer, if it gave one.",
+      "maxLength": 200000,
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "outcome": {
+      "description": "How its run ended.",
+      "maxLength": 32,
+      "type": "string"
+    },
+    "run": {
+      "description": "Its run, to read in full at `/api/v1/runs/{run}`.",
+      "maxLength": 64,
+      "type": "string"
+    },
+    "stopped_because": {
+      "description": "Why it stopped without answering, if it did.",
+      "maxLength": 2048,
+      "type": [
+        "string",
+        "null"
+      ]
+    }
+  },
+  "required": [
+    "agent",
+    "outcome",
+    "run"
+  ],
+  "title": "DelegateResult",
+  "type": "object"
+}

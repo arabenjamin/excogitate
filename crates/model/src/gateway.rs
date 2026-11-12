@@ -77,6 +77,44 @@ struct Answered<T> {
     failed_attempts: Vec<FailedAttempt>,
 }
 
+/// A reservation not yet settled. If the call is dropped while it's out, as
+/// by a run's time limit, it's settled at what the prompt alone costs: the
+/// provider may bill a little more for output it had started, but leaving
+/// the worst case would fill the day's cap with spend that never happened.
+struct Reservation {
+    ledger: Arc<dyn SpendLedger>,
+    /// The provider, for a paid model; nothing to settle otherwise.
+    provider: Option<String>,
+    reserved: u64,
+    abandoned: u64,
+    at: DateTime<Utc>,
+}
+
+impl Reservation {
+    /// The call finished: it'll be settled the ordinary way.
+    fn close(mut self) {
+        self.provider = None;
+    }
+}
+
+impl Drop for Reservation {
+    fn drop(&mut self) {
+        let Some(provider) = self.provider.take() else {
+            return;
+        };
+        let Ok(handle) = tokio::runtime::Handle::try_current() else {
+            return;
+        };
+        let (ledger, reserved, actual, at) = (
+            Arc::clone(&self.ledger),
+            self.reserved,
+            self.abandoned,
+            self.at,
+        );
+        handle.spawn(async move { ledger.settle(&provider, reserved, actual, at).await });
+    }
+}
+
 /// Routes calls to models.
 pub struct Gateway {
     catalog: Catalog,
@@ -140,6 +178,21 @@ impl Gateway {
         }
     }
 
+    /// A guard that settles the reservation if the call is abandoned before
+    /// it's settled the ordinary way.
+    fn open_reservation(&self, candidate: &Candidate, at: DateTime<Utc>) -> Reservation {
+        Reservation {
+            ledger: Arc::clone(&self.ledger),
+            provider: candidate
+                .model
+                .is_paid()
+                .then(|| candidate.model.provider.name.clone()),
+            reserved: candidate.worst_case_usd_micros,
+            abandoned: candidate.input_usd_micros,
+            at,
+        }
+    }
+
     /// Tries candidates in order until one answers, keeping the books.
     /// `call` returns the answer and what it really cost.
     async fn first_success<T, F, Fut>(
@@ -163,7 +216,10 @@ impl Gateway {
                 at_cap.push((model_name, Rejection::OverDailyCap));
                 continue;
             }
-            match call(candidate.clone()).await {
+            let open = self.open_reservation(&candidate, reserved_at);
+            let answer = call(candidate.clone()).await;
+            open.close();
+            match answer {
                 Ok((value, cost_usd_micros)) => {
                     self.settle(&candidate, cost_usd_micros, reserved_at).await;
                     return Ok(Answered {
@@ -454,6 +510,76 @@ models:
             .await
             .unwrap();
         assert_eq!(client.calls.lock().unwrap()[0].2, 10);
+    }
+
+    /// Never answers.
+    #[derive(Debug)]
+    struct Hangs;
+
+    #[async_trait::async_trait]
+    impl ModelClient for Hangs {
+        async fn chat(
+            &self,
+            _: &crate::Model,
+            _: &ChatRequest,
+            _: u32,
+        ) -> Result<ChatResponse, ModelError> {
+            std::future::pending().await
+        }
+
+        async fn embed(&self, _: &crate::Model, _: &[String]) -> Result<Vec<Vec<f32>>, ModelError> {
+            std::future::pending().await
+        }
+    }
+
+    /// Keeps every settlement.
+    #[derive(Debug, Default)]
+    struct Settlements(std::sync::Mutex<Vec<(u64, u64)>>);
+
+    #[async_trait::async_trait]
+    impl SpendLedger for Settlements {
+        async fn reserve(&self, _: &str, _: u64, _: u64, _: DateTime<Utc>) -> bool {
+            true
+        }
+
+        async fn settle(&self, _: &str, reserved: u64, actual: u64, _: DateTime<Utc>) {
+            self.0.lock().unwrap().push((reserved, actual));
+        }
+    }
+
+    #[tokio::test]
+    async fn an_abandoned_call_is_settled_at_what_its_prompt_costs() {
+        let yaml = YAML.replace(
+            "output_usd_micros_per_mtok: 0",
+            "output_usd_micros_per_mtok: 1000000",
+        );
+        let ledger = Arc::new(Settlements::default());
+        let gateway = Gateway::new(
+            catalog(&yaml),
+            Arc::new(Hangs),
+            Arc::clone(&ledger) as Arc<dyn SpendLedger>,
+        );
+        let policy = priced_policy();
+        let abandoned = tokio::time::timeout(
+            std::time::Duration::from_millis(20),
+            gateway.chat(&policy, &request()),
+        )
+        .await;
+        assert!(abandoned.is_err());
+        // The settlement is spawned when the call is dropped.
+        for _ in 0..100 {
+            if !ledger.0.lock().unwrap().is_empty() {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+        }
+        let settled = ledger.0.lock().unwrap().clone();
+        assert_eq!(settled.len(), 1, "{settled:?}");
+        let (reserved, actual) = settled[0];
+        // Ten output tokens at a dollar per million: the worst case less the
+        // output it never gave.
+        assert_eq!(reserved - actual, 10, "{settled:?}");
+        assert!(actual > 0);
     }
 
     #[tokio::test]

@@ -30,25 +30,21 @@ struct Look(AtomicUsize);
 impl Tool for Look {
     fn definition(&self) -> ToolDefinition {
         let object = json!({ "type": "object", "additionalProperties": false, "properties": {} });
-        ToolDefinition {
-            name: "look".to_owned(),
-            description: "Looks it up.".to_owned(),
-            input_schema: object.clone(),
-            output_schema: json!({
+        ToolDefinition::new(
+            "look".to_owned(),
+            "Looks it up.".to_owned(),
+            object.clone(),
+            json!({
                 "type": "object", "additionalProperties": false,
                 "properties": { "found": { "type": "string", "maxLength": 100 } }
             }),
-            effect: Effect::Read,
-        }
+            Effect::Read,
+        )
     }
 
     async fn run(&self, _: Value, _: ToolContext) -> Result<ToolOutput, ToolFailure> {
         self.0.fetch_add(1, Ordering::SeqCst);
-        Ok(ToolOutput {
-            value: json!({ "found": "42" }),
-            trust: Trust::Untrusted,
-            cost_usd_micros: 0,
-        })
+        Ok(ToolOutput::new(json!({ "found": "42" }), Trust::Untrusted))
     }
 }
 
@@ -110,6 +106,7 @@ async fn setup(script: Vec<ChaosStep>) -> Setup {
             agent_output_tokens: 200,
             time_limit: Duration::from_secs(20),
         },
+        stop: dispatch::StopSignal::new(),
     };
     Setup {
         engine,
@@ -610,4 +607,59 @@ async fn a_citation_that_doesnt_hold_is_dropped_and_the_rest_still_count() {
     assert_eq!(tried.cites.len(), 1);
     assert_eq!(tried.dropped.len(), 1);
     assert!(tried.dropped[0].contains("not what it did"), "{tried:?}");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn the_editor_is_shown_the_active_lessons_that_fit() {
+    let setup = setup(vec![
+        say("I don't know."),
+        editor(LOOK_FIRST, &cite_reference(), "You help."),
+        look(),
+        say("The answer is 42."),
+        composer(&json!([mitigated("A")]), "adopt", Some("A")),
+    ])
+    .await;
+    let store = setup.engine.store.as_ref();
+    store
+        .register_records(&harness::declarations())
+        .await
+        .unwrap();
+    let lesson = |agent: &str, change: &str, situation: &str, status: harness::LessonStatus| {
+        harness::Lesson {
+            agent: agent.to_owned(),
+            change_id: change.to_owned(),
+            at: Utc::now(),
+            situation: situation.to_owned(),
+            lesson: "Look before answering a question".to_owned(),
+            evidence: Vec::new(),
+            status,
+        }
+    };
+    let active = harness::LessonStatus::Active;
+    for (agent, change, situation, status) in [
+        ("helper", "fits", "The answer to a question", active),
+        (
+            "helper",
+            "gone",
+            "The answer to a question",
+            harness::LessonStatus::Retired,
+        ),
+        ("other", "elsewhere", "Sum the invoices", active),
+    ] {
+        let record = harness::record(
+            harness::LESSON_TYPE,
+            store::RecordId::generate(),
+            &lesson(agent, change, situation, status),
+            Utc::now(),
+        )
+        .unwrap();
+        store
+            .apply(UnitOfWork::new().with(WriteOp::PutRecord(record)))
+            .await
+            .unwrap();
+    }
+    let attempt = attempt(&setup).await;
+    // The agent's own lesson first; another agent's that shares the task's
+    // words after it; a retired one never.
+    assert_eq!(attempt.lessons_shown, ["fits", "elsewhere"]);
 }

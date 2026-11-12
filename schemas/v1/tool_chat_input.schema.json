@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "What a client asks.",
+  "properties": {
+    "message": {
+      "description": "The question or request.",
+      "maxLength": 32000,
+      "minLength": 1,
+      "type": "string"
+    }
+  },
+  "required": [
+    "message"
+  ],
+  "title": "ChatArgs",
+  "type": "object"
+}

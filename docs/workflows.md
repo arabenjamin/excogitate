@@ -117,7 +117,9 @@ labelled untrusted, and what it cost goes on the chat's receipt.
   `context` is left out.
 - An agent that has `delegate` itself isn't listed and is refused, so a
   hand-off can't loop.
-- A hand-off counts as a write, since the agent may write, so a probe stubs it.
+- A hand-off counts as a write, since the agent may write. In a Harness²
+  probe it still runs, as a probe of the agent it goes to: that agent's
+  writes are stubbed and only allowed reads run.
 - `delegate` isn't offered over MCP; a client reaches it through `chat`.
 - A missing front door agent stops the server at startup.
 

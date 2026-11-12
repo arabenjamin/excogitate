@@ -1,0 +1,224 @@
+{
+  "$defs": {
+    "Operation": {
+      "enum": [
+        "store",
+        "search",
+        "get",
+        "update",
+        "delete"
+      ],
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "operation": {
+            "const": "store"
+          }
+        },
+        "required": [
+          "operation"
+        ]
+      },
+      "then": {
+        "properties": {
+          "text": {
+            "not": {
+              "type": "null"
+            }
+          }
+        },
+        "required": [
+          "text"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "operation": {
+            "const": "search"
+          }
+        },
+        "required": [
+          "operation"
+        ]
+      },
+      "then": {
+        "properties": {
+          "query": {
+            "not": {
+              "type": "null"
+            }
+          }
+        },
+        "required": [
+          "query"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "operation": {
+            "const": "get"
+          }
+        },
+        "required": [
+          "operation"
+        ]
+      },
+      "then": {
+        "properties": {
+          "id": {
+            "not": {
+              "type": "null"
+            }
+          }
+        },
+        "required": [
+          "id"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "operation": {
+            "const": "delete"
+          }
+        },
+        "required": [
+          "operation"
+        ]
+      },
+      "then": {
+        "properties": {
+          "id": {
+            "not": {
+              "type": "null"
+            }
+          }
+        },
+        "required": [
+          "id"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "operation": {
+            "const": "update"
+          }
+        },
+        "required": [
+          "operation"
+        ]
+      },
+      "then": {
+        "properties": {
+          "id": {
+            "not": {
+              "type": "null"
+            }
+          }
+        },
+        "required": [
+          "id"
+        ]
+      }
+    }
+  ],
+  "description": "What the model asks memory to do.",
+  "properties": {
+    "id": {
+      "description": "The note to read, change or delete.",
+      "format": "uuid",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "limit": {
+      "description": "How many notes a search returns. The default is 5.",
+      "format": "uint32",
+      "maximum": 50,
+      "minimum": 1,
+      "type": [
+        "integer",
+        "null"
+      ]
+    },
+    "min_similarity": {
+      "description": "Keep only notes at least this close in meaning, from 0 to 1. A note\nfound by keyword alone has no similarity, so it's left out.",
+      "format": "float",
+      "maximum": 1.0,
+      "minimum": 0.0,
+      "type": [
+        "number",
+        "null"
+      ]
+    },
+    "operation": {
+      "$ref": "#/$defs/Operation",
+      "description": "What to do."
+    },
+    "query": {
+      "description": "What to search for.",
+      "maxLength": 1024,
+      "minLength": 1,
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "source_url": {
+      "description": "The URL the text came from.",
+      "maxLength": 2048,
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "tags": {
+      "description": "Tags for the note.",
+      "items": {
+        "maxLength": 64,
+        "type": "string"
+      },
+      "maxItems": 16,
+      "type": [
+        "array",
+        "null"
+      ]
+    },
+    "text": {
+      "description": "The text of the note.",
+      "maxLength": 100000,
+      "minLength": 1,
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "title": {
+      "description": "A short title. For `store` it defaults to the first line of the text.",
+      "maxLength": 256,
+      "type": [
+        "string",
+        "null"
+      ]
+    }
+  },
+  "required": [
+    "operation"
+  ],
+  "title": "MemoryArgs",
+  "type": "object"
+}

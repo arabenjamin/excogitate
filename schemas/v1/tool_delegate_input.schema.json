@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "What the model sends.",
+  "properties": {
+    "agent": {
+      "description": "The agent, by name.",
+      "maxLength": 64,
+      "minLength": 1,
+      "type": "string"
+    },
+    "context": {
+      "description": "What it should work from. It's handed over as data, not instructions.",
+      "maxLength": 16000,
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "task": {
+      "description": "What it should do, in full.",
+      "maxLength": 16000,
+      "minLength": 1,
+      "type": "string"
+    }
+  },
+  "required": [
+    "agent",
+    "task"
+  ],
+  "title": "DelegateArgs",
+  "type": "object"
+}

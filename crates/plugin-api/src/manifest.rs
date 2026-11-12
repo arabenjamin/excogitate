@@ -3,7 +3,7 @@
 
 use std::collections::HashSet;
 
-use schema::{Refusal, Validator, bounded, check_strict};
+use schema::{Refusal, YamlError, check_strict};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -14,9 +14,17 @@ use crate::{Effect, ToolDefinition};
 /// The version of this contract.
 pub const API_VERSION: u32 = 1;
 
+/// Names a plugin can't take: the core keeps records under them, or its own
+/// tools start with them, or they'd read as the core's.
+pub const RESERVED_NAMES: [&str; 12] = [
+    "harness", "http", "memory", "delegate", "chat", "runtime", "core", "plugin", "plugins",
+    "store", "system", "tool",
+];
+
 /// A plugin's `plugin.yaml`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
+#[non_exhaustive]
 pub struct PluginManifest {
     /// The contract version it's written against.
     #[schemars(range(min = 1, max = 1))]
@@ -44,6 +52,7 @@ pub struct PluginManifest {
 /// One tool, as its plugin declares it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
+#[non_exhaustive]
 pub struct ToolManifest {
     /// Its name, as `plugin_tool`.
     #[schemars(length(min = 1, max = 64), regex(pattern = r"^[a-z][a-z0-9_]*$"))]
@@ -65,13 +74,13 @@ impl ToolManifest {
     /// This tool as a definition.
     #[must_use]
     pub fn definition(&self) -> ToolDefinition {
-        ToolDefinition {
-            name: self.name.clone(),
-            description: self.description.clone(),
-            input_schema: self.input_schema.clone(),
-            output_schema: self.output_schema.clone(),
-            effect: self.effect,
-        }
+        ToolDefinition::new(
+            self.name.clone(),
+            self.description.clone(),
+            self.input_schema.clone(),
+            self.output_schema.clone(),
+            self.effect,
+        )
     }
 }
 
@@ -80,6 +89,7 @@ impl ToolManifest {
     Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize, JsonSchema,
 )]
 #[serde(rename_all = "snake_case")]
+#[non_exhaustive]
 pub enum PluginCapability {
     /// Its own records in the store.
     Records,
@@ -115,15 +125,22 @@ impl PluginManifest {
     ///
     /// [`ManifestError`] if it isn't YAML, fails its schema or breaks a rule.
     pub fn from_yaml(text: &str) -> Result<Self, ManifestError> {
-        let raw: Value = serde_saphyr::from_str(text)
-            .map_err(|error| ManifestError::Yaml(bounded(&error.to_string())))?;
-        let validator = Validator::for_type::<Self>().map_err(|e| invalid(e.to_string()))?;
-        let manifest: Self = validator.parse(raw)?;
+        let manifest: Self = schema::parse_yaml(text).map_err(|error| match error {
+            YamlError::NotYaml(problem) => ManifestError::Yaml(problem),
+            YamlError::Schema(refusal) => ManifestError::Schema(refusal),
+            other => invalid(other.to_string()),
+        })?;
         manifest.check_rules()?;
         Ok(manifest)
     }
 
     fn check_rules(&self) -> Result<(), ManifestError> {
+        if RESERVED_NAMES.contains(&self.name.as_str()) {
+            return Err(invalid(format!(
+                "{} is a name the core keeps for itself",
+                self.name
+            )));
+        }
         let tool_prefix = format!("{}_", self.name);
         let mut names = HashSet::new();
         for tool in &self.tools {
@@ -276,6 +293,16 @@ mod tests {
         let declared = records("demo.a", "demo.a").replace("capabilities: [records]\n", "");
         let text = manifest("demo_tool", INPUT, &declared);
         assert!(PluginManifest::from_yaml(&text).is_err());
+    }
+
+    #[test]
+    fn a_name_the_core_keeps_is_refused() {
+        for name in ["harness", "http", "memory"] {
+            let text = manifest(&format!("{name}_tool"), INPUT, "")
+                .replace("name: demo", &format!("name: {name}"));
+            let error = PluginManifest::from_yaml(&text).unwrap_err();
+            assert!(error.to_string().contains("keeps for itself"), "{error}");
+        }
     }
 
     #[test]

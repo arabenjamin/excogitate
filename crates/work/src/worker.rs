@@ -111,6 +111,8 @@ struct Registered {
 pub struct Worker {
     transport: Arc<dyn JobTransport>,
     handlers: HashMap<String, Registered>,
+    /// The kinds it runs, which are all it claims.
+    kinds: Vec<String>,
     options: WorkerOptions,
     lease: Duration,
     name: String,
@@ -148,8 +150,11 @@ impl Worker {
                 return Err(WorkerError::DuplicateKind(kind));
             }
         }
+        let mut kinds: Vec<String> = registered.keys().cloned().collect();
+        kinds.sort();
         Ok(Self {
             transport,
+            kinds,
             handlers: registered,
             options,
             lease: longest.saturating_add(options.lease_margin),
@@ -192,7 +197,7 @@ impl Worker {
         let now = Utc::now();
         let lease = TimeDelta::from_std(self.lease).unwrap_or(TimeDelta::MAX);
         let until = now.checked_add_signed(lease)?;
-        match self.transport.claim(name, now, until).await {
+        match self.transport.claim(name, &self.kinds, now, until).await {
             Ok(job) => job,
             Err(error) => {
                 eprintln!("couldn't claim a job: {error}");

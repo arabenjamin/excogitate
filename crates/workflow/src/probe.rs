@@ -9,7 +9,7 @@ use schemars::JsonSchema;
 use serde::Serialize;
 
 use crate::engine::{Engine, Left};
-use crate::{Agent, check_agent};
+use crate::{Agent, DELEGATE_TOOL, check_agent};
 
 /// How a candidate behaved on a task.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
@@ -67,11 +67,16 @@ impl Engine {
         };
         let result = self
             .converse_as(
+                name,
                 &format!("probe:{name}"),
                 candidate,
                 task.to_owned(),
                 left,
-                Some(Probe { reads }),
+                Some(Probe {
+                    reads,
+                    // A hand-off runs, as a probe of the agent it goes to.
+                    nested: BTreeSet::from([DELEGATE_TOOL.to_owned()]),
+                }),
             )
             .await?;
         Ok(ProbeRun {

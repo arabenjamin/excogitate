@@ -4,7 +4,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
-use dispatch::ToolRegistry;
+use dispatch::{StopSignal, ToolRegistry};
 use events::EventSink;
 use memory::{ChunkConfig, Embedder, GatewayEmbedder, Memory};
 use model::{Capability, Catalog, Gateway, OpenAiClient};
@@ -111,6 +111,12 @@ pub(crate) fn embedding_dimension(catalog: &Catalog) -> Option<usize> {
 }
 
 impl Runtime {
+    /// Ends every run still going, at its next step or mid-call, so each
+    /// finishes with its receipt. For shutdown.
+    pub fn stop_runs(&self) {
+        self.workflows.stop.stop();
+    }
+
     /// Puts the parts together. `secret_of` looks up the keys configured for
     /// `http_request`.
     ///
@@ -238,6 +244,7 @@ impl Runtime {
         // `delegate` runs agents through the registry it's in, so it gets the
         // registry as it's made, weakly.
         let mut refused = None;
+        let stop = StopSignal::new();
         let registry = Arc::new_cyclic(|weak| {
             let mut registry = registry;
             let delegate = DelegateTool {
@@ -246,6 +253,8 @@ impl Runtime {
                 sink: Arc::clone(&sink),
                 store: Arc::clone(&store),
                 limits,
+                stop: stop.clone(),
+                probe_reads: config.harness.probe_reads.iter().cloned().collect(),
             };
             if let Err(error) = registry.register(Arc::new(delegate)) {
                 refused = Some(error);
@@ -261,6 +270,7 @@ impl Runtime {
             sink: Arc::clone(&sink),
             store,
             limits,
+            stop,
         };
         Ok(Self {
             registry,

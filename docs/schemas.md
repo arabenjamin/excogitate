@@ -23,7 +23,23 @@ every schema a plugin declares when it registers:
 
 A test fails when a committed file differs from its type, when a type's
 schema isn't strict, or when a file has no type behind it. To publish a new
-schema, add its type to `generated` in `crates/schema-gen/src/main.rs`.
+schema, add its type to `fixed` in `crates/schema-gen/src/main.rs`.
+
+## What's published
+
+- **Configuration and definitions:** `config`, `models_config`,
+  `plugins_config`, `http_config`, `plugin_manifest`, `record_decls`,
+  `agent`, `workflow`, `schedule`.
+- **The REST API's bodies,** such as `run_request`, `receipt` and
+  `api_error`.
+- **Each bundled tool's arguments and result:** `tool_<name>_input` and
+  `tool_<name>_output`, for `http_request`, `memory`, `delegate` and `chat`.
+- **The plugin process protocol:** `tool_call_context` is what a tool call
+  carries in `_meta.context`, `capability_request` is the parameters of a
+  `capabilities/call` request, and `capability_record`, `capability_page`,
+  `capability_http_response` and `capability_model_reply` are what comes
+  back. The host checks every capability request against
+  `capability_request`, bounds included, before it does anything.
 
 ## Validating a value
 

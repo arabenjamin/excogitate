@@ -10,6 +10,7 @@
 mod budget;
 mod receipt;
 mod session;
+mod stop;
 mod tool;
 mod trajectory;
 
@@ -20,6 +21,7 @@ pub use session::{
     ChatResult, Conversation, ModelStop, Probe, Session, SessionConfig, SessionError, ToolReply,
     parse_arguments,
 };
+pub use stop::StopSignal;
 pub use tool::{RegistryError, ToolRegistry};
 pub use trajectory::{
     RunSubject, Speaker, Step, TimedStep, Trajectory, harness_id, read_trajectory,

@@ -11,13 +11,40 @@ use schema::{Violation, check_strict, schema_of};
 use serde_json::Value;
 
 /// Every published schema, by file stem.
-fn generated() -> BTreeMap<&'static str, Value> {
+fn generated() -> BTreeMap<String, Value> {
+    let mut schemas: BTreeMap<String, Value> = fixed()
+        .into_iter()
+        .map(|(stem, schema)| (stem.to_owned(), schema))
+        .collect();
+    for (tool, input, output) in runtime::bundled_tool_schemas() {
+        schemas.insert(format!("tool_{tool}_input"), input);
+        schemas.insert(format!("tool_{tool}_output"), output);
+    }
+    schemas
+}
+
+/// The schemas with a type of their own.
+fn fixed() -> BTreeMap<&'static str, Value> {
+    use plugin_api::wire;
     BTreeMap::from([
+        ("capability_request", schema_of::<wire::CapabilityRequest>()),
+        ("capability_record", schema_of::<wire::WireRecord>()),
+        ("capability_page", schema_of::<wire::WirePage>()),
+        (
+            "capability_http_response",
+            schema_of::<wire::WireHttpResponse>(),
+        ),
+        (
+            "capability_model_reply",
+            schema_of::<wire::WireModelReply>(),
+        ),
+        ("tool_call_context", schema_of::<wire::WireContext>()),
         ("config", schema_of::<runtime::Config>()),
         ("budget", schema_of::<dispatch::Budget>()),
         ("change_list", schema_of::<runtime::ChangeList>()),
         ("change_view", schema_of::<runtime::ChangeView>()),
         ("hold_list", schema_of::<runtime::HoldList>()),
+        ("lesson_list", schema_of::<runtime::LessonList>()),
         ("hold_request", schema_of::<runtime::HoldRequest>()),
         ("http_config", schema_of::<tools::HttpConfig>()),
         ("models_config", schema_of::<model::ModelsConfig>()),
@@ -59,19 +86,19 @@ fn render(schema: &Value) -> Result<String, serde_json::Error> {
 }
 
 /// Every schema that isn't strict, and why.
-fn strictness_problems(schemas: &BTreeMap<&'static str, Value>) -> Vec<(String, Violation)> {
+fn strictness_problems(schemas: &BTreeMap<String, Value>) -> Vec<(String, Violation)> {
     schemas
         .iter()
         .flat_map(|(stem, schema)| {
             check_strict(schema)
                 .into_iter()
-                .map(|violation| ((*stem).to_owned(), violation))
+                .map(|violation| (stem.clone(), violation))
         })
         .collect()
 }
 
 /// What differs between the generated schemas and the files in `dir`.
-fn drift(dir: &Path, schemas: &BTreeMap<&'static str, Value>) -> io::Result<Vec<String>> {
+fn drift(dir: &Path, schemas: &BTreeMap<String, Value>) -> io::Result<Vec<String>> {
     let mut found = Vec::new();
     for (stem, schema) in schemas {
         let name = file_name(stem);
@@ -95,7 +122,7 @@ fn drift(dir: &Path, schemas: &BTreeMap<&'static str, Value>) -> io::Result<Vec<
     Ok(found)
 }
 
-fn write_all(dir: &Path, schemas: &BTreeMap<&'static str, Value>) -> io::Result<()> {
+fn write_all(dir: &Path, schemas: &BTreeMap<String, Value>) -> io::Result<()> {
     fs::create_dir_all(dir)?;
     for (stem, schema) in schemas {
         fs::write(dir.join(file_name(stem)), render(schema)?)?;

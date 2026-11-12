@@ -12,6 +12,7 @@ use workflow::{Agent, Engine, ProbeRun};
 
 use crate::cite::Cite;
 use crate::guard::check_instructions;
+use crate::lesson::lessons_for;
 use crate::render::Rendered;
 use crate::roles::{Brief, ComposerReply, Decision, Effect, Judges, Verdict};
 
@@ -175,6 +176,10 @@ pub struct Attempt {
     pub composer_model: Option<String>,
     /// What became of a supported edit, once the system looked at adopting it.
     pub adoption: Option<Adoption>,
+    /// The changes whose lessons the editor was shown.
+    #[serde(default)]
+    #[schemars(length(max = 3), inner(length(max = 36)))]
+    pub lessons_shown: Vec<String>,
 }
 
 /// Whether a supported edit was adopted.
@@ -192,6 +197,37 @@ pub struct Adoption {
 }
 
 impl Attempt {
+    /// An attempt stopped before it could finish, such as by its time
+    /// limit, so that it's kept all the same.
+    #[must_use]
+    pub fn stopped(request: Request, started_at: DateTime<Utc>, why: &str) -> Self {
+        let mut attempt = Self::begun(request);
+        attempt.started_at = started_at;
+        attempt.problem(why);
+        attempt.end(Status::Failed)
+    }
+
+    fn begun(request: Request) -> Self {
+        Self {
+            request,
+            started_at: Utc::now(),
+            finished_at: Utc::now(),
+            base_harness: None,
+            reference: None,
+            candidates: Vec::new(),
+            verdicts: Vec::new(),
+            decision: None,
+            reason: None,
+            status: Status::Failed,
+            chosen: None,
+            problems: Vec::new(),
+            cost_usd_micros: 0,
+            composer_model: None,
+            adoption: None,
+            lessons_shown: Vec::new(),
+        }
+    }
+
     /// The supported candidate, if there is one.
     #[must_use]
     pub fn supported(&self) -> Option<&Candidate> {
@@ -271,23 +307,7 @@ impl Loop<'_> {
 
     /// Runs one attempt. It always returns one, and a failure says why.
     pub async fn improve(&self, request: Request) -> Attempt {
-        let mut attempt = Attempt {
-            request: request.clone(),
-            started_at: Utc::now(),
-            finished_at: Utc::now(),
-            base_harness: None,
-            reference: None,
-            candidates: Vec::new(),
-            verdicts: Vec::new(),
-            decision: None,
-            reason: None,
-            status: Status::Failed,
-            chosen: None,
-            problems: Vec::new(),
-            cost_usd_micros: 0,
-            composer_model: None,
-            adoption: None,
-        };
+        let mut attempt = Attempt::begun(request.clone());
         let agent = match self.engine.agent(&request.agent).await {
             Ok(Some(agent)) => agent,
             Ok(None) => {
@@ -308,17 +328,28 @@ impl Loop<'_> {
         };
         let reference = Rendered::new("R", &trajectory);
         attempt.reference = Some(summary(&probed, &reference));
+        // Looked up for this task, never carried over from the last.
+        let found = lessons_for(
+            self.engine.store.as_ref(),
+            &request.agent,
+            &request.task,
+            request.why.as_deref(),
+        )
+        .await;
+        attempt.lessons_shown = found.iter().map(|(change, _)| change.clone()).collect();
+        let lessons: Vec<String> = found.into_iter().map(|(_, text)| text).collect();
         let brief = Brief {
             instructions: &agent.system_prompt,
             tools: &agent.tools,
             task: &request.task,
             why: request.why.as_deref(),
-            lessons: &[],
+            lessons: &lessons,
         };
         let money = self.judge_money(&attempt);
         let edited = match self.judges.edit(&brief, &reference, money).await {
             Ok(edited) => edited,
             Err(error) => {
+                attempt.spend(error.cost_usd_micros());
                 attempt.problem(format!("the editor: {error}"));
                 return attempt.end(Status::Failed);
             }
@@ -451,6 +482,7 @@ impl Loop<'_> {
         let reply = match self.judges.compose(brief, &shown, &candidates, money).await {
             Ok(reply) => reply,
             Err(error) => {
+                attempt.spend(error.cost_usd_micros());
                 attempt.problem(format!("the composer: {error}"));
                 return None;
             }

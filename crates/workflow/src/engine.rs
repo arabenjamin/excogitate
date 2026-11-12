@@ -5,7 +5,7 @@ use std::time::{Duration, Instant};
 
 use dispatch::{
     Budget, CallStatus, ChatResult, Conversation, Outcome, Probe, Receipt, RunSubject, Session,
-    SessionConfig, ToolRegistry, harness_id,
+    SessionConfig, StopSignal, ToolRegistry, harness_id,
 };
 use events::EventSink;
 use model::{Gateway, Message, ToolCall};
@@ -222,6 +222,9 @@ pub struct Engine {
     pub store: Arc<dyn Store>,
     /// The owner's limits.
     pub limits: EngineLimits,
+    /// Given when the runtime stops: every run it started ends early, with
+    /// its receipt.
+    pub stop: StopSignal,
 }
 
 impl Engine {
@@ -267,6 +270,7 @@ impl Engine {
                 probe,
             },
         )
+        .map(|session| session.with_stop(self.stop.clone()))
         .map_err(|error| bounded(&error.to_string()))
     }
 
@@ -509,14 +513,17 @@ impl Engine {
     }
 
     /// Runs `agent` on `question` as `subject`, held to what's `left`.
+    /// Runs agent `name`, as `subject`, with its instructions and roster.
     pub(crate) async fn converse_as(
         &self,
+        name: &str,
         subject: &str,
         agent: &Agent,
         question: String,
         left: Left,
         probe: Option<Probe>,
     ) -> Result<ChatResult, String> {
+        let instructions = self.instructions(name, agent).await?;
         let own = agent.budget.unwrap_or(self.limits.agent_budget);
         let subject = RunSubject {
             agent: subject.to_owned(),
@@ -533,10 +540,7 @@ impl Engine {
             .converse(
                 &self.gateway,
                 Conversation {
-                    messages: vec![
-                        Message::system(agent.system_prompt.clone()),
-                        Message::user(question),
-                    ],
+                    messages: vec![Message::system(instructions), Message::user(question)],
                     max_output_tokens: self.output_tokens(agent),
                     temperature: None,
                 },
@@ -557,6 +561,8 @@ impl Engine {
         task: &str,
         context: Option<&str>,
         money: u64,
+        time: Duration,
+        probe: Option<Probe>,
     ) -> Result<ChatResult, String> {
         let agent = self
             .agent(name)
@@ -569,16 +575,24 @@ impl Engine {
             ));
         }
         let own = agent.budget.unwrap_or(self.limits.agent_budget);
+        // No more time than the caller has left, so the run ends itself,
+        // with its receipt, before the caller is stopped.
         let left = Left {
             money,
-            time: Duration::from_millis(own.max_duration_ms),
+            time: Duration::from_millis(own.max_duration_ms).min(time),
         };
         // A model often fills in `context` with nothing much; empty is none.
         let question = match context.filter(|material| !material.trim().is_empty()) {
             Some(material) => with_handed_over(task, material),
             None => task.to_owned(),
         };
-        self.converse_as(&format!("agent:{name}"), &agent, question, left, None)
+        // In a probe, the agent handed to is probed too, under its own name.
+        let subject = if probe.is_some() {
+            format!("probe:{name}")
+        } else {
+            format!("agent:{name}")
+        };
+        self.converse_as(name, &subject, &agent, question, left, probe)
             .await
     }
 
@@ -594,7 +608,7 @@ impl Engine {
             .map_err(|error| error.to_string())?
             .ok_or_else(|| format!("there is no agent {name}"))?;
         let result = self
-            .converse_as(&format!("agent:{name}"), &agent, question, left, None)
+            .converse_as(name, &format!("agent:{name}"), &agent, question, left, None)
             .await?;
         let problem = if result.receipt.outcome != Outcome::Answered {
             Some(

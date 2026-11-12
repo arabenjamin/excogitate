@@ -23,11 +23,7 @@ fn memory() -> Memory {
 }
 
 fn context(data_class: DataClass) -> ToolContext {
-    ToolContext {
-        run: RunId::generate(),
-        data_class,
-        budget_usd_micros: 1000,
-    }
+    ToolContext::new(RunId::generate(), data_class, 1000)
 }
 
 fn private() -> ToolContext {
@@ -269,7 +265,7 @@ async fn it_stores_finds_changes_and_forgets() {
     let gone = call(&tool, json!({ "operation": "get", "id": id }), private())
         .await
         .unwrap_err();
-    assert!(gone.0.contains("no note"), "{gone}");
+    assert!(gone.message().contains("no note"), "{gone}");
 }
 
 #[tokio::test]
@@ -279,7 +275,7 @@ async fn an_update_with_nothing_to_change_fails() {
     let error = call(&tool, json!({ "operation": "update", "id": id }), private())
         .await
         .unwrap_err();
-    assert!(error.0.contains("nothing to change"), "{error}");
+    assert!(error.message().contains("nothing to change"), "{error}");
 }
 
 #[tokio::test]
@@ -338,7 +334,7 @@ async fn the_owners_notes_cant_be_changed_or_deleted() {
         json!({ "operation": "update", "id": id.as_uuid(), "text": "rewritten" }),
     ] {
         let error = call(&tool, args, private()).await.unwrap_err();
-        assert!(error.0.contains("owner"), "{error}");
+        assert!(error.message().contains("owner"), "{error}");
     }
     let note = memory
         .get(id, store::ClassFilter::Any)

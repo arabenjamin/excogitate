@@ -20,6 +20,8 @@ effects, so a candidate can be judged before anything changes.
 - **Reads run only if they're allowed.** Any other read is stubbed too.
 - **A stubbed call still counts** against the budgets, so a probe hits the
   same limits a real run would.
+- **An agent that delegates is probed as it runs:** with its roster in its
+  instructions, and `delegate` running the agent it hands to as a probe too.
 - **A candidate is checked first** against the [agent schema](../schemas/v1/agent.schema.json),
   and every tool it names must exist.
 - **Its trajectory is `probe:<name>`,** apart from the agent's real runs, and
@@ -101,9 +103,19 @@ every rule below holds. The attempt's `adoption` says what happened and why.
 - **Only instructions change.** An edit that would add a tool or raise a
   budget isn't one the loop makes.
 
-Adopting writes `agents/<name>.yaml` all at once, opening with a comment that
-names the change and how to revert it, and reloads every definition. If they
-don't load, the old file goes back. The change is logged with its evidence,
+Adopting records the change as `pending` first, then writes
+`agents/<name>.yaml` all at once, opening with a comment that names the change
+and how to revert it, and reloads every definition. Only then is the change
+marked `live`. If the definitions don't load, the old file goes back and the
+change is `abandoned`. If the runtime stops between the file and its record,
+a `pending` change counts as live exactly when the agent's file is its own,
+so no edit is ever on disk without a record. The file is staged under a
+random name, synced to disk, and never written through a link.
+
+An attempt runs within its job's time limit, less a part kept back (a fifth,
+at most two minutes) for keeping it and adopting what it found. One that
+runs out of time is kept as failed, saying so, and adoption is skipped when
+too little time is left. The change is logged with its evidence,
 the judge model, and the whole file it replaced, so a revert restores the
 file exactly, comments and all. The server needs write access to the
 definitions directory; compose mounts it writable for the server only. Set
@@ -113,21 +125,41 @@ them.
 ### Being told, and having the last word
 
 - **The change log:** `GET /api/v1/harness/changes?agent=&status=`
-  ([schema](../schemas/v1/change_list.schema.json)) lists every change, `live`,
-  `reverted` or `replaced`, oldest first. `GET /api/v1/harness/changes/{id}` is
+  ([schema](../schemas/v1/change_list.schema.json)) lists every change,
+  `pending`, `live`, `abandoned`, `reverted` or `replaced`, oldest first. `GET /api/v1/harness/changes/{id}` is
   one.
 - **A webhook:** set `harness.notify_url`, and each change is posted there as it
   happens, with its id, agent, summary and revert path. The change records
   whether that worked. The post carries the editor's summary of a private run,
   so point it somewhere you trust.
 - **Revert:** `POST /api/v1/harness/changes/{id}/revert` puts the old file back
-  and holds the agent. It's refused if the change isn't live, or if the file
-  has been edited since, so it never undoes the owner's own edit.
+  and holds the agent. It's refused if the change isn't in effect, or if the
+  file has been edited since, so it never undoes the owner's own edit.
 - **Hold and release:** `PUT /api/v1/harness/holds/{agent}` with `{"reason"}`
   holds an agent, `DELETE` releases it, and `GET /api/v1/harness/holds` lists
   them.
 - **Override:** edit the agent's file. The edit stands, and the agent is held
   the next time the system looks at changing it.
+
+## The lesson library
+
+Each adopted change leaves a lesson (`harness.lesson` records): the situation
+it was made in (the task and the reported problem), what changed, as the
+editor put it, and the evidence that supported it.
+
+- **Only an adopted change teaches anything.** A lesson is written with the
+  change in one store write, never from a verdict alone, so a judge's mistake
+  can't enter the library.
+- **A lesson stops counting** when its change is reverted, or when the owner
+  edits the file after it.
+- **It's looked up, never inherited.** When the editor works on an agent, it's
+  shown at most three active lessons that fit: the agent's own first, then
+  others whose words the task shares. They're labelled as hints, and an edit
+  still needs evidence from the runs. The attempt records which it was shown,
+  in `lessons_shown`.
+- **`GET /api/v1/harness/lessons?agent=&status=`**
+  ([schema](../schemas/v1/lesson_list.schema.json)) lists them; `status` is
+  `active` or `retired`.
 
 ## What to improve
 

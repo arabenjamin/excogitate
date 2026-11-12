@@ -213,6 +213,7 @@ fn chat_input(
         question,
         temperature: request.temperature,
         max_output_tokens,
+        time_cap_ms: None,
     })
 }
 
@@ -364,7 +365,9 @@ async fn chat_completions(State(app): State<App>, headers: HeaderMap, body: Byte
         let events = stream::once(async move {
             match run.await {
                 Ok(Ok(result)) => stream_events(result, &model_id),
-                Ok(Err(failure)) => vec![event(&error_body("server_error", &failure.0, None))],
+                Ok(Err(failure)) => {
+                    vec![event(&error_body("server_error", failure.message(), None))]
+                }
                 Err(error) => vec![event(&error_body("server_error", &error.to_string(), None))],
             }
         })
@@ -378,7 +381,7 @@ async fn chat_completions(State(app): State<App>, headers: HeaderMap, body: Byte
             Ok(Err(failure)) => wire_error(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "server_error",
-                &failure.0,
+                failure.message(),
                 None,
             ),
             Err(error) => from_api(&ApiError::internal(&error)),

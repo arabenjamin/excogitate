@@ -66,11 +66,10 @@ impl Tool for Recording {
 
     async fn run(&self, arguments: Value, _: ToolContext) -> Result<ToolOutput, ToolFailure> {
         self.runs.lock().unwrap().push(arguments);
-        Ok(ToolOutput {
-            value: json!({ "page": self.page }),
-            trust: Trust::Untrusted,
-            cost_usd_micros: 0,
-        })
+        Ok(ToolOutput::new(
+            json!({ "page": self.page }),
+            Trust::Untrusted,
+        ))
     }
 }
 

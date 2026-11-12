@@ -53,6 +53,7 @@ async fn held_job(txn: &mut Txn, id: JobId, worker: &str) -> Result<Job, StoreEr
 async fn claim_in(
     txn: &mut Txn,
     worker: &str,
+    kinds: &[String],
     now: DateTime<Utc>,
     lease_until: DateTime<Utc>,
 ) -> Result<Option<Job>, StoreError> {
@@ -71,14 +72,15 @@ async fn claim_in(
     let rows = txn_rows(
         txn,
         query(&format!(
-            "MATCH (j:Job) WHERE (j.status = 'queued' AND j.run_at <= $now) \
-               OR (j.status = 'claimed' AND j.lease_until <= $now) \
+            "MATCH (j:Job) WHERE ((j.status = 'queued' AND j.run_at <= $now) \
+               OR (j.status = 'claimed' AND j.lease_until <= $now)) AND j.kind IN $kinds \
              WITH j ORDER BY j.priority DESC, j.run_at, j.id LIMIT 1 \
              SET j.status = 'claimed', j.attempts = j.attempts + 1, \
                j.lease_worker = $worker, j.lease_until = $until \
              RETURN {JOB}"
         ))
         .param("now", at(now))
+        .param("kinds", kinds.to_vec())
         .param("worker", worker)
         .param("until", at(lease_until)),
     )
@@ -122,6 +124,7 @@ impl JobQueue for Neo4jStore {
     async fn claim_job(
         &self,
         worker: &str,
+        kinds: &[String],
         now: DateTime<Utc>,
         lease_until: DateTime<Utc>,
     ) -> Result<Option<Job>, StoreError> {
@@ -130,7 +133,7 @@ impl JobQueue for Neo4jStore {
         }
         retrying!({
             let mut txn = self.begin().await?;
-            let outcome = claim_in(&mut txn, worker, now, lease_until).await;
+            let outcome = claim_in(&mut txn, worker, kinds, now, lease_until).await;
             finish(txn, outcome).await
         })
     }

@@ -97,6 +97,16 @@
           "format": "date-time",
           "type": "string"
         },
+        "lessons_shown": {
+          "default": [],
+          "description": "The changes whose lessons the editor was shown.",
+          "items": {
+            "maxLength": 36,
+            "type": "string"
+          },
+          "maxItems": 3,
+          "type": "array"
+        },
         "problems": {
           "description": "What the code refused or what went wrong, in order.",
           "items": {

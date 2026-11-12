@@ -98,6 +98,11 @@
           "const": "time",
           "description": "Time.",
           "type": "string"
+        },
+        {
+          "const": "stopped",
+          "description": "The runtime was stopping, so the run ended early.",
+          "type": "string"
         }
       ]
     },
@@ -448,6 +453,58 @@
             "status",
             "by_harness",
             "arguments",
+            "duration_ms"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "A call a plugin's tool made through a capability, under that tool\ncall.",
+          "properties": {
+            "capability": {
+              "description": "`http` or `model`.",
+              "maxLength": 32,
+              "type": "string"
+            },
+            "cost_usd_micros": {
+              "description": "What it cost, in millionths of a dollar.",
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "duration_ms": {
+              "description": "How long it took.",
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "ok": {
+              "description": "Whether it worked.",
+              "type": "boolean"
+            },
+            "tool_index": {
+              "description": "The tool call's place among the run's tool calls.",
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "type": {
+              "const": "capability",
+              "type": "string"
+            },
+            "what": {
+              "description": "The method and address, or the model that answered.",
+              "maxLength": 512,
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "tool_index",
+            "capability",
+            "what",
+            "ok",
+            "cost_usd_micros",
             "duration_ms"
           ],
           "type": "object"

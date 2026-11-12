@@ -5,17 +5,15 @@
 use std::time::Duration;
 
 use plugin_api::read_line;
+use plugin_api::rpc::{PARSE_ERROR, SERVER_ERROR, failure};
 use reqwest::StatusCode;
-use serde_json::{Value, json};
+use serde_json::Value;
 use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt, BufReader};
 
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
-/// JSON-RPC's range for a server's own errors.
-const SERVER_ERROR: i64 = -32000;
-const PARSE_ERROR: i64 = -32700;
 
 fn error_line(id: &Value, code: i64, message: &str) -> String {
-    json!({ "jsonrpc": "2.0", "id": id, "error": { "code": code, "message": message } }).to_string()
+    failure(id, code, message).to_string()
 }
 
 /// What to tell the client about a reply that isn't an MCP message.

@@ -10,12 +10,9 @@ use runtime::Program;
 
 #[tokio::main]
 async fn main() -> ExitCode {
-    runtime::main(Program {
-        name: env!("CARGO_BIN_NAME"),
-        version: env!("CARGO_PKG_VERSION"),
-        plugins: compiled_plugins(),
-    })
-    .await
+    let program = Program::new(env!("CARGO_BIN_NAME"), env!("CARGO_PKG_VERSION"))
+        .with_plugins(compiled_plugins());
+    runtime::main(program).await
 }
 
 /// The plugins this build was compiled with, one cargo feature each.

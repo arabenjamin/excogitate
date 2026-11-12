@@ -1,7 +1,7 @@
 //! The owner's settings. A model can't reach any of them.
 
 use dispatch::Budget;
-use schema::{Validator, bounded};
+use schema::bounded;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use tools::HttpConfig;
@@ -172,12 +172,10 @@ impl Config {
     ///
     /// [`ConfigError`] if it isn't YAML or doesn't meet the schema.
     pub fn from_yaml(text: &str) -> Result<Self, ConfigError> {
-        let raw: serde_json::Value = serde_saphyr::from_str(text)
-            .map_err(|error| ConfigError::Yaml(bounded(&error.to_string())))?;
-        Validator::for_type::<Self>()
-            .map_err(|error| ConfigError::Invalid(bounded(&error.to_string())))?
-            .parse(raw)
-            .map_err(|error| ConfigError::Invalid(bounded(&error.to_string())))
+        schema::parse_yaml(text).map_err(|error| match error {
+            schema::YamlError::NotYaml(problem) => ConfigError::Yaml(problem),
+            other => ConfigError::Invalid(bounded(&other.to_string())),
+        })
     }
 }
 
@@ -195,7 +193,7 @@ mod tests {
     #[test]
     fn the_defaults_meet_the_schema() {
         let raw = serde_json::to_value(Config::default()).unwrap();
-        Validator::for_type::<Config>()
+        schema::Validator::for_type::<Config>()
             .unwrap()
             .check(&raw)
             .unwrap();

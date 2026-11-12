@@ -1,0 +1,78 @@
+{
+  "$defs": {
+    "WireRecord": {
+      "additionalProperties": false,
+      "description": "A record on the wire.",
+      "properties": {
+        "data": {
+          "description": "Its data.",
+          "x-extension": "data meeting the record type's own schema"
+        },
+        "data_class": {
+          "description": "`private` or `public`.",
+          "maxLength": 16,
+          "type": "string"
+        },
+        "id": {
+          "description": "Its id.",
+          "format": "uuid",
+          "type": "string"
+        },
+        "record_type": {
+          "description": "Its type.",
+          "maxLength": 128,
+          "minLength": 1,
+          "type": "string"
+        },
+        "stored_at": {
+          "description": "When.",
+          "format": "date-time",
+          "type": "string"
+        },
+        "stored_by": {
+          "description": "Who stored it.",
+          "maxLength": 128,
+          "type": "string"
+        },
+        "trust": {
+          "description": "`trusted` or `untrusted`.",
+          "maxLength": 16,
+          "type": "string"
+        }
+      },
+      "required": [
+        "record_type",
+        "id",
+        "data",
+        "data_class",
+        "trust",
+        "stored_by",
+        "stored_at"
+      ],
+      "type": "object"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "A page of records on the wire.",
+  "properties": {
+    "has_more": {
+      "description": "Whether there are more.",
+      "type": "boolean"
+    },
+    "items": {
+      "description": "The records.",
+      "items": {
+        "$ref": "#/$defs/WireRecord"
+      },
+      "maxItems": 1000,
+      "type": "array"
+    }
+  },
+  "required": [
+    "items",
+    "has_more"
+  ],
+  "title": "WirePage",
+  "type": "object"
+}

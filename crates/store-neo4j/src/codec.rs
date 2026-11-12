@@ -370,12 +370,12 @@ pub(crate) fn record_columns() -> String {
 }
 
 pub(crate) fn record(row: &Row) -> Result<Record, StoreError> {
-    Ok(Record {
-        record_type: get(row, "type")?,
-        id: RecordId::from_uuid(uuid(row, "id")?),
-        data: json(row, "data")?,
-        provenance: provenance(row)?,
-    })
+    Ok(Record::new(
+        get(row, "type")?,
+        RecordId::from_uuid(uuid(row, "id")?),
+        json(row, "data")?,
+        provenance(row)?,
+    ))
 }
 
 /// The property a filterable field is indexed under. The prefix keeps a

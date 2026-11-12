@@ -57,11 +57,14 @@ impl JobHandler for ChatJob {
     async fn run(&self, job: &Job) -> Result<Value, JobFailure> {
         let args: ChatArgs =
             serde_json::from_value(job.payload.clone()).map_err(|error| error.to_string())?;
+        // A front door with a longer budget of its own is held to the job's
+        // limit, so the run ends itself and keeps its receipt.
+        let cap = self.0.config.budget.max_duration_ms;
         let result = self
             .0
-            .chat(args.message, SCHEDULE_PURPOSE)
+            .chat(args.message, SCHEDULE_PURPOSE, Some(cap))
             .await
-            .map_err(|failure| failure.0)?;
+            .map_err(|failure| failure.message().to_owned())?;
         let answered = result.receipt.outcome == Outcome::Answered;
         let message = result
             .stopped_because

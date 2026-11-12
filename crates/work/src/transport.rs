@@ -27,7 +27,7 @@ pub trait JobTransport: Send + Sync + std::fmt::Debug {
     /// [`StoreError`] if it can't be queued.
     async fn enqueue(&self, job: Job) -> Result<Enqueued, StoreError>;
 
-    /// Claims the next runnable job, if there is one.
+    /// Claims the next runnable job of one of `kinds`, if there is one.
     ///
     /// # Errors
     ///
@@ -35,6 +35,7 @@ pub trait JobTransport: Send + Sync + std::fmt::Debug {
     async fn claim(
         &self,
         worker: &str,
+        kinds: &[String],
         now: DateTime<Utc>,
         lease_until: DateTime<Utc>,
     ) -> Result<Option<Job>, StoreError>;
@@ -79,10 +80,11 @@ impl JobTransport for StoreTransport {
     async fn claim(
         &self,
         worker: &str,
+        kinds: &[String],
         now: DateTime<Utc>,
         lease_until: DateTime<Utc>,
     ) -> Result<Option<Job>, StoreError> {
-        self.0.claim_job(worker, now, lease_until).await
+        self.0.claim_job(worker, kinds, now, lease_until).await
     }
 
     async fn complete(&self, id: JobId, worker: &str, result: Value) -> Result<(), StoreError> {

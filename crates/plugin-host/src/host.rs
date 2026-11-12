@@ -9,7 +9,7 @@ use plugin_api::{
 };
 use store::{Store, StoreError};
 
-use crate::guarded::{CapabilitySource, GuardedTool, SpendMeter};
+use crate::guarded::{CapabilityMeter, CapabilitySource, GuardedTool};
 use crate::service::{self, ServiceError, ServiceSpec};
 use crate::{PluginsConfig, ScopedRecords};
 
@@ -93,7 +93,7 @@ pub struct PluginHost {
 struct Granted {
     capabilities: Capabilities,
     /// Set when it can call a model: its calls' cost is charged from here.
-    meter: Option<Arc<SpendMeter>>,
+    meter: Option<Arc<CapabilityMeter>>,
     /// Whether it can bring in outside text, so its output is untrusted.
     guarded: bool,
 }
@@ -203,17 +203,18 @@ impl PluginHost {
                         .source
                         .as_ref()
                         .ok_or_else(|| not_available(capability))?;
-                    capabilities.http = Some(source.http(&manifest.name));
+                    let meter = Arc::clone(meter.get_or_insert_with(Arc::default));
+                    capabilities.http = Some(source.http(&manifest.name, meter));
                 }
                 PluginCapability::Model => {
                     let source = self
                         .source
                         .as_ref()
                         .ok_or_else(|| not_available(capability))?;
-                    let spent = Arc::new(SpendMeter::default());
-                    capabilities.model = Some(source.model(&manifest.name, Arc::clone(&spent)));
-                    meter = Some(spent);
+                    let meter = Arc::clone(meter.get_or_insert_with(Arc::default));
+                    capabilities.model = Some(source.model(&manifest.name, meter));
                 }
+                _ => return Err(not_available(capability)),
             }
         }
         let guarded = capabilities.http.is_some() || capabilities.model.is_some();
@@ -366,21 +367,17 @@ mod tests {
     #[async_trait]
     impl Tool for DemoTool {
         fn definition(&self) -> ToolDefinition {
-            ToolDefinition {
-                name: self.1.to_owned(),
-                description: "t".to_owned(),
-                input_schema: schema_value(),
-                output_schema: schema_value(),
-                effect: self.0,
-            }
+            ToolDefinition::new(
+                self.1.to_owned(),
+                "t".to_owned(),
+                schema_value(),
+                schema_value(),
+                self.0,
+            )
         }
 
         async fn run(&self, _: Value, _: ToolContext) -> Result<ToolOutput, ToolFailure> {
-            Ok(ToolOutput {
-                value: json!({}),
-                trust: Trust::Trusted,
-                cost_usd_micros: 0,
-            })
+            Ok(ToolOutput::new(json!({}), Trust::Trusted))
         }
     }
 
@@ -413,11 +410,7 @@ mod tests {
     }
 
     fn context() -> ToolContext {
-        ToolContext {
-            run: RunId::generate(),
-            data_class: DataClass::Public,
-            budget_usd_micros: 0,
-        }
+        ToolContext::new(RunId::generate(), DataClass::Public, 0)
     }
 
     #[tokio::test]
@@ -535,7 +528,7 @@ mod tests {
             .put("demo.a", None, json!({ "a": 1 }), context())
             .await
             .unwrap();
-        let record = scoped.get("demo.a", id).await.unwrap().unwrap();
+        let record = scoped.get("demo.a", id, context()).await.unwrap().unwrap();
         assert_eq!(record.provenance.data_class, DataClass::Public);
         assert_eq!(record.provenance.trust, Trust::Untrusted);
         assert_eq!(record.provenance.stored_by.as_str(), "plugin:demo");
@@ -565,11 +558,17 @@ mod tests {
                 .await
                 .map(|_| ()),
         );
-        refused(scoped.get("other.a", their_id).await.map(|_| ()));
-        refused(scoped.delete("other.a", their_id).await);
+        refused(scoped.get("other.a", their_id, context()).await.map(|_| ()));
+        refused(scoped.delete("other.a", their_id, context()).await);
         // A prefix means the whole name up to the dot.
-        refused(scoped.delete("demob.a", id).await);
-        assert!(theirs.get("other.a", their_id).await.unwrap().is_some());
+        refused(scoped.delete("demob.a", id, context()).await);
+        assert!(
+            theirs
+                .get("other.a", their_id, context())
+                .await
+                .unwrap()
+                .is_some()
+        );
     }
 
     #[tokio::test]

@@ -17,11 +17,16 @@ mod adopt;
 mod pick;
 
 pub(crate) use adopt::ChangeError;
+use adopt::not_adopted as adoption_skipped;
 pub(crate) use pick::PickJob;
 pub use pick::{PickArgs, Picked};
 
 /// The kind of job that runs an attempt.
 pub(crate) const HARNESS_KIND: &str = "harness";
+
+/// The most of a job's time kept back for keeping its attempt and adopting
+/// what it found: a calibration, the file, its record and the webhook.
+const ADOPTION_RESERVE: Duration = Duration::from_secs(120);
 
 /// Runs one attempt to improve an agent, and keeps it. An attempt that
 /// couldn't finish is a failed job, with the attempt as its result.
@@ -37,8 +42,19 @@ impl Runtime {
             .await
     }
 
-    /// Runs and keeps an attempt. Returns its id and the attempt.
-    pub(crate) async fn improve(&self, request: Request) -> Result<(RecordId, Attempt), String> {
+    /// Runs and keeps an attempt, within `limit`. Returns its id and the
+    /// attempt. The attempt stops in time to be kept, and adoption is
+    /// skipped when too little time is left for it.
+    pub(crate) async fn improve(
+        &self,
+        request: Request,
+        limit: Duration,
+    ) -> Result<(RecordId, Attempt), String> {
+        let started = std::time::Instant::now();
+        let started_at = chrono::Utc::now();
+        // Some of the limit is kept back for keeping the attempt and for
+        // adopting what it found.
+        let reserve = (limit / 5).min(ADOPTION_RESERVE);
         self.harness_records()
             .await
             .map_err(|error| error.to_string())?;
@@ -55,11 +71,28 @@ impl Runtime {
             },
             settings: &settings,
         };
-        let mut attempt = looped.improve(request).await;
+        let mut attempt = match tokio::time::timeout(
+            limit.saturating_sub(reserve),
+            looped.improve(request.clone()),
+        )
+        .await
+        {
+            Ok(attempt) => attempt,
+            Err(_) => Attempt::stopped(
+                request,
+                started_at,
+                "the attempt ran out of time before it finished",
+            ),
+        };
         let id = RecordId::generate();
         self.keep(id, &attempt).await?;
         if attempt.status == Status::Supported {
-            attempt.adoption = Some(self.adopt(id, &attempt).await);
+            let left = limit.saturating_sub(started.elapsed());
+            attempt.adoption = Some(if left < reserve / 2 {
+                adoption_skipped("too little of the job's time was left to adopt it safely")
+            } else {
+                self.adopt(id, &attempt).await
+            });
             self.keep(id, &attempt).await?;
         }
         Ok((id, attempt))
@@ -82,21 +115,19 @@ impl Runtime {
     ) -> Result<Page<(RecordId, Value)>, StoreError> {
         self.harness_records().await?;
         let filters = status
-            .map(|status| FieldFilter {
-                field: "status".to_owned(),
-                op: FieldOp::Eq,
-                value: FieldValue::Text(status.to_owned()),
+            .map(|status| {
+                FieldFilter::new(
+                    "status".to_owned(),
+                    FieldOp::Eq,
+                    FieldValue::Text(status.to_owned()),
+                )
             })
             .into_iter()
-            .collect();
+            .collect::<Vec<_>>();
         let found = self
             .workflows
             .store
-            .query_records(RecordQuery {
-                record_type: ATTEMPT_TYPE.to_owned(),
-                filters,
-                page,
-            })
+            .query_records(RecordQuery::new(ATTEMPT_TYPE.to_owned(), page).with_filters(filters))
             .await?;
         Ok(Page {
             items: found
@@ -137,7 +168,7 @@ impl JobHandler for HarnessJob {
     async fn run(&self, job: &store::Job) -> Result<Value, JobFailure> {
         let request: Request =
             serde_json::from_value(job.payload.clone()).map_err(|error| error.to_string())?;
-        let (id, attempt) = self.0.improve(request).await?;
+        let (id, attempt) = self.0.improve(request, self.time_limit()).await?;
         let result = json!({ "attempt_id": id.to_string(), "attempt": attempt });
         if attempt.status == Status::Failed {
             return Err(JobFailure {

@@ -113,6 +113,8 @@ pub struct SearchResults {
     pub mode: SearchMode,
     /// True when more notes matched than are listed.
     pub has_more: bool,
+    /// Notes that matched and were left out for not being close enough.
+    pub not_close_enough: u32,
     /// What embedding the query cost, in millionths of a dollar.
     pub cost_usd_micros: u64,
 }
@@ -488,6 +490,25 @@ impl Memory {
         scope: EmbedScope,
         limit: u32,
     ) -> Result<SearchResults, MemoryError> {
+        self.search_close(query, classes, scope, limit, None).await
+    }
+
+    /// The same, keeping only notes at least `min_similarity` close to the
+    /// query by vector. The threshold applies before the limit, so it never
+    /// costs a note that qualifies; a note found only by its words has no
+    /// similarity, so a threshold leaves it out.
+    ///
+    /// # Errors
+    ///
+    /// As [`Memory::search`].
+    pub async fn search_close(
+        &self,
+        query: &str,
+        classes: ClassFilter,
+        scope: EmbedScope,
+        limit: u32,
+        min_similarity: Option<f32>,
+    ) -> Result<SearchResults, MemoryError> {
         if limit == 0 || limit > MAX_SEARCH_LIMIT {
             return Err(MemoryError::Invalid(format!(
                 "limit must be 1 to {MAX_SEARCH_LIMIT}"
@@ -524,10 +545,17 @@ impl Memory {
         // Walk in fused order: rebuilding from any other order loses the rank.
         let mut seen = HashSet::new();
         let mut best = Vec::new();
+        let mut not_close_enough = 0_u32;
         for chunk in fused {
-            if seen.insert(chunk.hit.chunk.note_id) {
-                best.push(chunk);
+            if !seen.insert(chunk.hit.chunk.note_id) {
+                continue;
             }
+            let close = similarity.get(&chunk.hit.chunk.id).copied();
+            if min_similarity.is_some_and(|min| close.is_none_or(|close| close < min)) {
+                not_close_enough = not_close_enough.saturating_add(1);
+                continue;
+            }
+            best.push(chunk);
         }
         let wanted = limit as usize;
         let has_more = best.len() > wanted || text.has_more || vector.has_more;
@@ -553,6 +581,7 @@ impl Memory {
             hits,
             mode,
             has_more,
+            not_close_enough,
             cost_usd_micros,
         })
     }

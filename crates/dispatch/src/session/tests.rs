@@ -88,7 +88,7 @@ impl Tool for Fixture {
         self.runs.lock().unwrap().push(arguments);
         let value = match self.behavior {
             Behavior::Good => json!({ "echoed": "hello" }),
-            Behavior::Fail => return Err(ToolFailure("it broke".to_owned())),
+            Behavior::Fail => return Err(ToolFailure::new("it broke".to_owned())),
             Behavior::Panic => panic!("tool bug"),
             Behavior::Hang => {
                 tokio::time::sleep(Duration::from_secs(60)).await;
@@ -97,11 +97,7 @@ impl Tool for Fixture {
             Behavior::BadOutput => json!({ "wrong": true }),
             Behavior::Long => json!({ "echoed": "é".repeat(5000) }),
         };
-        Ok(ToolOutput {
-            value,
-            trust: self.trust,
-            cost_usd_micros: 0,
-        })
+        Ok(ToolOutput::new(value, self.trust))
     }
 }
 
@@ -304,6 +300,7 @@ async fn the_write_budget_stops_a_second_write() {
 }
 
 /// Spends money on each call, and counts as a read when its text says so.
+/// `fail` spends and fails; `bad` spends and returns what its schema refuses.
 #[derive(Debug, Default)]
 struct Spender {
     budgets_seen: Mutex<Vec<u64>>,
@@ -316,23 +313,24 @@ impl Tool for Spender {
     }
 
     fn effect_of(&self, arguments: &Value) -> Effect {
-        if arguments["text"] == "read" {
+        // `fail` and `bad` read too, so the write budget doesn't stop them.
+        if matches!(arguments["text"].as_str(), Some("read" | "fail" | "bad")) {
             Effect::Read
         } else {
             Effect::Write
         }
     }
 
-    async fn run(&self, _: Value, context: ToolContext) -> Result<ToolOutput, ToolFailure> {
+    async fn run(&self, arguments: Value, context: ToolContext) -> Result<ToolOutput, ToolFailure> {
         self.budgets_seen
             .lock()
             .unwrap()
             .push(context.budget_usd_micros);
-        Ok(ToolOutput {
-            value: json!({ "echoed": "hello" }),
-            trust: Trust::Trusted,
-            cost_usd_micros: 300,
-        })
+        match arguments["text"].as_str() {
+            Some("fail") => Err(ToolFailure::new("spent, then failed").with_cost(250)),
+            Some("bad") => Ok(ToolOutput::new(json!({ "wrong": 1 }), Trust::Trusted).with_cost(50)),
+            _ => Ok(ToolOutput::new(json!({ "echoed": "hello" }), Trust::Trusted).with_cost(300)),
+        }
     }
 }
 
@@ -358,6 +356,29 @@ async fn what_a_tool_spends_reaches_the_budget_and_the_receipt() {
     let receipt = session.finish(Outcome::Answered).await;
     assert_eq!(receipt.totals.cost_usd_micros, 600);
     assert_eq!(receipt.tool_calls[0].cost_usd_micros, 300);
+}
+
+#[tokio::test]
+async fn what_a_failed_call_spent_still_counts() {
+    let tool = Arc::new(Spender::default());
+    let mut session = spender_session(&tool);
+    session
+        .dispatch(&call("spender", r#"{"text":"fail"}"#))
+        .await;
+    session
+        .dispatch(&call("spender", r#"{"text":"bad"}"#))
+        .await;
+    session
+        .dispatch(&call("spender", r#"{"text":"read"}"#))
+        .await;
+    // The next call sees what the failures spent.
+    assert_eq!(*tool.budgets_seen.lock().unwrap(), vec![1000, 750, 700]);
+    let receipt = session.finish(Outcome::Answered).await;
+    assert_eq!(receipt.tool_calls[0].status, CallStatus::Failed);
+    assert_eq!(receipt.tool_calls[0].cost_usd_micros, 250);
+    assert_eq!(receipt.tool_calls[1].status, CallStatus::Failed);
+    assert_eq!(receipt.tool_calls[1].cost_usd_micros, 50);
+    assert_eq!(receipt.totals.cost_usd_micros, 600);
 }
 
 #[tokio::test]
@@ -413,6 +434,27 @@ async fn the_time_budget_stops_a_hung_tool() {
     assert_eq!(receipt.budget_hit, Some(BudgetKind::Time));
     assert!(receipt.tool_calls[0].status.started());
     assert!(receipt.tool_calls[0].duration_ms < 5000);
+}
+
+#[tokio::test]
+async fn stopping_the_runtime_ends_a_hung_tool_and_keeps_the_receipt() {
+    let tool = Fixture::new("hang", Effect::Read, Behavior::Hang);
+    let stop = crate::StopSignal::new();
+    let mut session = session_with(&[tool], &["hang"], budget()).with_stop(stop.clone());
+    let stopping = tokio::spawn(async move {
+        tokio::time::sleep(Duration::from_millis(30)).await;
+        stop.stop();
+    });
+    let reply = session.dispatch(&call("hang", GOOD_ARGS)).await;
+    stopping.await.unwrap();
+    assert_eq!(reply.status, CallStatus::TimedOut);
+    assert!(reply.content.contains("stopping"), "{}", reply.content);
+    // Nothing more runs once it's stopped.
+    let after = session.dispatch(&call("hang", GOOD_ARGS)).await;
+    assert_eq!(after.status, CallStatus::Refused);
+    let receipt = session.finish(Outcome::Answered).await;
+    assert_eq!(receipt.outcome, Outcome::BudgetHit);
+    assert_eq!(receipt.budget_hit, Some(BudgetKind::Stopped));
 }
 
 // ---- model calls ----
@@ -796,7 +838,7 @@ impl Tool for Declared {
     }
 
     async fn run(&self, _: Value, _: ToolContext) -> Result<ToolOutput, ToolFailure> {
-        Err(ToolFailure("unused".to_owned()))
+        Err(ToolFailure::new("unused".to_owned()))
     }
 }
 
@@ -1019,26 +1061,22 @@ struct Conditional;
 #[async_trait]
 impl Tool for Conditional {
     fn definition(&self) -> ToolDefinition {
-        ToolDefinition {
-            name: "conditional".to_owned(),
-            description: "a fixture".to_owned(),
-            input_schema: json!({
+        ToolDefinition::new(
+            "conditional".to_owned(),
+            "a fixture".to_owned(),
+            json!({
                 "type": "object",
                 "additionalProperties": false,
                 "properties": { "a": { "type": "integer" }, "b": { "type": "integer" } },
                 "allOf": [{ "if": { "required": ["a"] }, "then": { "required": ["b"] } }]
             }),
-            output_schema: json!({ "type": "object", "additionalProperties": false }),
-            effect: Effect::Read,
-        }
+            json!({ "type": "object", "additionalProperties": false }),
+            Effect::Read,
+        )
     }
 
     async fn run(&self, _: Value, _: ToolContext) -> Result<ToolOutput, ToolFailure> {
-        Ok(ToolOutput {
-            value: json!({}),
-            trust: Trust::Trusted,
-            cost_usd_micros: 0,
-        })
+        Ok(ToolOutput::new(json!({}), Trust::Trusted))
     }
 }
 

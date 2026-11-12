@@ -140,7 +140,12 @@ async fn a_missing_lock_node_is_made_again() {
         .unwrap();
     let now = chrono::Utc::now();
     let claimed = store
-        .claim_job("w", now, now + chrono::Duration::seconds(5))
+        .claim_job(
+            "w",
+            &["test".to_owned()],
+            now,
+            now + chrono::Duration::seconds(5),
+        )
         .await
         .unwrap();
     assert!(claimed.is_none());

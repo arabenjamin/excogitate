@@ -223,10 +223,10 @@ pub(crate) const RECORD_COLUMNS: &str =
     "r.record_type, r.id, r.data, r.data_class, r.trust, r.stored_by, r.stored_at";
 
 pub(crate) fn record_at(row: &Row<'_>) -> duckdb::Result<Record> {
-    Ok(Record {
-        record_type: row.get(0)?,
-        id: RecordId::from_uuid(uuid_at(row, 1)?),
-        data: json_at(row, 2)?,
-        provenance: provenance_at(row, 3)?,
-    })
+    Ok(Record::new(
+        row.get(0)?,
+        RecordId::from_uuid(uuid_at(row, 1)?),
+        json_at(row, 2)?,
+        provenance_at(row, 3)?,
+    ))
 }

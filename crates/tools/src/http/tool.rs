@@ -2,18 +2,20 @@
 
 use std::error::Error;
 use std::fmt;
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
 use std::time::Duration;
 
 use async_trait::async_trait;
-use plugin_api::{Effect, Tool, ToolContext, ToolDefinition, ToolFailure, ToolOutput};
+use plugin_api::{
+    Effect, HttpRequest, HttpResponse, Tool, ToolContext, ToolDefinition, ToolFailure, ToolOutput,
+};
 use protocol::Trust;
 use reqwest::header::{CONTENT_TYPE, HeaderMap, HeaderName, HeaderValue, LOCATION};
 use reqwest::{Response, StatusCode};
 use schema::Validator;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use serde_json::{Value, json};
 use url::{Host, Url};
 
 use super::config::{HttpConfig, HttpConfigError, MAX_BODY_CHARS, Method};
@@ -120,6 +122,29 @@ struct HttpResult {
     redirect_not_followed: Option<String>,
 }
 
+/// The check a plugin's request meets: the same schema as a model's call.
+static PLUGIN_ARGUMENTS: LazyLock<Option<Validator>> =
+    LazyLock::new(|| Validator::from_schema(&schema::schema_of::<HttpArgs>()).ok());
+
+/// The arguments a model would send for a plugin's request, in raw mode.
+fn plugin_arguments(request: HttpRequest) -> Value {
+    let headers: Vec<Value> = request
+        .headers
+        .into_iter()
+        .map(|(name, value)| json!({ "name": name, "value": value }))
+        .collect();
+    let mut arguments = json!({
+        "url": request.url,
+        "method": request.method.to_uppercase(),
+        "headers": headers,
+        "mode": "raw",
+    });
+    if let (Some(body), Some(fields)) = (request.body, arguments.as_object_mut()) {
+        fields.insert("body".to_owned(), Value::String(body));
+    }
+    arguments
+}
+
 /// A key's value. Its `Debug` doesn't print it.
 struct Secret(String);
 
@@ -187,7 +212,7 @@ fn resolve_credentials(
 }
 
 fn refuse(reason: impl fmt::Display) -> ToolFailure {
-    ToolFailure(schema::bounded(&format!("refused: {reason}")))
+    ToolFailure::new(schema::bounded(&format!("refused: {reason}")))
 }
 
 fn describe(error: &reqwest::Error) -> ToolFailure {
@@ -205,7 +230,7 @@ fn describe(error: &reqwest::Error) -> ToolFailure {
     } else {
         "the request failed"
     };
-    ToolFailure(what.to_owned())
+    ToolFailure::new(what.to_owned())
 }
 
 /// The part of a content type before its parameters, in lowercase.
@@ -469,7 +494,7 @@ impl HttpRequestTool {
         }
     }
 
-    async fn fetch(&self, args: HttpArgs) -> Result<ToolOutput, ToolFailure> {
+    async fn fetch(&self, args: HttpArgs) -> Result<HttpResult, ToolFailure> {
         if !self.methods.contains(&args.method) {
             return Err(refuse(format!(
                 "{} isn't allowed here; allowed: {}",
@@ -509,12 +534,56 @@ impl HttpRequestTool {
             self.read_body(&mut response, args.mode, &mut result)
                 .await?;
         }
-        Ok(ToolOutput {
-            value: serde_json::to_value(result)
-                .map_err(|error| ToolFailure(schema::bounded(&error.to_string())))?,
-            trust: Trust::Untrusted,
-            cost_usd_micros: 0,
-        })
+        Ok(result)
+    }
+
+    /// One call, within the time limit.
+    async fn fetch_in_time(&self, args: HttpArgs) -> Result<HttpResult, ToolFailure> {
+        tokio::time::timeout(self.timeout, self.fetch(args))
+            .await
+            .unwrap_or_else(|_| {
+                Err(ToolFailure::new(format!(
+                    "the call took longer than {} seconds",
+                    self.timeout.as_secs()
+                )))
+            })
+    }
+
+    /// The tool's input and output schemas, as published.
+    #[must_use]
+    pub fn schemas() -> (Value, Value) {
+        (
+            schema::schema_of::<HttpArgs>(),
+            schema::schema_of::<HttpResult>(),
+        )
+    }
+
+    /// Makes a plugin's request: raw, since a plugin parses what it fetches
+    /// itself, and held to everything a model's call is, its argument
+    /// schema included, so a plugin can't send what a model couldn't.
+    ///
+    /// # Errors
+    ///
+    /// [`ToolFailure`] if the request is refused or fails.
+    pub async fn request_for_plugin(
+        &self,
+        request: HttpRequest,
+    ) -> Result<HttpResponse, ToolFailure> {
+        let arguments = plugin_arguments(request);
+        let validator = PLUGIN_ARGUMENTS
+            .as_ref()
+            .ok_or_else(|| ToolFailure::new("the request schema doesn't compile"))?;
+        validator
+            .check(&arguments)
+            .map_err(|refusal| ToolFailure::new(refusal.to_string()))?;
+        let args: HttpArgs = serde_json::from_value(arguments)
+            .map_err(|error| ToolFailure::new(schema::bounded(&error.to_string())))?;
+        let result = self.fetch_in_time(args).await?;
+        Ok(
+            HttpResponse::new(result.status, result.body.unwrap_or_default())
+                .with_truncated(result.truncated)
+                .with_note(result.omitted_reason.or(result.redirect_not_followed)),
+        )
     }
 
     /// Fills in the body, its title, and whatever kept it from being whole.
@@ -540,7 +609,7 @@ impl HttpRequestTool {
         let (title, text) = if readable {
             tokio::task::spawn_blocking(move || readable_text(&text))
                 .await
-                .map_err(|_| ToolFailure("reading the page failed".to_owned()))?
+                .map_err(|_| ToolFailure::new("reading the page failed".to_owned()))?
         } else {
             (None, text)
         };
@@ -581,14 +650,10 @@ impl Tool for HttpRequestTool {
 
     async fn run(&self, arguments: Value, _: ToolContext) -> Result<ToolOutput, ToolFailure> {
         let args: HttpArgs = serde_json::from_value(arguments)
-            .map_err(|error| ToolFailure(schema::bounded(&error.to_string())))?;
-        tokio::time::timeout(self.timeout, self.fetch(args))
-            .await
-            .unwrap_or_else(|_| {
-                Err(ToolFailure(format!(
-                    "the call took longer than {} seconds",
-                    self.timeout.as_secs()
-                )))
-            })
+            .map_err(|error| ToolFailure::new(schema::bounded(&error.to_string())))?;
+        let result = self.fetch_in_time(args).await?;
+        let value = serde_json::to_value(result)
+            .map_err(|error| ToolFailure::new(schema::bounded(&error.to_string())))?;
+        Ok(ToolOutput::new(value, Trust::Untrusted))
     }
 }

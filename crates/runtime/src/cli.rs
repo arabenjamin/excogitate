@@ -12,6 +12,7 @@ use crate::{RunError, run_connect, run_server, run_stdio};
 /// What a binary is: the name that prefixes its settings, its version, and
 /// the plugins compiled into it.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct Program {
     /// The binary's name, as in `env!("CARGO_BIN_NAME")`. Settings are read
     /// from variables that start with it in capitals.
@@ -24,6 +25,31 @@ pub struct Program {
 }
 
 impl Program {
+    /// A binary with no plugins compiled in. Pass `env!("CARGO_BIN_NAME")`
+    /// and `env!("CARGO_PKG_VERSION")`.
+    #[must_use]
+    pub const fn new(name: &'static str, version: &'static str) -> Self {
+        Self {
+            name,
+            version,
+            plugins: Vec::new(),
+        }
+    }
+
+    /// The same binary with one more plugin compiled in.
+    #[must_use]
+    pub fn with_plugin(mut self, plugin: Arc<dyn Plugin>) -> Self {
+        self.plugins.push(plugin);
+        self
+    }
+
+    /// The same binary with these plugins compiled in as well.
+    #[must_use]
+    pub fn with_plugins(mut self, plugins: impl IntoIterator<Item = Arc<dyn Plugin>>) -> Self {
+        self.plugins.extend(plugins);
+        self
+    }
+
     /// The line printed for `version`.
     #[must_use]
     pub fn banner(&self) -> String {
@@ -77,11 +103,7 @@ mod tests {
 
     #[test]
     fn the_banner_names_the_version_and_the_plugins() {
-        let program = Program {
-            name: "app",
-            version: "9.9.9",
-            plugins: Vec::new(),
-        };
+        let program = Program::new("app", "9.9.9");
         assert_eq!(program.banner(), "app 9.9.9 (0 plugins compiled in)");
     }
 }

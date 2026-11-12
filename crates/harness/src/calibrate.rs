@@ -130,7 +130,12 @@ impl Judges<'_> {
             let runs = [&case.reference, &case.candidate];
             let judged = self.compose(&brief, &runs, &[("A", BETTER)], left).await;
             let detail = match judged {
-                Err(error) => Some(error.to_string()),
+                Err(error) => {
+                    calibration.cost_usd_micros = calibration
+                        .cost_usd_micros
+                        .saturating_add(error.cost_usd_micros());
+                    Some(error.to_string())
+                }
                 Ok(judged) => {
                     calibration.cost_usd_micros = calibration
                         .cost_usd_micros
