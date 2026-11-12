@@ -102,7 +102,8 @@ the same one had the same instructions, tools and limits.
 
 ### Harness²
 
-`POST /api/v1/harness/attempts` queues an attempt to improve an agent, and
+`POST /api/v1/harness/attempts` queues an attempt to improve an agent, or a
+workflow with `"target": "workflow"`, and
 `GET /api/v1/harness/attempts` and `GET /api/v1/harness/attempts/{id}` read what
 attempts found. See [Harness²](harness.md#running-one). The system adopts what
 the evidence supports on its own; `GET /api/v1/harness/changes`,

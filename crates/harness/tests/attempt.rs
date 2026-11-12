@@ -140,6 +140,7 @@ async fn attempt(setup: &Setup) -> Attempt {
     looped
         .improve(Request {
             agent: "helper".to_owned(),
+            target: harness::Target::Agent,
             task: TASK.to_owned(),
             why: Some("It gave up without looking.".to_owned()),
         })
@@ -356,6 +357,7 @@ async fn an_agent_that_doesnt_exist_fails_and_says_so() {
     let attempt = looped
         .improve(Request {
             agent: "ghost".to_owned(),
+            target: harness::Target::Agent,
             task: TASK.to_owned(),
             why: None,
         })
@@ -388,6 +390,7 @@ async fn the_record_type_registers_and_an_attempt_meets_it() {
     let attempt = looped
         .improve(Request {
             agent: "ghost".to_owned(),
+            target: harness::Target::Agent,
             task: TASK.to_owned(),
             why: None,
         })
@@ -555,6 +558,7 @@ async fn only_a_supported_edit_that_meets_every_rule_is_adopted() {
 
     let hold = harness::Hold {
         agent: "helper".to_owned(),
+        target: harness::Target::Agent,
         since: now,
         reason: "the owner reverted a change".to_owned(),
     };
@@ -657,6 +661,7 @@ async fn the_editor_is_shown_the_active_lessons_that_fit() {
     let lesson = |agent: &str, change: &str, situation: &str, status: harness::LessonStatus| {
         harness::Lesson {
             agent: agent.to_owned(),
+            target: harness::Target::Agent,
             change_id: change.to_owned(),
             at: Utc::now(),
             situation: situation.to_owned(),
@@ -787,4 +792,101 @@ async fn a_skill_that_wont_compile_is_never_run() {
             .contains("the skill s"),
         "{attempt:#?}"
     );
+}
+
+async fn with_workflow(setup: &Setup) {
+    let body = json!({
+        "inputs": { "type": "object", "additionalProperties": false,
+                    "properties": { "q": { "type": "string", "maxLength": 100 } } },
+        "steps": [{ "type": "agent", "id": "answer", "agent": "helper", "message": "Answer it." }]
+    });
+    let definition = Definition {
+        key: DefinitionKey {
+            kind: DefinitionKind::Workflow,
+            name: "ask".to_owned(),
+        },
+        body,
+        source: "test".to_owned(),
+        updated_at: Utc::now(),
+    };
+    setup
+        .engine
+        .store
+        .apply(UnitOfWork::new().with(WriteOp::PutDefinition(definition)))
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
+async fn a_workflows_merge_combines_the_step_edits_and_is_judged_on_its_own() {
+    let cite = json!([{ "run": "R", "step": 3, "quote": "I don't know" }]);
+    let setup = setup(vec![
+        say("I don't know."),
+        text(&json!({
+            "invariant": { "steps": [{ "id": "answer", "message": "Work it out, then answer." }],
+                           "change": "Work it out.", "cites": cite },
+            "domain": { "steps": [{ "id": "answer", "context": "Answers are numbers." }],
+                        "change": "Say what answers look like.", "cites": cite }
+        })),
+        say("The answer is 42."),
+        say("The answer is 42."),
+        text(&json!({
+            "verdicts": [mitigated_at("A", 3), mitigated_at("B", 3)], "decision": "merge",
+            "choose": null, "merged": null, "reason": "Each found the answer."
+        })),
+        say("The answer is 42."),
+        composer(&json!([mitigated_at("M", 3)]), "adopt", Some("M")),
+    ])
+    .await;
+    with_workflow(&setup).await;
+    let settings = Settings {
+        reads: ["look".to_owned()].into_iter().collect(),
+        judge_usd_micros: 0,
+    };
+    let looped = Loop {
+        engine: &setup.engine,
+        judges: Judges {
+            gateway: &setup.engine.gateway,
+            max_output_tokens: 4000,
+        },
+        settings: &settings,
+    };
+    let attempt = looped
+        .improve(Request {
+            agent: "ask".to_owned(),
+            task: r#"{"q":"six times seven"}"#.to_owned(),
+            target: harness::Target::Workflow,
+            why: None,
+        })
+        .await;
+    assert_eq!(attempt.status, Status::Supported, "{attempt:#?}");
+    let merged = attempt.supported().unwrap();
+    assert_eq!(merged.label, "M");
+    let edits: Vec<_> = merged
+        .steps
+        .iter()
+        .map(|edit| (edit.message.as_deref(), edit.context.as_deref()))
+        .collect();
+    // Both edited the one step, each a different part, so the merge has both.
+    assert_eq!(
+        edits,
+        [(
+            Some("Work it out, then answer."),
+            Some("Answers are numbers.")
+        )]
+    );
+    assert_eq!(
+        attempt.reference.as_ref().unwrap().outcome.as_deref(),
+        Some("completed")
+    );
+    assert_eq!(attempt.reference.as_ref().unwrap().runs.len(), 1);
+    assert_ne!(
+        merged.probe.as_ref().unwrap().harness,
+        attempt.base_harness.clone().unwrap()
+    );
+}
+
+fn mitigated_at(run: &str, step: u32) -> Value {
+    json!({ "candidate": run, "effect": "mitigated",
+            "cite": { "run": run, "step": step, "quote": "The answer is 42." } })
 }

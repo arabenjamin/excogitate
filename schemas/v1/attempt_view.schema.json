@@ -1,5 +1,28 @@
 {
   "$defs": {
+    "Action": {
+      "additionalProperties": false,
+      "description": "The calls a guardrail is about, by what one of their arguments says.",
+      "properties": {
+        "argument": {
+          "description": "The argument, as a dotted path such as `operation`.",
+          "maxLength": 128,
+          "minLength": 1,
+          "type": "string"
+        },
+        "matches": {
+          "description": "A pattern that ignores case, matched as `deny` matches. Only a call\nwhose argument matches counts, and a call without it doesn't.",
+          "maxLength": 256,
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "argument",
+        "matches"
+      ],
+      "type": "object"
+    },
     "Adoption": {
       "additionalProperties": false,
       "description": "Whether a supported edit was adopted.",
@@ -256,6 +279,14 @@
           "maxItems": 16,
           "type": "array"
         },
+        "steps": {
+          "description": "For a workflow, its step edits. Its instructions are empty.",
+          "items": {
+            "$ref": "#/$defs/StepEdit"
+          },
+          "maxItems": 32,
+          "type": "array"
+        },
         "system_prompt": {
           "description": "Its instructions.",
           "maxLength": 16000,
@@ -402,11 +433,31 @@
       "additionalProperties": false,
       "description": "A rule on one of the agent's tools.",
       "properties": {
+        "action": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Action"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The calls of the tool its rules are about. Left out, all of them."
+        },
         "because": {
           "description": "Why, as the model is told when the rule stops it.",
           "maxLength": 500,
           "minLength": 1,
           "type": "string"
+        },
+        "claimed": {
+          "description": "The same as `required`, but only for an answer this pattern matches,\nignoring case: what the answer says the tool did, such as\n`\\b(saved|stored)\\b`.",
+          "maxLength": 256,
+          "minLength": 1,
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "deny": {
           "anyOf": [
@@ -497,9 +548,18 @@
           ]
         },
         "run": {
-          "description": "The run.",
+          "description": "The run. For a workflow, its first step's.",
           "maxLength": 36,
           "type": "string"
+        },
+        "runs": {
+          "description": "For a workflow, each step's run, in order.",
+          "items": {
+            "maxLength": 36,
+            "type": "string"
+          },
+          "maxItems": 64,
+          "type": "array"
         }
       },
       "required": [
@@ -514,13 +574,28 @@
       "description": "What to improve.",
       "properties": {
         "agent": {
-          "description": "The agent.",
+          "description": "The agent, or the workflow when `target` is `workflow`.",
           "maxLength": 64,
           "minLength": 1,
           "type": "string"
         },
+        "target": {
+          "description": "What to improve: an agent unless it says otherwise.",
+          "oneOf": [
+            {
+              "const": "agent",
+              "description": "An agent.",
+              "type": "string"
+            },
+            {
+              "const": "workflow",
+              "description": "A workflow.",
+              "type": "string"
+            }
+          ]
+        },
         "task": {
-          "description": "A task to run it on, such as one a real run got wrong.",
+          "description": "A task to run it on, such as one a real run got wrong. For a\nworkflow, the inputs to run it on, as a JSON object.",
           "maxLength": 8000,
           "minLength": 1,
           "type": "string"
@@ -577,6 +652,43 @@
         "name",
         "when",
         "instructions"
+      ],
+      "type": "object"
+    },
+    "StepEdit": {
+      "additionalProperties": false,
+      "description": "A change to one step of a workflow.",
+      "properties": {
+        "arguments": {
+          "description": "New arguments for a step whose tool only reads.",
+          "x-extension": "checked against the tool's input schema"
+        },
+        "context": {
+          "description": "An agent step's new context.",
+          "maxLength": 4096,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "id": {
+          "description": "The step, by its id.",
+          "maxLength": 64,
+          "minLength": 1,
+          "type": "string"
+        },
+        "message": {
+          "description": "An agent step's new message.",
+          "maxLength": 16000,
+          "minLength": 1,
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "id"
       ],
       "type": "object"
     },

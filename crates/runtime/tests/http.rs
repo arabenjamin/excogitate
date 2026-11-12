@@ -1446,3 +1446,138 @@ async fn runs_that_went_well_give_nothing_to_pick() {
     assert_eq!(picked["result"]["pick"], Value::Null, "{picked}");
     assert_eq!(picked["result"]["job_id"], Value::Null);
 }
+
+// A workflow as Harness²'s target.
+
+const ASK_FILE: &str = "# Kept by hand.\ninputs:\n  type: object\n  additionalProperties: false\n  \
+     required: [question]\n  properties:\n    question: {type: string, maxLength: 200}\n\
+     steps:\n  - {type: agent, id: answer, agent: helper, message: 'Answer: {{inputs.question}}'}\n\
+     output: '{{steps.answer.answer}}'\n";
+const ASK_BETTER: &str = "Work the answer out, then give it: {{inputs.question}}";
+
+/// One workflow attempt that ends supported. The reference's steps are R0
+/// to R4 for the agent step (R3 its reply), then R5 how the workflow ended.
+fn supported_workflow_attempt() -> Vec<ChaosStep> {
+    vec![
+        ChaosStep::Text("I don't know.".to_owned()),
+        judged(&json!({
+            "invariant": { "steps": [{ "id": "answer", "message": ASK_BETTER }],
+                           "change": "Ask it to work the answer out.",
+                           "cites": [{ "run": "R", "step": 3, "quote": "I don't know" }] },
+            "domain": { "steps": [], "change": "Nothing.", "cites": [] }
+        })),
+        ChaosStep::Text("It is 42.".to_owned()),
+        judged(&json!({
+            "verdicts": [{ "candidate": "A", "effect": "mitigated",
+                           "cite": { "run": "A", "step": 3, "quote": "It is 42." } }],
+            "decision": "adopt", "choose": "A", "merged": null, "reason": "A answered."
+        })),
+    ]
+}
+
+#[tokio::test]
+async fn a_workflow_is_improved_adopted_and_reverted_like_an_agent() {
+    let script = [supported_workflow_attempt(), known_answers()].concat();
+    let running = adopting("adopt-flow", script).await;
+    running.define("workflows/ask.yaml", ASK_FILE).await;
+    let request = json!({
+        "agent": "ask", "target": "workflow",
+        "task": json!({ "question": "What is six times seven?" }).to_string()
+    });
+    let started = body_of(running.post("/api/v1/harness/attempts", &request).await).await;
+    let job = started["job_id"]
+        .as_str()
+        .unwrap_or_else(|| panic!("{started}"));
+    let done = running.work_off(job).await;
+    let attempt = &done["result"]["attempt"];
+    assert_eq!(attempt["status"], "supported", "{attempt}");
+    assert_eq!(attempt["adoption"]["adopted"], true, "{attempt}");
+    assert_eq!(attempt["reference"]["outcome"], "completed");
+    assert_eq!(attempt["candidates"][0]["steps"][0]["id"], "answer");
+    assert_eq!(
+        attempt["candidates"][1]["refused"], "it changes nothing",
+        "{attempt}"
+    );
+
+    // The workflow's file is changed, and it runs with the new message.
+    let path = running.root.join("workflows/ask.yaml");
+    let written = std::fs::read_to_string(&path).unwrap();
+    assert!(written.starts_with("# Changed by Harness²"), "{written}");
+    let found = body_of(running.get("/api/v1/definitions/workflow/ask").await).await;
+    assert_eq!(found["body"]["steps"][0]["message"], ASK_BETTER, "{found}");
+    let change_id = attempt["adoption"]["change_id"].as_str().unwrap();
+    let listed = body_of(running.get("/api/v1/harness/changes?agent=ask").await).await;
+    assert_eq!(
+        listed["items"][0]["change"]["target"], "workflow",
+        "{listed}"
+    );
+    let lessons = body_of(running.get("/api/v1/harness/lessons?agent=ask").await).await;
+    assert_eq!(lessons["items"][0]["target"], "workflow", "{lessons}");
+
+    // Reverted, the file is back exactly and the workflow is held, apart
+    // from the agent of the same kind of name.
+    let reverted = running
+        .post(
+            &format!("/api/v1/harness/changes/{change_id}/revert"),
+            &json!({}),
+        )
+        .await;
+    assert_eq!(reverted.status(), StatusCode::OK);
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), ASK_FILE);
+    let holds = body_of(running.get("/api/v1/harness/holds").await).await;
+    assert_eq!(holds["items"][0]["agent"], "ask", "{holds}");
+    assert_eq!(holds["items"][0]["target"], "workflow");
+    let as_agent = running
+        .client
+        .delete(format!("{}/api/v1/harness/holds/ask", running.url))
+        .bearer_auth(KEY)
+        .send()
+        .await
+        .unwrap();
+    // Nothing holds an agent called ask, so there's nothing to release.
+    assert_eq!(as_agent.status(), StatusCode::NOT_FOUND);
+    let still = body_of(running.get("/api/v1/harness/holds").await).await;
+    assert_eq!(still["items"].as_array().unwrap().len(), 1, "{still}");
+    let released = running
+        .client
+        .delete(format!(
+            "{}/api/v1/harness/holds/ask?target=workflow",
+            running.url
+        ))
+        .bearer_auth(KEY)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(released.status(), StatusCode::NO_CONTENT);
+    let none = body_of(running.get("/api/v1/harness/holds").await).await;
+    assert_eq!(none["items"], json!([]));
+}
+
+#[tokio::test]
+async fn a_workflow_attempt_needs_a_workflow_and_its_inputs_as_an_object() {
+    let running = adopting("flow-inputs", vec![]).await;
+    running.define("workflows/ask.yaml", ASK_FILE).await;
+    for (task, status) in [
+        ("not json", StatusCode::BAD_REQUEST),
+        ("[1]", StatusCode::BAD_REQUEST),
+    ] {
+        let request = json!({ "agent": "ask", "target": "workflow", "task": task });
+        let refused = running.post("/api/v1/harness/attempts", &request).await;
+        assert_eq!(refused.status(), status, "{task}");
+        assert!(
+            body_of(refused).await["message"]
+                .as_str()
+                .unwrap()
+                .contains("inputs to run it on")
+        );
+    }
+    let request = json!({ "agent": "helper", "target": "workflow", "task": "{}" });
+    let missing = running.post("/api/v1/harness/attempts", &request).await;
+    assert_eq!(missing.status(), StatusCode::NOT_FOUND);
+    assert!(
+        body_of(missing).await["message"]
+            .as_str()
+            .unwrap()
+            .contains("no workflow helper")
+    );
+}

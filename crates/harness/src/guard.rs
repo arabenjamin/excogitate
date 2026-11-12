@@ -42,7 +42,7 @@ pub fn check_instructions(candidate: &str, current: &str, task: &str) -> Result<
 /// Why `text` can't go into an agent, if it can't: it holds the judge's input
 /// or the task it was tested on. `what` names it, with its verb, such as
 /// "the instructions contain".
-fn leaks(what: &str, text: &str, task: &str) -> Result<(), String> {
+pub(crate) fn leaks(what: &str, text: &str, task: &str) -> Result<(), String> {
     // A judge that pastes its own input into the agent leaks the test into
     // every later run.
     if text.contains("===== BEGIN") || text.contains("===== END") {

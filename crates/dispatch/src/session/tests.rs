@@ -1574,3 +1574,90 @@ async fn the_start_step_names_the_skills() {
         crate::Step::Started { skills, .. } if skills == &["citing"]
     ));
 }
+
+fn calls_with(name: &str, arguments: &str) -> ChatResponse {
+    ChatResponse {
+        content: "looking".to_owned(),
+        tool_calls: vec![call(name, arguments)],
+        finish: FinishReason::ToolCalls,
+        usage: USED,
+    }
+}
+
+async fn converse_ruled(client: Arc<Scripted>, tool: &Arc<Fixture>, rule: &Value) -> ChatResult {
+    let catalog = Catalog::from_yaml(FREE, |_| None).unwrap();
+    let gateway = Gateway::new(catalog, client, Arc::new(MemoryLedger::new()));
+    let mut budget = budget();
+    budget.max_rounds = 4;
+    session_with(std::slice::from_ref(tool), &["reader"], budget)
+        .with_guardrails(vec![guardrail(rule)])
+        .unwrap()
+        .converse(
+            &gateway,
+            Conversation {
+                messages: vec![Message::user("hello")],
+                max_output_tokens: 400,
+                temperature: None,
+            },
+        )
+        .await
+}
+
+#[tokio::test]
+async fn only_the_action_asked_for_meets_a_required_guardrail() {
+    let tool = Fixture::new("reader", Effect::Read, Behavior::Good);
+    let rule = json!({
+        "name": "say_hi", "tool": "reader", "because": "Greet first.", "required": true,
+        "action": { "argument": "text", "matches": "^hi$" }
+    });
+    let client = Scripted::new(vec![
+        calls_with("reader", r#"{"text":"other"}"#),
+        says("done", FinishReason::Stop),
+        calls_with("reader", r#"{"text":"hi"}"#),
+        says("greeted", FinishReason::Stop),
+    ]);
+    let result = converse_ruled(Arc::clone(&client), &tool, &rule).await;
+    assert_eq!(result.answer.as_deref(), Some("greeted"));
+    assert_eq!(result.receipt.guardrails_unmet, Vec::<String>::new());
+    let seen = client.seen.lock().unwrap();
+    let reminder = &seen[2].messages.last().unwrap().content;
+    assert!(reminder.contains(r#"text matching "^hi$""#), "{reminder}");
+}
+
+#[tokio::test]
+async fn an_answer_claiming_what_didnt_run_goes_back_once_then_is_named() {
+    let tool = Fixture::new("reader", Effect::Read, Behavior::Good);
+    let rule = json!({
+        "name": "read_claim", "tool": "reader", "because": "Only say it if you did.",
+        "claimed": r"\bI read\b"
+    });
+    let client = Scripted::new(vec![
+        says("I read it.", FinishReason::Stop),
+        says("I read it, honestly.", FinishReason::Stop),
+    ]);
+    let result = converse_ruled(Arc::clone(&client), &tool, &rule).await;
+    assert_eq!(result.answer.as_deref(), Some("I read it, honestly."));
+    assert_eq!(result.receipt.guardrails_unmet, ["read_claim"]);
+    let seen = client.seen.lock().unwrap();
+    assert!(
+        seen[1]
+            .messages
+            .last()
+            .unwrap()
+            .content
+            .contains("answer without saying so")
+    );
+}
+
+#[tokio::test]
+async fn an_answer_that_claims_nothing_needs_no_call() {
+    let tool = Fixture::new("reader", Effect::Read, Behavior::Good);
+    let rule = json!({
+        "name": "read_claim", "tool": "reader", "because": "b", "claimed": r"\bI read\b"
+    });
+    let client = Scripted::new(vec![says("Nothing to read.", FinishReason::Stop)]);
+    let result = converse_ruled(Arc::clone(&client), &tool, &rule).await;
+    assert_eq!(result.answer.as_deref(), Some("Nothing to read."));
+    assert_eq!(result.receipt.guardrails_unmet, Vec::<String>::new());
+    assert_eq!(client.seen.lock().unwrap().len(), 1);
+}

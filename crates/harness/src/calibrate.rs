@@ -112,6 +112,7 @@ impl Judges<'_> {
     /// pinned to it, so a fallback elsewhere can't stand in for it.
     pub async fn calibrate(&self, model: &str, budget_usd_micros: u64) -> Calibration {
         let brief = Brief {
+            target: crate::flow::Target::Agent,
             instructions: INSTRUCTIONS,
             tools: &[],
             skills: &[],

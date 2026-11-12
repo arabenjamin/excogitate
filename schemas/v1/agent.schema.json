@@ -1,5 +1,28 @@
 {
   "$defs": {
+    "Action": {
+      "additionalProperties": false,
+      "description": "The calls a guardrail is about, by what one of their arguments says.",
+      "properties": {
+        "argument": {
+          "description": "The argument, as a dotted path such as `operation`.",
+          "maxLength": 128,
+          "minLength": 1,
+          "type": "string"
+        },
+        "matches": {
+          "description": "A pattern that ignores case, matched as `deny` matches. Only a call\nwhose argument matches counts, and a call without it doesn't.",
+          "maxLength": 256,
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "argument",
+        "matches"
+      ],
+      "type": "object"
+    },
     "AgentMemory": {
       "additionalProperties": false,
       "description": "What an agent's memory reads, beside the store.",
@@ -108,11 +131,31 @@
       "additionalProperties": false,
       "description": "A rule on one of the agent's tools.",
       "properties": {
+        "action": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Action"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The calls of the tool its rules are about. Left out, all of them."
+        },
         "because": {
           "description": "Why, as the model is told when the rule stops it.",
           "maxLength": 500,
           "minLength": 1,
           "type": "string"
+        },
+        "claimed": {
+          "description": "The same as `required`, but only for an answer this pattern matches,\nignoring case: what the answer says the tool did, such as\n`\\b(saved|stored)\\b`.",
+          "maxLength": 256,
+          "minLength": 1,
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "deny": {
           "anyOf": [

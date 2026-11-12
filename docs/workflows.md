@@ -174,6 +174,29 @@ guardrails:
   run has two rounds and a tool call left. If it answers again without the
   call, or there's no room for a reminder, the answer stands and the receipt
   lists the guardrail in `guardrails_unmet`.
+- **`claimed`** is `required` for only the answers its pattern matches: what
+  the answer says the tool did. `claimed: '\bI(.ve| have)? saved\b'` on
+  `memory` means an answer that says it saved something needs the save to
+  have run. It goes back once, as for `required`, told to call the tool or
+  answer without the claim. A guardrail has `required` or `claimed`, not
+  both.
+- **`action: {argument, matches}`** narrows which calls of the tool the
+  guardrail is about, matched as `deny` is: `{argument: operation, matches:
+  '^store$'}` on `memory` counts only stores, so a search doesn't meet a
+  guardrail that asks for a save, and `max_calls` caps only stores.
+
+The answer is checked against what ran, not against what a model makes of
+it, so the check is free and the same every time. What it can't see, such as
+a claim worded some other way, it doesn't catch.
+
+```yaml
+guardrails:
+  - name: saved_means_stored
+    tool: memory
+    action: {argument: operation, matches: '^store$'}
+    claimed: '\bI(.ve| have)? (saved|stored|noted)\b'
+    because: Say you saved something only after memory's store has run.
+```
 
 A refused call tells the model `because`. Its receipt entry names the
 guardrail and is `arguments_invalid` for `deny` or `budget` for

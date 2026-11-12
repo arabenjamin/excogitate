@@ -176,6 +176,10 @@ pub struct Session {
     guardrails: Vec<Enforced>,
     /// The skills its instructions include, for its trajectory.
     skills: Vec<String>,
+    /// The guardrails the call being made is about, by index.
+    about: Vec<usize>,
+    /// Guardrails whose claim the answer made without the call.
+    claims_unmet: Vec<String>,
 }
 
 /// A refusal on its way back to the model.
@@ -238,6 +242,8 @@ impl Session {
             messages_recorded: 0,
             guardrails: Vec::new(),
             skills: Vec::new(),
+            about: Vec::new(),
+            claims_unmet: Vec::new(),
         })
     }
 
@@ -322,28 +328,34 @@ impl Session {
             })
     }
 
-    /// Counts a call that passed its checks, and whether it ran, against
-    /// the guardrails on its tool.
-    fn guardrails_saw(&mut self, tool: &str, ran: bool, counted: bool) {
+    /// Counts a call that passed its checks against the guardrails it's
+    /// about, and keeps which they are until it's known whether it ran.
+    fn guardrails_saw(&mut self, tool: &str, arguments: &Value) {
+        self.about.clear();
         if self.by_harness {
             return;
         }
-        for enforced in self
-            .guardrails
-            .iter_mut()
-            .filter(|enforced| enforced.rule.tool == tool)
-        {
-            if counted {
+        for (index, enforced) in self.guardrails.iter_mut().enumerate() {
+            if enforced.rule.tool == tool && enforced.about(arguments) {
                 enforced.calls = enforced.calls.saturating_add(1);
+                self.about.push(index);
             }
-            enforced.ran |= ran;
         }
     }
 
-    /// The reminder for a required guardrail whose tool hasn't run, once
-    /// each, if there's room for the agent to act on it: a round to call
-    /// the tool, one to answer, and a tool call.
-    pub(crate) fn reminder(&mut self) -> Option<String> {
+    /// The call being made ran, or didn't, for the guardrails it's about.
+    fn guardrails_ran(&mut self, ran: bool) {
+        for index in std::mem::take(&mut self.about) {
+            if let Some(enforced) = self.guardrails.get_mut(index) {
+                enforced.ran |= ran;
+            }
+        }
+    }
+
+    /// The reminder for a guardrail that `answer` needed a call for, which
+    /// hasn't run: once each, if there's room for the agent to act on it,
+    /// a round to call the tool, one to answer, and a tool call.
+    pub(crate) fn reminder(&mut self, answer: &str) -> Option<String> {
         let budget = self.config.budget;
         let room = self.totals.rounds.saturating_add(2) <= budget.max_rounds
             && self.totals.tool_calls < budget.max_tool_calls;
@@ -353,9 +365,22 @@ impl Session {
         let enforced = self
             .guardrails
             .iter_mut()
-            .find(|enforced| enforced.rule.required && !enforced.ran && !enforced.reminded)?;
+            .find(|enforced| enforced.needs_call(answer) && !enforced.ran && !enforced.reminded)?;
         enforced.reminded = true;
         Some(enforced.reminder())
+    }
+
+    /// Keeps the claimed guardrails the final answer needed a call for that
+    /// never ran, for the receipt.
+    pub(crate) fn answered(&mut self, answer: &str) {
+        self.claims_unmet = self
+            .guardrails
+            .iter()
+            .filter(|enforced| {
+                enforced.rule.claimed.is_some() && enforced.needs_call(answer) && !enforced.ran
+            })
+            .map(|enforced| enforced.rule.name.clone())
+            .collect();
     }
 
     fn stopping(&self) -> bool {
@@ -677,7 +702,7 @@ impl Session {
             }
             self.totals.writes += 1;
         }
-        self.guardrails_saw(&name, false, true);
+        self.guardrails_saw(&name, &arguments);
         if let Some(probe) = &self.config.probe
             && !probe.nested.contains(&name)
             && (effect == crate::Effect::Write || !probe.reads.contains(&name))
@@ -691,7 +716,7 @@ impl Session {
     /// A probe's call that doesn't run: it's recorded, and the model is told.
     async fn stub(&mut self, call: &ToolCall, name: String, effect: crate::Effect) -> ToolReply {
         // In a probe, a stub stands for the call running.
-        self.guardrails_saw(&name, true, false);
+        self.guardrails_ran(true);
         let index = self.call_index();
         self.tool_calls.push(ToolEntry {
             tool: name.clone(),
@@ -894,7 +919,7 @@ impl Session {
             abort.abort();
         }
         let finished = self.finished(joined, registered);
-        self.guardrails_saw(&name, finished.status == CallStatus::Ran, false);
+        self.guardrails_ran(finished.status == CallStatus::Ran);
         // What it spent counts whether or not it worked, and each call a
         // plugin made through a capability counts as a tool call.
         self.totals.cost_usd_micros = self
@@ -964,12 +989,13 @@ impl Session {
             (None, claimed) => claimed,
         };
         self.totals.duration_ms = millis(self.started.elapsed());
-        let guardrails_unmet = self
+        let mut guardrails_unmet: Vec<String> = self
             .guardrails
             .iter()
             .filter(|enforced| enforced.rule.required && !enforced.ran)
             .map(|enforced| enforced.rule.name.clone())
             .collect();
+        guardrails_unmet.append(&mut self.claims_unmet);
         self.emit(Step::Ended {
             outcome,
             budget_hit: self.hit,

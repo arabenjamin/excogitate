@@ -1,5 +1,6 @@
-//! Harness² changing an agent's file on its own: the rules first, then the
-//! write, the reload, the record and the notice. And the owner's way back.
+//! Harness² changing an agent's or a workflow's file on its own: the rules
+//! first, then the write, the reload, the record and the notice. And the
+//! owner's way back.
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
@@ -9,14 +10,13 @@ use chrono::{DateTime, Utc};
 use harness::{
     Adoption, Attempt, CALIBRATION_DAYS, CALIBRATION_TYPE, CHANGE_TYPE, Calibration, Change,
     ChangeStatus, Facts, HOLD_TYPE, Hold, Judges, LESSON_TYPE, Lesson, LessonStatus,
-    MAX_FILE_CHARS, check_adoption, hold_id, lesson_id,
+    MAX_FILE_CHARS, Target, check_adoption, hold_id, lesson_id, read_tools,
 };
 use serde_json::json;
 use store::{
     FieldFilter, FieldOp, FieldValue, PageRequest, Record, RecordId, RecordQuery, UnitOfWork,
     WriteOp,
 };
-use workflow::Agent;
 
 use crate::Runtime;
 
@@ -70,13 +70,21 @@ pub(super) fn not_adopted(reason: impl Into<String>) -> Adoption {
     }
 }
 
+/// What a candidate makes of an agent's or workflow's definition.
+struct Edited {
+    /// It, as YAML.
+    body: String,
+    /// Its harness id.
+    to_harness: String,
+}
+
 /// What making a change needs.
 struct Making<'a> {
     root: &'a Path,
     attempt_id: RecordId,
     attempt: &'a Attempt,
     candidate: &'a harness::Candidate,
-    agent: &'a Agent,
+    edited: Edited,
     current: String,
     model: &'a str,
     live: Option<&'a (RecordId, Change)>,
@@ -115,8 +123,12 @@ fn write_whole(path: &Path, body: &str) -> std::io::Result<()> {
     written
 }
 
-fn agent_file(root: &Path, name: &str) -> PathBuf {
-    root.join("agents").join(format!("{name}.yaml"))
+fn definition_file(root: &Path, target: Target, name: &str) -> PathBuf {
+    let directory = match target {
+        Target::Agent => "agents",
+        Target::Workflow => "workflows",
+    };
+    root.join(directory).join(format!("{name}.yaml"))
 }
 
 impl Runtime {
@@ -126,11 +138,67 @@ impl Runtime {
         })
     }
 
-    /// Every change made to `agent`, with its id, oldest first: all of
-    /// them, a page at a time, since the newest decide what may happen next.
+    /// The harness id of the agent or workflow `name` now, if it exists.
+    async fn current_harness(
+        &self,
+        target: Target,
+        name: &str,
+    ) -> Result<Option<String>, ChangeError> {
+        Ok(match target {
+            Target::Agent => self
+                .workflows
+                .agent(name)
+                .await?
+                .map(|agent| self.workflows.agent_harness(&agent)),
+            Target::Workflow => self
+                .workflows
+                .workflow(name)
+                .await?
+                .map(|workflow| self.workflows.workflow_harness(&workflow)),
+        })
+    }
+
+    /// What `candidate` makes of `name`'s definition as it is now, or
+    /// `None` if it no longer exists.
+    async fn edited(
+        &self,
+        target: Target,
+        name: &str,
+        candidate: &harness::Candidate,
+    ) -> Result<Option<Edited>, ChangeError> {
+        match target {
+            Target::Agent => {
+                let Some(agent) = self.workflows.agent(name).await? else {
+                    return Ok(None);
+                };
+                let edited = candidate.agent(&agent);
+                Ok(Some(Edited {
+                    body: serde_saphyr::to_string(&edited)?,
+                    to_harness: self.workflows.agent_harness(&edited),
+                }))
+            }
+            Target::Workflow => {
+                let Some(workflow) = self.workflows.workflow(name).await? else {
+                    return Ok(None);
+                };
+                let edited = candidate
+                    .workflow(&workflow, &read_tools(&self.workflows))
+                    .map_err(ChangeError::Conflict)?;
+                Ok(Some(Edited {
+                    body: serde_saphyr::to_string(&edited)?,
+                    to_harness: self.workflows.workflow_harness(&edited),
+                }))
+            }
+        }
+    }
+
+    /// Every change made to `agent`, the agent or workflow, with its id,
+    /// oldest first: all of them, a page at a time, since the newest decide
+    /// what may happen next.
     pub(crate) async fn changes_to(
         &self,
         agent: &str,
+        target: Target,
     ) -> Result<Vec<(RecordId, Change)>, ChangeError> {
         let mut changes = Vec::new();
         let mut offset = 0;
@@ -147,7 +215,11 @@ impl Runtime {
                 )
                 .await?;
             for record in found.items {
-                changes.push((record.id, serde_json::from_value(record.data)?));
+                let change: Change = serde_json::from_value(record.data)?;
+                // An agent and a workflow may share a name.
+                if change.target == target {
+                    changes.push((record.id, change));
+                }
             }
             if !found.has_more {
                 return Ok(changes);
@@ -161,11 +233,15 @@ impl Runtime {
         }
     }
 
-    pub(crate) async fn hold_on(&self, agent: &str) -> Result<Option<Hold>, ChangeError> {
+    pub(crate) async fn hold_on(
+        &self,
+        agent: &str,
+        target: Target,
+    ) -> Result<Option<Hold>, ChangeError> {
         let found = self
             .workflows
             .store
-            .get_record(HOLD_TYPE, hold_id(agent))
+            .get_record(HOLD_TYPE, hold_id(&target.key(agent)))
             .await?;
         Ok(found
             .map(|record| serde_json::from_value(record.data))
@@ -175,7 +251,7 @@ impl Runtime {
     fn hold_record(hold: &Hold) -> Result<Record, ChangeError> {
         Ok(harness::record(
             HOLD_TYPE,
-            hold_id(&hold.agent),
+            hold_id(&hold.target.key(&hold.agent)),
             hold,
             hold.since,
         )?)
@@ -243,12 +319,15 @@ impl Runtime {
         let _changing = self.changing.lock().await;
         let root = self.root()?;
         let name = &attempt.request.agent;
-        let Some(agent) = self.workflows.agent(name).await? else {
-            return Ok(not_adopted("the agent no longer exists"));
+        let target = attempt.request.target;
+        let Some(current) = self.current_harness(target, name).await? else {
+            return Ok(not_adopted(format!(
+                "the {} no longer exists",
+                target.word()
+            )));
         };
-        let current = self.workflows.agent_harness(&agent);
         let now = Utc::now();
-        let changes = self.changes_to(name).await?;
+        let changes = self.changes_to(name, target).await?;
         let live = changes
             .iter()
             .rev()
@@ -256,9 +335,9 @@ impl Runtime {
         if let Some((id, change)) = live
             && change.to_harness != current
         {
-            return self.held_after_edit(name, *id, change, now).await;
+            return self.held_after_edit(name, target, *id, change, now).await;
         }
-        let hold = self.hold_on(name).await?;
+        let hold = self.hold_on(name, target).await?;
         let reverted: BTreeSet<String> = changes
             .iter()
             .filter(|(_, change)| change.status == ChangeStatus::Reverted)
@@ -288,12 +367,18 @@ impl Runtime {
         let Some(candidate) = attempt.supported() else {
             return Ok(not_adopted("the evidence supports no change"));
         };
+        let Some(edited) = self.edited(target, name, candidate).await? else {
+            return Ok(not_adopted(format!(
+                "the {} no longer exists",
+                target.word()
+            )));
+        };
         self.make_change(Making {
             root: &root,
             attempt_id,
             attempt,
             candidate,
-            agent: &agent,
+            edited,
             current,
             model,
             live,
@@ -307,14 +392,19 @@ impl Runtime {
     async fn held_after_edit(
         &self,
         name: &str,
+        target: Target,
         id: RecordId,
         change: &Change,
         now: DateTime<Utc>,
     ) -> Result<Adoption, ChangeError> {
         let hold = Hold {
             agent: name.to_owned(),
+            target,
             since: now,
-            reason: format!("the owner edited the agent's file after change {id}"),
+            reason: format!(
+                "the owner edited the {}'s file after change {id}",
+                target.word()
+            ),
         };
         let replaced = Change {
             status: ChangeStatus::Replaced,
@@ -334,7 +424,11 @@ impl Runtime {
             unit = unit.with(retired);
         }
         self.workflows.store.apply(unit).await?;
-        Ok(not_adopted(format!("the agent is held: {}", hold.reason)))
+        Ok(not_adopted(format!(
+            "the {} is held: {}",
+            target.word(),
+            hold.reason
+        )))
     }
 
     /// The write that retires a change's lesson, if it left one.
@@ -353,37 +447,38 @@ impl Runtime {
         )?)))
     }
 
-    /// Writes the agent's new file, records the change and tells the owner.
+    /// Writes the agent's or workflow's new file, records the change and
+    /// tells the owner.
     async fn make_change(&self, making: Making<'_>) -> Result<Adoption, ChangeError> {
         let Making {
             root,
             attempt_id,
             attempt,
             candidate,
-            agent,
+            edited,
             current,
             model,
             live,
             now,
         } = making;
         let name = &attempt.request.agent;
+        let target = attempt.request.target;
         let root = root.to_path_buf();
-        let edited = candidate.agent(agent);
-        let to_harness = self.workflows.agent_harness(&edited);
+        let Edited { body, to_harness } = edited;
         let change_id = RecordId::generate();
-        let path = agent_file(&root, name);
+        let path = definition_file(&root, target, name);
         let old_file = std::fs::read_to_string(&path)?;
         if old_file.chars().count() > MAX_FILE_CHARS {
-            return Ok(not_adopted(
-                "the agent's file is too large to keep a copy of",
-            ));
+            return Ok(not_adopted(format!(
+                "the {}'s file is too large to keep a copy of",
+                target.word()
+            )));
         }
         let new_file = format!(
             "# Changed by Harness² on {date} (change {change_id}), from the evidence in\n\
              # attempt {attempt_id}. The file it replaced is kept with the change, and\n\
              # POST /api/v1/harness/changes/{change_id}/revert puts it back.\n{body}",
             date = now.format("%Y-%m-%d"),
-            body = serde_saphyr::to_string(&edited)?,
         );
         if new_file.chars().count() > MAX_FILE_CHARS {
             return Ok(not_adopted("the new file would be too large to keep"));
@@ -399,6 +494,7 @@ impl Runtime {
             .collect();
         let change = Change {
             agent: name.clone(),
+            target,
             attempt_id: attempt_id.to_string(),
             at: now,
             from_harness: current,
@@ -414,6 +510,7 @@ impl Runtime {
         };
         let lesson = Lesson {
             agent: name.clone(),
+            target,
             change_id: change_id.to_string(),
             at: now,
             situation: harness::situation(&attempt.request.task, attempt.request.why.as_deref()),
@@ -537,6 +634,7 @@ impl Runtime {
             "event": "harness.change",
             "change_id": id.to_string(),
             "agent": change.agent,
+            "target": change.target,
             "summary": change.summary,
             "revert": format!("/api/v1/harness/changes/{id}/revert"),
         });
@@ -554,8 +652,8 @@ impl Runtime {
         }
     }
 
-    /// Puts a change's old file back, and holds the agent so the system
-    /// leaves it alone.
+    /// Puts a change's old file back, and holds the agent or workflow so the
+    /// system leaves it alone.
     pub(crate) async fn revert(&self, id: RecordId) -> Result<Change, ChangeError> {
         let _changing = self.changing.lock().await;
         let change = self.change(id).await?;
@@ -567,17 +665,14 @@ impl Runtime {
             ));
         }
         let root = self.root()?;
-        let current = self
-            .workflows
-            .agent(&change.agent)
-            .await?
-            .map(|agent| self.workflows.agent_harness(&agent));
+        let current = self.current_harness(change.target, &change.agent).await?;
         if current.as_deref() != Some(change.to_harness.as_str()) {
-            return Err(ChangeError::Conflict(
-                "the agent's file has changed since; edit it by hand".to_owned(),
-            ));
+            return Err(ChangeError::Conflict(format!(
+                "the {}'s file has changed since; edit it by hand",
+                change.target.word()
+            )));
         }
-        let path = agent_file(&root, &change.agent);
+        let path = definition_file(&root, change.target, &change.agent);
         self.replace_file(&root, &path, &change.old_file, &change.new_file)
             .await?;
         let now = Utc::now();
@@ -588,6 +683,7 @@ impl Runtime {
         };
         let hold = Hold {
             agent: reverted.agent.clone(),
+            target: reverted.target,
             since: now,
             reason: format!("the owner reverted change {id}"),
         };
@@ -700,31 +796,37 @@ impl Runtime {
         })
     }
 
-    /// Holds an agent, or releases it with `None`.
+    /// Holds an agent or workflow, or releases it with `None`.
     pub(crate) async fn set_hold(
         &self,
         agent: &str,
+        target: Target,
         reason: Option<String>,
     ) -> Result<Option<Hold>, ChangeError> {
         self.harness_records().await?;
-        let op = match reason {
-            Some(reason) => {
-                let hold = Hold {
-                    agent: agent.to_owned(),
-                    since: Utc::now(),
-                    reason,
-                };
-                let op = WriteOp::PutRecord(Self::hold_record(&hold)?);
-                self.workflows
-                    .store
-                    .apply(UnitOfWork::new().with(op))
-                    .await?;
-                return Ok(Some(hold));
-            }
-            None => WriteOp::DeleteRecord {
-                record_type: HOLD_TYPE.to_owned(),
-                id: hold_id(agent),
-            },
+        if let Some(reason) = reason {
+            let hold = Hold {
+                agent: agent.to_owned(),
+                target,
+                since: Utc::now(),
+                reason,
+            };
+            let op = WriteOp::PutRecord(Self::hold_record(&hold)?);
+            self.workflows
+                .store
+                .apply(UnitOfWork::new().with(op))
+                .await?;
+            return Ok(Some(hold));
+        }
+        if self.hold_on(agent, target).await?.is_none() {
+            return Err(ChangeError::NotFound(format!(
+                "nothing holds the {} {agent}",
+                target.word()
+            )));
+        }
+        let op = WriteOp::DeleteRecord {
+            record_type: HOLD_TYPE.to_owned(),
+            id: hold_id(&target.key(agent)),
         };
         self.workflows
             .store

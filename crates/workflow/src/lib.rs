@@ -25,7 +25,7 @@ pub use engine::{
 };
 /// The sources each agent's run may read; the memory tool reads it.
 pub use memory::SourceChoices;
-pub use probe::ProbeRun;
+pub use probe::{ProbeRun, WorkflowProbe};
 pub use roster::{Instructions, ROSTER_LIMIT};
 pub use skill::{MAX_SKILL_CHARS, MAX_SKILLS, Skill, check_skills, with_skills};
 pub use template::{TemplateError, render_text, render_value};

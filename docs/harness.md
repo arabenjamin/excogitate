@@ -150,9 +150,45 @@ them.
   file has been edited since, so it never undoes the owner's own edit.
 - **Hold and release:** `PUT /api/v1/harness/holds/{agent}` with `{"reason"}`
   holds an agent, `DELETE` releases it, and `GET /api/v1/harness/holds` lists
-  them.
+  them. For a workflow, add `"target": "workflow"` to the body, or
+  `?target=workflow` to the `DELETE`. Releasing what nothing holds is a 404.
 - **Override:** edit the agent's file. The edit stands, and the agent is held
   the next time the system looks at changing it.
+
+## Workflows
+
+A workflow is improved the same way. Start an attempt with
+`{"agent": "<workflow>", "target": "workflow", "task": "<inputs>"}`, where
+the task is the inputs to run it on, as a JSON object in a string, such as
+`"{\"topic\": \"otters\"}"`.
+
+- **An edit can change what a workflow asks, never what it does.** A
+  candidate is a list of step edits: a new `message` or `context` for an
+  agent step, or new `arguments` for a step whose tool only reads. A step
+  left out stays as it is. Steps can't be added, removed, reordered or
+  retyped, their tools and agents stay, and a step that calls a tool that
+  writes is sent what it always was. The edited workflow must pass the
+  checks a loaded one does, its steps' text may grow by at most 2,000
+  characters, and no edited step may hold the inputs or the judge's input.
+- **The probe runs every step as a probe.** Writes are stubbed, only the
+  reads in `harness.probe_reads` run, and agent steps run as probes of their
+  agents. A stubbed step's result is the stub, so a later step that reads a
+  field the real write would have returned fails, in every run alike, and
+  the judges compare what ran before it.
+- **The judges read one run per probe:** each step's trajectory in order,
+  its lines prefixed by the workflow step's id, then how the workflow ended
+  and its output. A run that ends `failed` where `R` `completed` is a
+  regression, whatever the composer says.
+- **A merge is made in code,** not by the composer: `A`'s edits, with `B`'s
+  filling in what `A` left alone, field by field. It's run and judged on its
+  own.
+- **Adoption, reverts, holds and lessons work as for an agent,** on
+  `workflows/<name>.yaml`. Each record has `"target": "workflow"`. A
+  workflow's hold is apart from an agent's of the same name, and a lesson
+  about an agent is never shown to a workflow's editor, or the other way
+  round.
+- **`harness_pick` picks agents only.** A workflow's attempt is started over
+  REST or as a `harness` job.
 
 ## The lesson library
 
@@ -206,4 +242,5 @@ before each release.
 
 ## What comes next
 
-- **Workflows,** improved the same way as agents.
+- **The picker for workflows:** choosing a workflow to improve from its
+  failed runs, as `harness_pick` does for agents.

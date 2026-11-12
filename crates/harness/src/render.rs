@@ -5,11 +5,17 @@
 use std::fmt::Write as _;
 
 use dispatch::{CallStatus, Speaker, Step, Trajectory};
+use workflow::WorkflowRun;
 
 /// How much of one step a judge sees, in characters.
 const STEP_CHARS: usize = 1500;
 /// How many steps a judge sees. Later ones are left out, and it says so.
 const MAX_STEPS: usize = 64;
+/// How many steps a judge sees of a workflow's run, all its steps' runs
+/// together.
+const MAX_WORKFLOW_STEPS: usize = 128;
+/// The longest calls line kept for a workflow's run.
+const MAX_CALLS_CHARS: usize = 4000;
 
 /// A run, labelled and numbered for a judge.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -147,6 +153,55 @@ impl Rendered {
                 })
                 .collect(),
             cut: trajectory.steps.len() > MAX_STEPS || !trajectory.complete,
+        }
+    }
+
+    /// Labels and numbers a workflow's run as one: each step's trajectory
+    /// in order, its steps prefixed by the workflow step's id, then how the
+    /// workflow ended. `parts` are `(step id, trajectory)`, in order.
+    #[must_use]
+    pub fn workflow(label: &str, parts: &[(String, Trajectory)], run: &WorkflowRun) -> Self {
+        let mut steps = Vec::new();
+        let mut behavior = Vec::new();
+        let mut cut_any = false;
+        let mut calls = Vec::new();
+        for (id, trajectory) in parts {
+            let one = Self::new(label, trajectory);
+            cut_any |= one.cut;
+            calls.push(format!("{id}: {}", one.calls));
+            for (text, did) in one.steps.into_iter().zip(one.behavior) {
+                steps.push(format!("step {id}: {text}"));
+                behavior.push(did);
+            }
+        }
+        let outcome = word(run.outcome);
+        let ending = match (&run.failure, &run.output) {
+            (Some(failure), _) => format!("workflow ended: {outcome}, {}", cut(failure)),
+            (None, Some(output)) => {
+                format!(
+                    "workflow ended: {outcome}. Output: {}",
+                    cut(&output.to_string())
+                )
+            }
+            (None, None) => format!("workflow ended: {outcome}"),
+        };
+        let cut_here = steps.len() >= MAX_WORKFLOW_STEPS;
+        steps.truncate(MAX_WORKFLOW_STEPS - 1);
+        behavior.truncate(MAX_WORKFLOW_STEPS - 1);
+        steps.push(ending);
+        behavior.push(true);
+        calls.push(outcome.clone());
+        let mut line: String = calls.join(" | ").chars().take(MAX_CALLS_CHARS).collect();
+        if line.chars().count() >= MAX_CALLS_CHARS {
+            line.push_str("… (cut)");
+        }
+        Self {
+            label: label.to_owned(),
+            outcome: Some(outcome),
+            calls: line,
+            steps,
+            behavior,
+            cut: cut_any || cut_here,
         }
     }
 

@@ -14,6 +14,7 @@ use store::{FieldFilter, FieldOp, FieldValue, PageRequest, RecordId, RecordQuery
 use uuid::Uuid;
 
 use crate::cite::Cite;
+use crate::flow::Target;
 
 /// The record type of a lesson.
 pub const LESSON_TYPE: &str = "harness.lesson";
@@ -38,9 +39,12 @@ pub enum LessonStatus {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct Lesson {
-    /// The agent that was changed.
+    /// The agent that was changed, or the workflow.
     #[schemars(length(max = 64))]
     pub agent: String,
+    /// What it is: an agent unless it says otherwise.
+    #[serde(default, skip_serializing_if = "Target::is_agent")]
+    pub target: Target,
     /// The change that taught it.
     #[schemars(length(max = 36))]
     pub change_id: String,
@@ -117,10 +121,11 @@ fn shown(lesson: &Lesson) -> String {
     )
 }
 
-/// The lessons that fit, best first, as `(change id, text)`: at most
+/// The lessons about the same kind of thing that fit, best first, as `(change id, text)`: at most
 /// [`MAX_SHOWN`], and none if nothing fits or the library can't be read.
 pub async fn lessons_for(
     store: &dyn Store,
+    target: Target,
     agent: &str,
     task: &str,
     why: Option<&str>,
@@ -141,6 +146,8 @@ pub async fn lessons_for(
         .items
         .into_iter()
         .filter_map(|record| serde_json::from_value::<Lesson>(record.data).ok())
+        // A lesson about an agent says nothing about a workflow's steps.
+        .filter(|lesson| lesson.target == target)
         .map(|lesson| (fit(&lesson, agent, &wanted), lesson))
         .filter(|(score, _)| *score > 0.0)
         .collect();
@@ -171,6 +178,7 @@ mod tests {
     fn lesson(agent: &str, situation: &str, what: &str) -> Lesson {
         Lesson {
             agent: agent.to_owned(),
+            target: Target::Agent,
             change_id: "c".to_owned(),
             at: Utc::now(),
             situation: situation.to_owned(),
