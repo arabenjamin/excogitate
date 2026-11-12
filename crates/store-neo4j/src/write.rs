@@ -191,6 +191,24 @@ async fn apply_op(
             )
             .await?;
         }
+        WriteOp::RestoreJob(job) => {
+            let id = job.id.to_string();
+            let found = count(
+                txn,
+                query("MATCH (j:Job {id: $id}) RETURN count(j) AS n").param("id", id.as_str()),
+            )
+            .await?;
+            if found > 0 {
+                return Err(StoreError::Conflict(format!("job {id} exists")));
+            }
+            let mut props = codec::job_props(job)?;
+            props.insert("finished_at".to_owned(), codec::maybe_at(job.finished_at));
+            run(
+                txn,
+                query("CREATE (j:Job) SET j = $props").param("props", props),
+            )
+            .await?;
+        }
         WriteOp::PutDefinition(definition) => {
             run(
                 txn,

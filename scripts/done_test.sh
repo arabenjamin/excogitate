@@ -4,7 +4,8 @@
 # no plugins and no database server, that it can fetch a page, store it and
 # find it again in a new session, that a hostile model can't crash it or get
 # it past its budgets, that Harness² adopts only what the evidence supports
-# and can be reverted, and that the Neo4j store keeps what it's given.
+# and can be reverted, that the Neo4j store keeps what it's given, and that
+# an export from it imports into a new DuckDB store.
 #
 # Set DONE_TEST_NO_BUILD=1 if the images are already built.
 set -euo pipefail
@@ -272,6 +273,31 @@ graph_kept="$work/graph_kept"
 api "$n4/mcp" -d "$(call 1 memory '{"operation":"search","query":"badgers"}')" >"$graph_kept"
 check "and it's still there after a restart" "$graph_kept" \
   '.[0].result.structuredContent.result.hits | length == 1'
+
+# Export and import: what the graph holds moves to a new DuckDB store, and
+# is found there.
+moved="$work/moved"
+mkdir -p "$moved"
+chmod 777 "$moved"
+compose run --rm --no-deps -T -v "$moved:/export" neo4j_session export /export/graph \
+  2>"$work/exported" || fail "the export from Neo4j failed" "$work/exported"
+grep -q "1 notes" "$work/exported" || fail "the export didn't hold the note" "$work/exported"
+ok "the Neo4j store exports"
+compose run --rm --no-deps -T -v "$moved:/export" moved_session import /export/graph \
+  2>"$work/imported" || fail "the import into DuckDB failed" "$work/imported"
+ok "the export imports into a new DuckDB store"
+again="$work/again"
+compose run --rm --no-deps -T -v "$moved:/export" moved_session import /export/graph \
+  2>"$again" && fail "a second import into the same store went through" "$again"
+grep -q "isn't empty" "$again" || fail "a second import wasn't refused for the right reason" "$again"
+ok "and a second import into it is refused"
+moved_found="$work/moved_found"
+{
+  hello
+  call 1 memory '{"operation":"search","query":"beehives"}'
+} | compose run --rm --no-deps -T moved_session >"$moved_found"
+check "what was stored in the graph is found in the new store" "$moved_found" \
+  'map(select(.id==1))[0].result.structuredContent.result.hits[0].text | contains("Honey badgers")'
 
 passed=1
 echo "The done-test passed."

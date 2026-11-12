@@ -299,7 +299,8 @@ pub trait SpendLog {
 /// A complete store. The `store-conformance` crate defines what it must do.
 #[async_trait]
 pub trait Store:
-    NoteReader
+    crate::Archive
+    + NoteReader
     + TaskReader
     + JobQueue
     + DefinitionReader

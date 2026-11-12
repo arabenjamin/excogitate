@@ -85,6 +85,10 @@ client with `http://127.0.0.1:8080/mcp`. Both use the key as a bearer token.
 See [the API](docs/api.md). An MCP client that only speaks stdio can
 [relay through `connect`](docs/mcp.md#beside-the-server).
 
+To back up, or to move to another store, stop the server and run
+`export <dir>`; `import <dir>` loads it into an empty store. See
+[export and import](docs/store.md#export-and-import).
+
 ## Configuration
 
 Settings live in `models.yaml` (see [models](docs/models.md)) and `config.yaml`,

@@ -97,6 +97,9 @@ pub enum RunError {
         /// What's wrong with it.
         problem: String,
     },
+    /// An export or import couldn't be made.
+    #[error(transparent)]
+    Archive(#[from] crate::archive::ArchiveError),
     /// The HTTP server can't be set up.
     #[error(transparent)]
     Http(#[from] crate::http::HttpError),
@@ -143,6 +146,15 @@ enum OpenStore {
 }
 
 impl OpenStore {
+    /// Its name, as an export's manifest gives it.
+    const fn name(&self) -> &'static str {
+        match self {
+            Self::DuckDb(_) => "duckdb",
+            #[cfg(feature = "neo4j")]
+            Self::Neo4j(_) => "neo4j",
+        }
+    }
+
     fn shared(&self) -> Arc<dyn Store> {
         match self {
             Self::DuckDb(store) => Arc::clone(store) as Arc<dyn Store>,
@@ -470,4 +482,74 @@ pub async fn run_server(
     store.wait_unshared(STORE_GRACE).await;
     store.close();
     served.map_err(RunError::Serve)
+}
+
+/// Writes everything the store holds into `directory`, which must be new or
+/// empty. Run it with the server stopped: `DuckDB` refuses a second process,
+/// which keeps the export a snapshot.
+///
+/// # Errors
+///
+/// [`RunError`] if the store can't be opened or the export can't be made.
+pub async fn run_export(
+    product: &str,
+    version: &str,
+    plugins: &[Arc<dyn Plugin>],
+    directory: &Path,
+) -> Result<(), RunError> {
+    let Opened { store, runtime, .. } = open(product, plugins).await?;
+    drop(runtime);
+    let shared = store.shared();
+    let made = crate::archive::export(
+        crate::archive::Source {
+            store: shared.as_ref(),
+            store_name: store.name(),
+            runtime: &format!("{product} {version}"),
+            now: Utc::now(),
+        },
+        directory,
+    )
+    .await;
+    drop(shared);
+    store.close();
+    let manifest = made?;
+    eprintln!(
+        "exported to {}: {}",
+        directory.display(),
+        crate::archive::summary(&manifest.counts)
+    );
+    Ok(())
+}
+
+/// Loads an export into the store, which must be empty. The plugins that
+/// wrote its records must be in this build, so their types are declared.
+///
+/// # Errors
+///
+/// [`RunError`] if the store can't be opened, or the import is refused or
+/// fails.
+pub async fn run_import(
+    product: &str,
+    plugins: &[Arc<dyn Plugin>],
+    directory: &Path,
+) -> Result<(), RunError> {
+    let Opened { store, runtime, .. } = open(product, plugins).await?;
+    // The core's own record types, beside the plugins' declared when the
+    // runtime was built.
+    runtime
+        .harness_records()
+        .await
+        .map_err(RunError::OpenStore)?;
+    drop(runtime);
+    let shared = store.shared();
+    let done = crate::archive::import(shared.as_ref(), directory).await;
+    drop(shared);
+    store.close();
+    let counts = done?;
+    eprintln!(
+        "imported from {}: {}",
+        directory.display(),
+        crate::archive::summary(&counts)
+    );
+    Ok(())
 }

@@ -53,8 +53,9 @@ fetches it for tests, into `.cache/`.
 build downloads. A binary needs `libduckdb.so` beside it at runtime.
 
 **Upgrading DuckDB.** A newer DuckDB can write a file an older one can't open.
-Before changing the pinned version, call `DuckDbStore::export`, and update
-the version in the fetch script (a test checks they match).
+Before changing the pinned version, make an [export](#export-and-import) (or
+call `DuckDbStore::export` for DuckDB's own), and update the version in the
+fetch script (a test checks they match).
 
 **The event sink.** `DuckDbSink` keeps telemetry and trajectories in a file of
 its own, so they never compete with the store's writer. A small run index,
@@ -105,3 +106,51 @@ as scratch, and a database that holds data without the mark is refused,
 never emptied. Without `NEO4J_TEST_URI` the cases skip, unless
 `NEO4J_TEST_REQUIRED` is set, as it is in CI. Under nextest they run one at
 a time (`.config/nextest.toml`).
+
+## Export and import
+
+`export <dir>` writes everything the store holds into a new directory, and
+`import <dir>` loads it into an empty store. That's how to back up, move
+between DuckDB and Neo4j, or leave.
+
+```bash
+docker compose stop server
+docker compose run --rm -v ./backup:/export session export /export/2027-01-02
+docker compose start server
+```
+
+The container runs as uid 1000, which must be able to write `./backup`.
+
+- **One file per kind,** one JSON object per line: `notes.jsonl`,
+  `chunks.jsonl` (with embeddings, each note's after it), `tasks.jsonl`,
+  `working.jsonl` (what hasn't expired), `jobs.jsonl` (finished ones too,
+  with their results), `definitions.jsonl`, `records.jsonl`, `links.jsonl`
+  and `spend.jsonl`. Each line's schema is published as
+  `schemas/v1/export_<kind>.schema.json`, so DuckDB or any other tool can
+  read the files as they are.
+- **`manifest.json` is written last:** the format's version, the runtime
+  that made it, the store, the embedding width and each file's count. An
+  export that stopped part way has none, and can't be imported.
+- **Not in it:** the event log (telemetry and trajectories, in its own file
+  and pruned), and the record catalog, which plugins declare when they
+  start.
+- **Stop the server first.** Both commands open the store themselves. DuckDB
+  refuses a second process, which keeps an export a snapshot. An export
+  from Neo4j beside a running server is read a page at a time, and isn't
+  one.
+- **An import checks everything before it writes anything:** the format's
+  version, every line against its schema, each file against the manifest's
+  count, chunks in their notes' order, the embedding width against this
+  store's, an empty store (no notes, tasks, jobs or records; definitions may
+  be there, since the server loads its files), and that this build's
+  plugins declare every record type and relation the export holds.
+- **It writes in batches.** If a write fails part way, it says so, and the
+  store holds part of the export: start again from an empty one.
+- **Jobs come back exactly as they were,** so finished work isn't queued
+  again and retention still prunes it. Notes keep their ids and times, and
+  their versions start again at 1.
+
+**For a store's author:** `Archive` lists every note, working entry, record
+(whatever its type, without the catalog), link and spend row, a page at a
+time in a stable order, and `WriteOp::RestoreJob` adds a job as it was.
+The conformance suite checks both.

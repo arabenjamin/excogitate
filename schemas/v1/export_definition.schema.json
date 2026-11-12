@@ -1,0 +1,61 @@
+{
+  "$defs": {
+    "Kind": {
+      "description": "What a definition defines.",
+      "oneOf": [
+        {
+          "const": "agent",
+          "description": "An agent.",
+          "type": "string"
+        },
+        {
+          "const": "workflow",
+          "description": "A workflow.",
+          "type": "string"
+        },
+        {
+          "const": "schedule",
+          "description": "A schedule.",
+          "type": "string"
+        }
+      ]
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "A definition.",
+  "properties": {
+    "body": {
+      "description": "The definition.",
+      "x-extension": "checked against its kind's schema when it's loaded"
+    },
+    "kind": {
+      "$ref": "#/$defs/Kind",
+      "description": "What it defines."
+    },
+    "name": {
+      "description": "Its name.",
+      "maxLength": 256,
+      "type": "string"
+    },
+    "source": {
+      "description": "Where it came from, such as a file.",
+      "maxLength": 4096,
+      "type": "string"
+    },
+    "updated_at": {
+      "description": "When it last changed.",
+      "format": "date-time",
+      "type": "string"
+    }
+  },
+  "required": [
+    "kind",
+    "name",
+    "body",
+    "source",
+    "updated_at"
+  ],
+  "title": "DefinitionLine",
+  "type": "object"
+}

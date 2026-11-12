@@ -4,6 +4,7 @@
 
 #![deny(clippy::string_slice, clippy::indexing_slicing)]
 
+mod archive;
 mod assemble;
 mod capability;
 mod cli;
@@ -20,6 +21,10 @@ mod retention;
 mod run;
 mod schemas;
 
+pub use archive::{
+    ArchiveError, ChunkLine, Counts, DefinitionLine, FORMAT_VERSION, JobLine, LinkLine, Manifest,
+    NoteLine, RecordLine, Source, SpendLine, TaskLine, WorkingLine, export, import, summary,
+};
 pub use assemble::{Plugins, Runtime, RuntimeError};
 pub use cli::{Program, main};
 pub use config::{Config, ConfigError, HarnessConfig, RetentionConfig, ServerConfig};
@@ -34,5 +39,5 @@ pub use jobs::WorkflowArgs;
 pub use mcp::{ChatArgs, ChatReply, ToolEnvelope};
 pub use plugin_host::PluginsConfig;
 pub use retention::Swept;
-pub use run::{RunError, run_connect, run_server, run_stdio};
+pub use run::{RunError, run_connect, run_export, run_import, run_server, run_stdio};
 pub use schemas::bundled_tool_schemas;

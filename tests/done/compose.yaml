@@ -129,8 +129,25 @@ services:
       - ./tests/done/config.yaml:/config/config.yaml:ro
       - neo4j-session-data:/data
 
+  # A stdio session on a DuckDB store of its own, empty until an export
+  # from the Neo4j store is imported into it. The export's directory is
+  # the host's, mounted by scripts/done_test.sh.
+  moved_session:
+    image: excogitate:local
+    stdin_open: true
+    read_only: true
+    tmpfs:
+      - /tmp
+    environment:
+      EXCOGITATE_OWNER_KEY: done-test-owner-key-of-sufficient-length
+    volumes:
+      - ./tests/done/models.yaml:/config/models.yaml:ro
+      - ./tests/done/config.yaml:/config/config.yaml:ro
+      - moved-data:/data
+
 volumes:
   chaos-data:
+  moved-data:
   harness-data:
   neo4j-server-data:
   neo4j-session-data:

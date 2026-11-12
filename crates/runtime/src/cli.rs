@@ -7,7 +7,7 @@ use std::sync::Arc;
 
 use plugin_api::Plugin;
 
-use crate::{RunError, run_connect, run_server, run_stdio};
+use crate::{RunError, run_connect, run_export, run_import, run_server, run_stdio};
 
 /// What a binary is: the name that prefixes its settings, its version, and
 /// the plugins compiled into it.
@@ -63,7 +63,8 @@ impl Program {
 }
 
 /// Runs the command line: `serve` (MCP over stdio), `server` (HTTP, workers
-/// and the scheduler), `connect [url]`, or `version`.
+/// and the scheduler), `connect [url]`, `export <dir>`, `import <dir>`, or
+/// `version`.
 pub async fn main(program: Program) -> ExitCode {
     let arguments: Vec<String> = std::env::args().skip(1).collect();
     let arguments: Vec<&str> = arguments.iter().map(String::as_str).collect();
@@ -76,9 +77,26 @@ pub async fn main(program: Program) -> ExitCode {
         ["server"] => run_server(program.name, program.version, &program.plugins).await,
         ["connect"] => run_connect(program.name, None).await,
         ["connect", url] => run_connect(program.name, Some(url)).await,
+        ["export", directory] => {
+            run_export(
+                program.name,
+                program.version,
+                &program.plugins,
+                std::path::Path::new(directory),
+            )
+            .await
+        }
+        ["import", directory] => {
+            run_import(
+                program.name,
+                &program.plugins,
+                std::path::Path::new(directory),
+            )
+            .await
+        }
         _ => {
             eprintln!(
-                "usage: {} [serve | server | connect [url] | version]",
+                "usage: {} [serve | server | connect [url] | export <dir> | import <dir> | version]",
                 program.name
             );
             return ExitCode::from(2);

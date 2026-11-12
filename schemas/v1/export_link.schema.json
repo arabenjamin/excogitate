@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "A link between two records.",
+  "properties": {
+    "from": {
+      "description": "The record it links from.",
+      "format": "uuid",
+      "type": "string"
+    },
+    "relation": {
+      "description": "The relation, as `plugin.relation`.",
+      "maxLength": 128,
+      "type": "string"
+    },
+    "to": {
+      "description": "The record it links to.",
+      "format": "uuid",
+      "type": "string"
+    }
+  },
+  "required": [
+    "relation",
+    "from",
+    "to"
+  ],
+  "title": "LinkLine",
+  "type": "object"
+}

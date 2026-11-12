@@ -1,0 +1,122 @@
+{
+  "$defs": {
+    "Counts": {
+      "additionalProperties": false,
+      "description": "How many lines each file of an export has.",
+      "properties": {
+        "chunks": {
+          "description": "`chunks.jsonl`.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "definitions": {
+          "description": "`definitions.jsonl`.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "jobs": {
+          "description": "`jobs.jsonl`.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "links": {
+          "description": "`links.jsonl`.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "notes": {
+          "description": "`notes.jsonl`.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "records": {
+          "description": "`records.jsonl`.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "spend": {
+          "description": "`spend.jsonl`.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "tasks": {
+          "description": "`tasks.jsonl`.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "working": {
+          "description": "`working.jsonl`.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "notes",
+        "chunks",
+        "tasks",
+        "working",
+        "jobs",
+        "definitions",
+        "records",
+        "links",
+        "spend"
+      ],
+      "type": "object"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "What an export is, written last, so an export that stopped part way has\nnone and can't be imported.",
+  "properties": {
+    "counts": {
+      "$ref": "#/$defs/Counts",
+      "description": "How many lines each file has."
+    },
+    "embedding_dimension": {
+      "description": "The width of the chunks' embeddings.",
+      "format": "uint32",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "exported_at": {
+      "description": "When it was made.",
+      "format": "date-time",
+      "type": "string"
+    },
+    "format_version": {
+      "description": "The format's version.",
+      "format": "uint32",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "runtime": {
+      "description": "The runtime that made it, with its version.",
+      "maxLength": 128,
+      "type": "string"
+    },
+    "store": {
+      "description": "The store it came from: `duckdb` or `neo4j`.",
+      "maxLength": 32,
+      "type": "string"
+    }
+  },
+  "required": [
+    "format_version",
+    "exported_at",
+    "runtime",
+    "store",
+    "embedding_dimension",
+    "counts"
+  ],
+  "title": "Manifest",
+  "type": "object"
+}

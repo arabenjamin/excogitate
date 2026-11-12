@@ -1,0 +1,96 @@
+{
+  "$defs": {
+    "Class": {
+      "description": "Who may see something.",
+      "oneOf": [
+        {
+          "const": "private",
+          "description": "Only providers that keep no logs.",
+          "type": "string"
+        },
+        {
+          "const": "public",
+          "description": "Marked public.",
+          "type": "string"
+        }
+      ]
+    },
+    "Origin": {
+      "additionalProperties": false,
+      "description": "Where something came from.",
+      "properties": {
+        "data_class": {
+          "$ref": "#/$defs/Class",
+          "description": "Who may see it."
+        },
+        "stored_at": {
+          "description": "When.",
+          "format": "date-time",
+          "type": "string"
+        },
+        "stored_by": {
+          "description": "Who stored it.",
+          "maxLength": 256,
+          "type": "string"
+        },
+        "trust": {
+          "$ref": "#/$defs/TrustLevel",
+          "description": "Whether it may be treated as instructions."
+        }
+      },
+      "required": [
+        "data_class",
+        "trust",
+        "stored_by",
+        "stored_at"
+      ],
+      "type": "object"
+    },
+    "TrustLevel": {
+      "description": "Whether something may be treated as instructions.",
+      "oneOf": [
+        {
+          "const": "trusted",
+          "description": "Written by the owner or the runtime.",
+          "type": "string"
+        },
+        {
+          "const": "untrusted",
+          "description": "From outside, or written by a model.",
+          "type": "string"
+        }
+      ]
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "A plugin's record.",
+  "properties": {
+    "data": {
+      "description": "Its data.",
+      "x-extension": "checked against its type's schema on import"
+    },
+    "id": {
+      "description": "Its id.",
+      "format": "uuid",
+      "type": "string"
+    },
+    "origin": {
+      "$ref": "#/$defs/Origin",
+      "description": "Where it came from."
+    },
+    "record_type": {
+      "description": "Its type, as `plugin.type`.",
+      "maxLength": 128,
+      "type": "string"
+    }
+  },
+  "required": [
+    "record_type",
+    "id",
+    "data",
+    "origin"
+  ],
+  "title": "RecordLine",
+  "type": "object"
+}
