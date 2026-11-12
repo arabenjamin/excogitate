@@ -3,6 +3,26 @@
 All notable changes are listed here. The file is generated from the
 Conventional Commits by [git-cliff](https://git-cliff.org) (`cliff.toml`).
 
+## [0.5.0] - 2026-11-12
+
+### Added
+
+- Retention for trajectories and finished jobs
+- **plugins:** Batch writes in the records capability
+- **plugins:** The memory capability, and no capability writes in a probe
+- **plugins:** The jobs capability, to start workflow runs
+- **workflow:** A step can run once per item of a list
+- **memory:** The lake hook, a plugin's sources read beside the store
+- **agents:** Skills and guardrails in agent definitions
+- **harness:** Workflows as a target; runs checked by action and by claim
+- **store:** Export and import, everything a store holds as versioned JSONL
+
+### Fixed
+
+- Keep dedup within a privacy class, pin calibration, fit delegate's answer
+- Count what failed calls and unsaved notes spent; order recall after the task
+- A model call the run's time limit cuts off is on its receipt
+
 ## [0.4.0] - 2026-11-11
 
 ### Added
