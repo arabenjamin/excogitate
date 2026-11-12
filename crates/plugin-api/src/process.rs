@@ -224,6 +224,28 @@ impl ModelCapability for RemoteModel {
     }
 }
 
+#[derive(Debug)]
+struct RemoteMemory(Arc<Link>);
+
+#[async_trait]
+impl crate::MemoryCapability for RemoteMemory {
+    async fn store(
+        &self,
+        note: crate::NoteToStore,
+        context: ToolContext,
+    ) -> Result<crate::NoteStored, CapabilityError> {
+        note.check()?;
+        let call = CapabilityCall::MemoryStore {
+            title: note.title,
+            text: note.text,
+            tags: note.tags,
+            source_url: note.source_url,
+        };
+        let stored: crate::wire::WireNoteStored = self.0.call(context, call).await?;
+        Ok(stored.into())
+    }
+}
+
 /// Proxies for the capabilities the manifest declares. The host refuses to
 /// start a plugin that asks for one it wasn't granted, so these are the ones
 /// it has.
@@ -239,6 +261,9 @@ fn remote_capabilities(manifest: &PluginManifest, link: &Arc<Link>) -> Capabilit
             }
             PluginCapability::Model => {
                 capabilities.model = Some(Arc::new(RemoteModel(Arc::clone(link))));
+            }
+            PluginCapability::Memory => {
+                capabilities.memory = Some(Arc::new(RemoteMemory(Arc::clone(link))));
             }
         }
     }

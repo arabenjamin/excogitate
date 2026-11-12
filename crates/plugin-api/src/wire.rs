@@ -190,6 +190,24 @@ pub enum CapabilityCall {
         #[schemars(length(min = 1, max = MAX_PROMPT))]
         prompt: String,
     },
+    /// `MemoryCapability::store`.
+    MemoryStore {
+        /// A short title.
+        #[schemars(length(max = crate::MAX_NOTE_TITLE))]
+        title: String,
+        /// The text.
+        #[schemars(length(min = 1, max = crate::MAX_NOTE_TEXT))]
+        text: String,
+        /// Tags.
+        #[schemars(
+            length(max = crate::MAX_NOTE_TAGS),
+            inner(length(max = crate::MAX_NOTE_TAG))
+        )]
+        tags: Vec<String>,
+        /// The URL it came from.
+        #[schemars(length(max = crate::MAX_NOTE_URL))]
+        source_url: Option<String>,
+    },
 }
 
 /// A filter on the wire.
@@ -551,6 +569,42 @@ impl From<WireModelReply> for ModelReply {
             model: reply.model,
             cost_usd_micros: reply.cost_usd_micros,
         }
+    }
+}
+
+/// What storing a note did, on the wire.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+#[allow(missing_docs, reason = "the fields are NoteStored's")]
+pub struct WireNoteStored {
+    pub id: Uuid,
+    pub created: bool,
+    pub chunks: u32,
+    pub unembedded_chunks: u32,
+    pub cost_usd_micros: u64,
+}
+
+impl From<crate::NoteStored> for WireNoteStored {
+    fn from(stored: crate::NoteStored) -> Self {
+        Self {
+            id: stored.id,
+            created: stored.created,
+            chunks: stored.chunks,
+            unembedded_chunks: stored.unembedded_chunks,
+            cost_usd_micros: stored.cost_usd_micros,
+        }
+    }
+}
+
+impl From<WireNoteStored> for crate::NoteStored {
+    fn from(stored: WireNoteStored) -> Self {
+        Self::new(
+            stored.id,
+            stored.created,
+            stored.chunks,
+            stored.unembedded_chunks,
+        )
+        .with_cost(stored.cost_usd_micros)
     }
 }
 

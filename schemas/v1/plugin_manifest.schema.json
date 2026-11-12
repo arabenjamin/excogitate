@@ -82,6 +82,11 @@
           "const": "model",
           "description": "Model calls through the runtime.",
           "type": "string"
+        },
+        {
+          "const": "memory",
+          "description": "Notes in the runtime's long-term memory, which its search finds.",
+          "type": "string"
         }
       ]
     },

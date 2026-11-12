@@ -32,6 +32,7 @@ nothing.
 | `records` | The plugin's own records in the store, and no one else's. `put_many` and `link_many` write up to 500 at once as one unit: all of a batch, or none of it if any part is refused. |
 | `http` | HTTP through `http_request` itself, in raw mode: the same address guard, redirect checks, credentials and size limits a model's call gets, and the same argument schema. |
 | `model` | One-shot model calls through the gateway, under the calling run's privacy class and within what's left of its budget. |
+| `memory` | Notes in the runtime's long-term memory, so its search finds what the plugin brought in. A note is kept under the calling run's privacy class, marked untrusted, and stored by `plugin:<name>`; its embedding is paid from what the run has left. The limits are the `memory` tool's: text up to 100,000 characters, a title up to 256 (the first line when empty), 16 tags. |
 
 **Loading a lot.** A plugin bringing in data in bulk, such as rows from a
 lake, writes them in batches: `put_many` returns the ids in order, then
@@ -42,13 +43,20 @@ anything is written. A batch must also fit in one message to the runtime,
 batches. Records calls don't count against a run's tool calls; `http` and
 `model` calls do.
 
-**What the host enforces for `http` and `model`.** A plugin holding either
-can bring in text from outside or from a model, so everything its tools
-return is labelled untrusted, whatever the plugin says. What its model calls
-cost is charged to the run's receipt and budget, even if the plugin reports
-less, and whether the tool call worked or failed. The day's spend log sees
-every call. A plugin's model calls in one run take turns, so two at once
-can't both spend what's left. One gap remains: a tool call stopped by its
+**In a Harness² probe,** a plugin's tools may run only if they're on the
+probe's read list, and even then a write through `records` or `memory`
+passes its checks and isn't made, as a probe's other writes aren't.
+
+**What the host enforces for `http`, `model` and `memory`.** A plugin holding
+any of them can bring in text from outside or from a model, so everything its
+tools return is labelled untrusted, whatever the plugin says. What its model
+calls and its notes' embedding cost is charged to the run's receipt and
+budget, even if the plugin reports less, and whether the tool call worked or
+failed. Each call counts as one of the run's tool calls. The day's spend log
+sees every call. A plugin's model calls and note stores in one run take
+turns, so two at once can't both spend what's left. A plugin's notes are
+embedded for the purpose `memory`, as every note is, so a paid embedding
+provider serves them only if its `paid_for` lists `memory`. One gap remains: a tool call stopped by its
 time limit reports nothing, so what its model calls cost reaches the
 receipt with that plugin's next call in the run, or only the spend log if
 there is none. A plugin's model calls are for `plugin:<name>`, so a paid

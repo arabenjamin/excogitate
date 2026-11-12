@@ -114,6 +114,51 @@ impl HostCalls {
             .map(|call| (call.context, call.ended.clone()))
     }
 
+    async fn http(
+        &self,
+        mut request: HttpRequest,
+        headers: impl Iterator<Item = (String, String)> + Send,
+        body: Option<String>,
+        context: ToolContext,
+    ) -> Result<Value, CapabilityError> {
+        request.headers = headers.collect();
+        request.body = body;
+        let response = self.capabilities.http()?.request(request, context).await?;
+        serde_json::to_value(WireHttpResponse::from(response))
+            .map_err(|error| CapabilityError::Failed(error.to_string()))
+    }
+
+    async fn neighbors(
+        &self,
+        relation: &str,
+        id: RecordId,
+        direction: store::Direction,
+        page: store::PageRequest,
+        context: ToolContext,
+    ) -> Result<Value, CapabilityError> {
+        let found = self
+            .capabilities
+            .records()?
+            .neighbors(relation, id, direction, page, context)
+            .await?;
+        serde_json::to_value(wire_page(found))
+            .map_err(|error| CapabilityError::Failed(error.to_string()))
+    }
+
+    async fn store_note(
+        &self,
+        mut note: plugin_api::NoteToStore,
+        source_url: Option<String>,
+        context: ToolContext,
+    ) -> Result<Value, CapabilityError> {
+        if let Some(url) = source_url {
+            note = note.with_source_url(url);
+        }
+        let stored = self.capabilities.memory()?.store(note, context).await?;
+        serde_json::to_value(plugin_api::wire::WireNoteStored::from(stored))
+            .map_err(|error| CapabilityError::Failed(error.to_string()))
+    }
+
     async fn put_many(
         &self,
         records: Vec<plugin_api::wire::WireRecordWrite>,
@@ -229,18 +274,10 @@ impl HostCalls {
                 limit,
                 offset,
             } => {
-                let page = self
-                    .capabilities
-                    .records()?
-                    .neighbors(
-                        &relation,
-                        RecordId::from_uuid(id),
-                        direction.into(),
-                        page_of(limit, offset)?,
-                        context,
-                    )
-                    .await?;
-                json(serde_json::to_value(wire_page(page)))
+                let page = page_of(limit, offset)?;
+                let id = RecordId::from_uuid(id);
+                self.neighbors(&relation, id, direction.into(), page, context)
+                    .await
             }
             CapabilityCall::Http {
                 method,
@@ -248,14 +285,11 @@ impl HostCalls {
                 headers,
                 body,
             } => {
-                let mut request = HttpRequest::new(method, url);
-                request.headers = headers
+                let headers = headers
                     .into_iter()
-                    .map(|header| (header.name, header.value))
-                    .collect();
-                request.body = body;
-                let response = self.capabilities.http()?.request(request, context).await?;
-                json(serde_json::to_value(WireHttpResponse::from(response)))
+                    .map(|header| (header.name, header.value));
+                self.http(HttpRequest::new(method, url), headers, body, context)
+                    .await
             }
             CapabilityCall::Model { prompt } => {
                 let reply = self
@@ -264,6 +298,15 @@ impl HostCalls {
                     .complete(&prompt, context)
                     .await?;
                 json(serde_json::to_value(WireModelReply::from(reply)))
+            }
+            CapabilityCall::MemoryStore {
+                title,
+                text,
+                tags,
+                source_url,
+            } => {
+                let note = plugin_api::NoteToStore::new(title, text).with_tags(tags);
+                self.store_note(note, source_url, context).await
             }
         }
     }

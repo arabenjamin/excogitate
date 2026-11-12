@@ -130,7 +130,7 @@ impl Runtime {
         config: Config,
         secret_of: &dyn Fn(&str) -> Option<String>,
     ) -> Result<Self, RuntimeError> {
-        let (gateway, registry, _) = Self::bundled(&store, catalog, &config, secret_of)?;
+        let (gateway, registry, _, _) = Self::bundled(&store, catalog, &config, secret_of)?;
         Self::finish(store, sink, gateway, registry, config)
     }
 
@@ -149,11 +149,12 @@ impl Runtime {
         secret_of: &dyn Fn(&str) -> Option<String>,
         plugins: Plugins,
     ) -> Result<Self, RuntimeError> {
-        let (gateway, registry, http) = Self::bundled(&store, catalog, &config, secret_of)?;
+        let (gateway, registry, http, memory) = Self::bundled(&store, catalog, &config, secret_of)?;
         let source = RuntimeCapabilities {
             http,
             gateway: Arc::clone(&gateway),
             max_output_tokens: config.max_output_tokens,
+            memory,
         };
         let processes: Vec<(String, ProcessConfig)> = plugins
             .grants
@@ -182,7 +183,7 @@ impl Runtime {
         catalog: Catalog,
         config: &Config,
         secret_of: &dyn Fn(&str) -> Option<String>,
-    ) -> Result<(Arc<Gateway>, ToolRegistry, Arc<HttpRequestTool>), RuntimeError> {
+    ) -> Result<(Arc<Gateway>, ToolRegistry, Arc<HttpRequestTool>, Memory), RuntimeError> {
         let dimension = embedding_dimension(&catalog);
         let client =
             OpenAiClient::new().map_err(|error| RuntimeError::Client(error.to_string()))?;
@@ -200,10 +201,10 @@ impl Runtime {
         });
         let memory = Memory::new(Arc::clone(store), embedder, ChunkConfig::default());
         let mut registry = ToolRegistry::new();
-        registry.register(Arc::new(MemoryTool::new(memory)))?;
+        registry.register(Arc::new(MemoryTool::new(memory.clone())))?;
         let http = Arc::new(HttpRequestTool::new(&config.http, secret_of)?);
         registry.register(Arc::clone(&http) as Arc<dyn Tool>)?;
-        Ok((gateway, registry, http))
+        Ok((gateway, registry, http, memory))
     }
 
     /// The rest, once every tool is in the registry.
