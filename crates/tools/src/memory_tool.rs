@@ -252,6 +252,11 @@ enum MemoryResult {
         /// time or couldn't be searched by this query, and why.
         #[schemars(length(max = MAX_LISTED))]
         sources_skipped: Vec<SkippedSource>,
+        /// Sources some of whose hits were left out, and why: more than
+        /// were asked for, or an id empty, too long or given twice.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        #[schemars(length(max = MAX_LISTED))]
+        sources_cut: Vec<SkippedSource>,
     },
     /// One note.
     Note {
@@ -475,15 +480,18 @@ impl MemoryTool {
             SearchMode::Hybrid => None,
             SearchMode::KeywordOnly { reason } => Some(clamped(reason, MAX_REASON)),
         };
-        let sources_skipped = results
-            .sources_skipped
-            .into_iter()
-            .take(MAX_LISTED)
-            .map(|skipped| SkippedSource {
-                source: clamped(skipped.source, MAX_SOURCE),
-                why: clamped(skipped.why, MAX_REASON),
-            })
-            .collect();
+        let listed = |sources: Vec<memory::SkippedSource>| {
+            sources
+                .into_iter()
+                .take(MAX_LISTED)
+                .map(|skipped| SkippedSource {
+                    source: clamped(skipped.source, MAX_SOURCE),
+                    why: clamped(skipped.why, MAX_REASON),
+                })
+                .collect()
+        };
+        let sources_skipped = listed(results.sources_skipped);
+        let sources_cut = listed(results.sources_cut);
         Ok((
             MemoryResult::Found {
                 hits: notes.into_iter().map(hit).collect(),
@@ -492,6 +500,7 @@ impl MemoryTool {
                 not_close_enough: results.not_close_enough,
                 sources: items.into_iter().map(item_hit).collect(),
                 sources_skipped,
+                sources_cut,
             },
             if all_trusted {
                 Trust::Trusted

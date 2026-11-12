@@ -1,7 +1,7 @@
 //! The records capability: the store port, narrowed to one plugin's own
 //! records, with provenance set by the runtime. In a Harness² probe its
-//! writes pass their name checks and aren't made, as a probe's other writes
-//! aren't.
+//! writes pass their name checks, and a record its type's schema, and
+//! aren't made, as a probe's other writes aren't.
 
 use std::sync::Arc;
 
@@ -13,8 +13,8 @@ use plugin_api::{
 use protocol::{Actor, Trust};
 use serde_json::Value;
 use store::{
-    Direction, Page, PageRequest, Provenance, Record, RecordId, RecordQuery, Store, StoreError,
-    UnitOfWork, WriteOp,
+    Direction, Page, PageRequest, Provenance, Record, RecordCatalog, RecordDecls, RecordId,
+    RecordQuery, Store, StoreError, UnitOfWork, WriteOp,
 };
 
 /// One plugin's view of the store.
@@ -23,6 +23,9 @@ pub struct ScopedRecords {
     store: Arc<dyn Store>,
     prefix: String,
     actor: Actor,
+    /// The plugin's own declarations, so a probe's record is checked as
+    /// the store would check it.
+    catalog: RecordCatalog,
 }
 
 fn map_error(error: StoreError) -> CapabilityError {
@@ -40,7 +43,24 @@ impl ScopedRecords {
             store,
             prefix: format!("{plugin}."),
             actor: Actor::new(format!("plugin:{plugin}")),
+            catalog: RecordCatalog::new(),
         }
+    }
+
+    /// The same view, checking a probe's records against `decls`, the
+    /// plugin's own declarations.
+    ///
+    /// # Errors
+    ///
+    /// [`StoreError`] if a declaration doesn't compile.
+    pub fn with_decls(mut self, decls: &RecordDecls) -> Result<Self, StoreError> {
+        self.catalog.register(decls)?;
+        Ok(self)
+    }
+
+    /// In a probe, what the store would refuse is refused all the same.
+    fn check_probed(&self, record: &Record) -> Result<(), CapabilityError> {
+        self.catalog.check_record(record).map_err(map_error)
     }
 
     fn own(&self, name: &str) -> Result<(), CapabilityError> {
@@ -96,10 +116,11 @@ impl RecordsCapability for ScopedRecords {
         self.own(record_type)?;
         context.check_may_write()?;
         let id = id.unwrap_or_else(RecordId::generate);
+        let record = self.record(record_type.to_owned(), id, data, context);
         if context.probing {
+            self.check_probed(&record)?;
             return Ok(id);
         }
-        let record = self.record(record_type.to_owned(), id, data, context);
         self.write(WriteOp::PutRecord(record)).await?;
         Ok(id)
     }
@@ -195,12 +216,11 @@ impl RecordsCapability for ScopedRecords {
         for write in records {
             let id = write.id.unwrap_or_else(RecordId::generate);
             ids.push(id);
-            unit = unit.with(WriteOp::PutRecord(self.record(
-                write.record_type,
-                id,
-                write.data,
-                context,
-            )));
+            let record = self.record(write.record_type, id, write.data, context);
+            if context.probing {
+                self.check_probed(&record)?;
+            }
+            unit = unit.with(WriteOp::PutRecord(record));
         }
         if !ids.is_empty() && !context.probing {
             self.apply(unit).await?;

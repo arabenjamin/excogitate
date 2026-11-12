@@ -62,7 +62,8 @@ result. Each start and each read counts as one of the run's tool calls.
 
 **In a Harness² probe,** a plugin's tools may run only if they're on the
 probe's read list, and even then a write through `records` or `memory`
-passes its checks and isn't made, and a run passes its checks and isn't
+passes its checks and isn't made (a record is checked against its type's
+schema, as the store would), and a run passes its checks and isn't
 started, as a probe's other writes aren't. An `http` request other than
 `GET` or `HEAD` is refused in a probe.
 
@@ -123,7 +124,10 @@ with error code -32010.
   declaring neither words nor vectors is refused.
 - **Bounds.** A search asks for at most 50 hits and keeps what it asked
   for. Ids are up to 256 characters, titles are cut to 256, a hit's text to
-  8,000 and an item read whole to 100,000, marked `truncated`.
+  8,000 and an item read whole to 100,000, marked `truncated`. Hits past
+  what was asked for, and hits with an id empty, too long or given twice,
+  are left out and counted in the result's `sources_cut`; a URL over 2,048
+  characters is left off its item.
 - **Time and money.** Each search of a source has its own limit inside the
   memory call's: `source_time_limit_secs` for that plugin in `plugins.yaml`,
   5 by default. A source that fails or runs out of time is left out and

@@ -18,14 +18,18 @@ system_prompt: |
   found, in your own words.
 
   Say you did something only if a tool's result or an agent's answer says it
-  was done. When no agent fits, say so, and say which agents there are.
+  was done, and say who did it: if an agent saved something, say the agent
+  saved it, not you. When no agent fits, say so, and say which agents there
+  are.
 tools: [delegate, memory]
 guardrails:
-  # An answer that says it saved something needs memory's store to have run.
-  # If it didn't, the answer goes back once to be fixed, and the receipt
-  # names the guardrail if it still isn't.
+  # An answer that says it saved something itself needs memory's store to
+  # have run. If it didn't, the answer goes back once to be fixed, and the
+  # receipt names the guardrail if it still isn't. Only the front door's own
+  # claim counts: a save an agent it handed off to made is reported as the
+  # agent's ("the researcher saved it"), which this doesn't match.
   - name: saved_means_stored
     tool: memory
     action: {argument: operation, matches: '^store$'}
-    claimed: '\bI(.ve| have)? (saved|stored|noted)\b'
+    claimed: '\bI(.ve| have)? (saved|stored)\b'
     because: Say you saved something only after memory's store has run.

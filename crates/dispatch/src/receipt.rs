@@ -168,8 +168,9 @@ pub struct Receipt {
     pub events_lost: u32,
     /// What it used.
     pub totals: Totals,
-    /// Required guardrails whose tool never ran for the agent, so an answer
-    /// it gave came without it.
+    /// Guardrails the answer came without: required ones whose tool never
+    /// ran for the agent, and claimed ones whose claim the answer made
+    /// without the call.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     #[schemars(length(max = 16), inner(length(max = 64)))]
     pub guardrails_unmet: Vec<String>,

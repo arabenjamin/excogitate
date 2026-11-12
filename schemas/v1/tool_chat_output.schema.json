@@ -215,7 +215,7 @@
           "type": "integer"
         },
         "guardrails_unmet": {
-          "description": "Required guardrails whose tool never ran for the agent, so an answer\nit gave came without it.",
+          "description": "Guardrails the answer came without: required ones whose tool never\nran for the agent, and claimed ones whose claim the answer made\nwithout the call.",
           "items": {
             "maxLength": 64,
             "type": "string"

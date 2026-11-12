@@ -242,6 +242,14 @@
           "maxItems": 50,
           "type": "array"
         },
+        "sources_cut": {
+          "description": "Sources some of whose hits were left out, and why: more than\nwere asked for, or an id empty, too long or given twice.",
+          "items": {
+            "$ref": "#/$defs/SkippedSource"
+          },
+          "maxItems": 50,
+          "type": "array"
+        },
         "sources_skipped": {
           "description": "Sources left out of the search, because they failed, ran out of\ntime or couldn't be searched by this query, and why.",
           "items": {

@@ -514,3 +514,33 @@ async fn sources_spend_in_turn_and_what_their_plugins_did_goes_on_the_search() {
     assert_eq!(found.uses.len(), 3);
     assert_eq!(found.sources_skipped.len(), 1);
 }
+
+#[tokio::test]
+async fn hits_a_source_gives_that_cant_be_kept_are_counted() {
+    // A search for 10 asks a source for 30.
+    let mut hits: Vec<SourceItem> = (0..30).map(|n| item(&format!("i{n}"), "cats")).collect();
+    hits[3] = item("", "cats");
+    hits[4] = item("i0", "cats");
+    hits.push(item("past", "cats"));
+    hits.push(item("further", "cats"));
+    let source = Arc::new(Lake {
+        name: "many",
+        hits,
+        ..Lake::default()
+    });
+    let memory = memory(vec![lake(&source, false)]).await;
+    let found = search(&memory, DataClass::Private, everything(DataClass::Private)).await;
+    let cut: Vec<(&str, &str)> = found
+        .sources_cut
+        .iter()
+        .map(|cut| (cut.source.as_str(), cut.why.as_str()))
+        .collect();
+    assert_eq!(
+        cut,
+        [(
+            "demo.many",
+            "2 past the 30 asked for; 2 with an id empty, over 256 characters or given twice"
+        )]
+    );
+    assert_eq!(found.sources_skipped, []);
+}
