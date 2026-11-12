@@ -199,6 +199,7 @@ impl Runtime {
             lease: None,
             last_error: None,
             result: None,
+            finished_at: None,
         };
         let transport = StoreTransport(Arc::clone(&self.workflows.store) as Arc<dyn Store>);
         if transport

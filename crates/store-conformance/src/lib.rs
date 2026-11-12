@@ -46,6 +46,7 @@ macro_rules! store_conformance {
             a_job_is_claimed_once, a_lapsed_lease_is_claimed_again, completing_needs_the_lease,
             a_failing_job_retries_then_dies, a_lease_lapsing_on_the_last_attempt_is_dead,
             a_lease_must_end_after_now, a_claim_tie_goes_to_the_lowest_id, failing_needs_the_lease,
+            finished_jobs_are_pruned_by_age,
             a_lapsed_holder_finishes_only_until_the_job_is_claimed_again,
             lists_page_on_from_an_offset,
             a_definition_has_one_home, definitions_list_by_kind,

@@ -69,6 +69,11 @@ pub(crate) enum Command {
         day: NaiveDate,
         reply: Reply<u64>,
     },
+    PruneJobs {
+        before: DateTime<Utc>,
+        limit: u32,
+        reply: Reply<u32>,
+    },
 }
 
 impl Command {
@@ -78,6 +83,7 @@ impl Command {
             Self::Claim { .. }
                 | Self::Complete { .. }
                 | Self::Fail { .. }
+                | Self::PruneJobs { .. }
                 | Self::ReserveSpend { .. }
                 | Self::SettleSpend { .. }
                 | Self::SpentOn { .. }
@@ -213,6 +219,13 @@ impl Writer<'_> {
                 reply,
             } => {
                 let _ = reply.send(self.fail(id, &worker, &error, result.as_ref(), retry_at));
+            }
+            Command::PruneJobs {
+                before,
+                limit,
+                reply,
+            } => {
+                let _ = reply.send(self.prune_jobs(before, limit));
             }
             Command::ReserveSpend {
                 provider,
@@ -397,7 +410,9 @@ impl Writer<'_> {
     fn insert_job(&self, job: &Job) -> Result<(), StoreError> {
         self.connection
             .execute(
-                "INSERT INTO jobs VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                &format!(
+                    "INSERT INTO jobs ({JOB_COLUMNS}) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)"
+                ),
                 params![
                     id_of(job.id),
                     job.kind,
@@ -693,9 +708,9 @@ impl Writer<'_> {
             self.connection
                 .execute(
                     "UPDATE jobs SET status = 'dead', lease_worker = NULL, lease_until = NULL,
-                         last_error = 'lease lapsed on the last attempt'
+                         last_error = 'lease lapsed on the last attempt', finished_at = ?
                      WHERE status = 'claimed' AND lease_until <= ? AND attempts >= max_attempts",
-                    params![now],
+                    params![now, now],
                 )
                 .map_err(backend)?;
             if kinds.is_empty() {
@@ -770,11 +785,25 @@ impl Writer<'_> {
         self.connection
             .execute(
                 "UPDATE jobs SET status = 'succeeded', lease_worker = NULL, lease_until = NULL,
-                     result = ? WHERE id = ?",
-                params![to_json(result)?, id_of(id)],
+                     result = ?, finished_at = ? WHERE id = ?",
+                params![to_json(result)?, Utc::now(), id_of(id)],
             )
             .map(|_| ())
             .map_err(backend)
+    }
+
+    fn prune_jobs(&self, before: DateTime<Utc>, limit: u32) -> Result<u32, StoreError> {
+        let pruned = self
+            .connection
+            .execute(
+                "DELETE FROM jobs WHERE id IN (
+                     SELECT id FROM jobs
+                     WHERE status IN ('succeeded', 'dead') AND coalesce(finished_at, run_at) < ?
+                     ORDER BY coalesce(finished_at, run_at), id LIMIT ?)",
+                params![before, limit],
+            )
+            .map_err(backend)?;
+        Ok(u32::try_from(pruned).unwrap_or(u32::MAX))
     }
 
     fn spent_on(&self, provider: &str, day: NaiveDate) -> Result<u64, StoreError> {
@@ -859,14 +888,14 @@ impl Writer<'_> {
         let left = result.map(to_json).transpose()?;
         let sql = if job.attempts >= job.max_attempts {
             "UPDATE jobs SET status = 'dead', lease_worker = NULL, lease_until = NULL,
-                 last_error = ?, result = ? WHERE id = ?"
+                 last_error = ?, result = ?, finished_at = ? WHERE id = ?"
         } else {
             "UPDATE jobs SET status = 'queued', lease_worker = NULL, lease_until = NULL,
                  last_error = ?, result = ?, run_at = ? WHERE id = ?"
         };
         let done = if job.attempts >= job.max_attempts {
             self.connection
-                .execute(sql, params![error, left, id_of(id)])
+                .execute(sql, params![error, left, Utc::now(), id_of(id)])
         } else {
             self.connection
                 .execute(sql, params![error, left, retry_at, id_of(id)])

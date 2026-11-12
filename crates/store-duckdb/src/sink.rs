@@ -286,6 +286,49 @@ impl EventSink for DuckDbSink {
         .await
         .map_err(sink_error)?
     }
+
+    async fn prune_runs(&self, before: DateTime<Utc>, limit: usize) -> Result<usize, EventError> {
+        let limit = i64::try_from(limit).map_err(sink_error)?;
+        let inner = Arc::clone(&self.0);
+        tokio::task::spawn_blocking(move || {
+            prune(
+                &mut inner.lock().unwrap_or_else(PoisonError::into_inner),
+                before,
+                limit,
+            )
+        })
+        .await
+        .map_err(sink_error)?
+    }
+}
+
+/// Deletes the oldest whole runs started before `before`: their events and
+/// index rows in one transaction, so no run is left in part.
+fn prune(inner: &mut Inner, before: DateTime<Utc>, limit: i64) -> Result<usize, EventError> {
+    let transaction = inner.connection.transaction().map_err(sink_error)?;
+    let runs: Vec<String> = {
+        let mut statement = transaction
+            .prepare(
+                "SELECT run FROM events GROUP BY run HAVING min(occurred_at) < ?
+                 ORDER BY min(occurred_at), run LIMIT ?",
+            )
+            .map_err(sink_error)?;
+        statement
+            .query_map(params![before, limit], |row| row.get::<_, String>(0))
+            .map_err(sink_error)?
+            .collect::<Result<_, _>>()
+            .map_err(sink_error)?
+    };
+    for run in &runs {
+        transaction
+            .execute("DELETE FROM events WHERE run = ?", params![run])
+            .map_err(sink_error)?;
+        transaction
+            .execute("DELETE FROM runs WHERE run = ?", params![run])
+            .map_err(sink_error)?;
+    }
+    transaction.commit().map_err(sink_error)?;
+    Ok(runs.len())
 }
 
 #[cfg(test)]
@@ -427,5 +470,48 @@ mod tests {
             .unwrap();
         assert!(first.has_more);
         std::fs::remove_dir_all(&directory).unwrap();
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn an_old_run_is_pruned_whole_oldest_first() {
+        let sink = DuckDbSink::open(None).unwrap();
+        let (oldest, old, new) = (RunId::generate(), RunId::generate(), RunId::generate());
+        let start = |run, at| {
+            marker(
+                run,
+                EventKind::RunStarted,
+                at,
+                json!({ "agent": "chat", "harness": "h1" }),
+            )
+        };
+        sink.append(vec![
+            start(oldest, 1_800_000_000),
+            start(old, 1_800_000_010),
+            event(oldest, 20),
+            start(new, 1_800_000_100),
+        ])
+        .await
+        .unwrap();
+        let cutoff = DateTime::from_timestamp(1_800_000_050, 0).unwrap();
+        // One at a time, the oldest first.
+        assert_eq!(sink.prune_runs(cutoff, 1).await.unwrap(), 1);
+        assert_eq!(
+            sink.read_run(oldest, 0, 10).await.unwrap().events,
+            Vec::<Event>::new()
+        );
+        assert_eq!(sink.read_run(old, 0, 10).await.unwrap().events.len(), 1);
+        assert_eq!(sink.prune_runs(cutoff, 10).await.unwrap(), 1);
+        assert_eq!(sink.prune_runs(cutoff, 10).await.unwrap(), 0);
+        let listed = sink
+            .list_runs(&RunQuery {
+                limit: 10,
+                ..RunQuery::default()
+            })
+            .await
+            .unwrap();
+        assert_eq!(
+            listed.runs.iter().map(|run| run.run).collect::<Vec<_>>(),
+            [new]
+        );
     }
 }

@@ -9,7 +9,7 @@ use neo4rs::{Txn, query};
 use serde_json::Value;
 use store::{Job, JobId, JobQueue, JobStatus, Page, PageRequest, SpendLog, StoreError};
 
-use crate::codec::{self, JOB, at, get, job_status_name, json_text};
+use crate::codec::{self, JOB, at, get, job_status_name, json_text, maybe_at};
 use crate::setup::JOBS_LOCK;
 use crate::{Neo4jStore, finish, page_clause, page_of, retrying, txn_rows};
 
@@ -63,7 +63,7 @@ async fn claim_in(
         query(
             "MATCH (j:Job {status: 'claimed'}) WHERE j.lease_until <= $now AND j.attempts >= j.max_attempts \
              SET j.status = 'dead', j.lease_worker = null, j.lease_until = null, \
-             j.last_error = 'lease lapsed on the last attempt'",
+             j.last_error = 'lease lapsed on the last attempt', j.finished_at = $now",
         )
         .param("now", at(now)),
     )
@@ -160,6 +160,25 @@ impl JobQueue for Neo4jStore {
             finish(txn, outcome).await
         })
     }
+
+    async fn prune_jobs(&self, before: DateTime<Utc>, limit: u32) -> Result<u32, StoreError> {
+        let rows = self
+            .rows(
+                query(
+                    "MATCH (j:Job) WHERE j.status IN ['succeeded', 'dead'] \
+                       AND coalesce(j.finished_at, j.run_at) < $before \
+                     WITH j ORDER BY coalesce(j.finished_at, j.run_at), j.id LIMIT $limit \
+                     WITH collect(j) AS gone \
+                     FOREACH (j IN gone | DETACH DELETE j) \
+                     RETURN size(gone) AS pruned",
+                )
+                .param("before", at(before))
+                .param("limit", i64::from(limit)),
+            )
+            .await?;
+        let pruned: i64 = rows.first().map_or(Ok(0), |row| get(row, "pruned"))?;
+        Ok(u32::try_from(pruned).unwrap_or(u32::MAX))
+    }
 }
 
 async fn complete_in(
@@ -172,10 +191,11 @@ async fn complete_in(
     txn.run(
         query(
             "MATCH (j:Job {id: $id}) SET j.status = 'succeeded', j.result = $result, \
-             j.lease_worker = null, j.lease_until = null",
+             j.lease_worker = null, j.lease_until = null, j.finished_at = $now",
         )
         .param("id", id.to_string())
-        .param("result", json_text(result)),
+        .param("result", json_text(result))
+        .param("now", at(Utc::now())),
     )
     .await
     .map_err(codec::from_neo)
@@ -203,11 +223,16 @@ async fn fail_in(
     txn.run(
         query(
             "MATCH (j:Job {id: $id}) SET j.status = $status, j.run_at = $run_at, \
-             j.last_error = $error, j.result = $result, j.lease_worker = null, j.lease_until = null",
+             j.last_error = $error, j.result = $result, j.lease_worker = null, j.lease_until = null, \
+             j.finished_at = $finished",
         )
         .param("id", id.to_string())
         .param("status", job_status_name(status))
         .param("run_at", at(run_at))
+        .param(
+            "finished",
+            maybe_at((status == JobStatus::Dead).then(Utc::now)),
+        )
         .param("error", error)
         .param("result", result.map(json_text)),
     )

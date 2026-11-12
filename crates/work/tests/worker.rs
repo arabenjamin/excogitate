@@ -111,6 +111,7 @@ fn job(kind: &str, payload: Value, max_attempts: u32) -> Job {
         lease: None,
         last_error: None,
         result: None,
+        finished_at: None,
     }
 }
 

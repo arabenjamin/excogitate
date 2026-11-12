@@ -224,6 +224,7 @@ impl Scheduler {
             lease: None,
             last_error: None,
             result: None,
+            finished_at: None,
         };
         Ok(self.transport.enqueue(job).await? == Enqueued::Added)
     }

@@ -764,6 +764,67 @@ pub async fn failing_needs_the_lease(store: &dyn Store) {
     is_conflict(store.fail_job(j.id, "holder", "x", None, at(5)).await);
 }
 
+/// Finished jobs are pruned by age, oldest first and at most `limit` at a
+/// time; queued and claimed ones never are. A finished job with no finish
+/// time, from before they were kept, counts as finished at its `run_at`.
+pub async fn finished_jobs_are_pruned_by_age(store: &dyn Store) {
+    let waiting = job(0, 1);
+    let done = job(9, 1);
+    let mut dies = job(8, 1);
+    dies.max_attempts = 1;
+    // Years before the fixtures' clock, and before today's: the stamped
+    // jobs finish now, by the store's clock.
+    let mut legacy = job(0, -200_000_000);
+    legacy.status = JobStatus::Succeeded;
+    let ids = (waiting.id, done.id, dies.id, legacy.id);
+    store
+        .apply(
+            UnitOfWork::new()
+                .with(WriteOp::EnqueueJob(waiting))
+                .with(WriteOp::EnqueueJob(done))
+                .with(WriteOp::EnqueueJob(dies))
+                .with(WriteOp::EnqueueJob(legacy)),
+        )
+        .await
+        .unwrap();
+    let first = store
+        .claim_job("w", &kinds(), at(10), at(100))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(first.id, ids.1);
+    store.complete_job(ids.1, "w", json!(1)).await.unwrap();
+    let second = store
+        .claim_job("w", &kinds(), at(10), at(100))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(second.id, ids.2);
+    store
+        .fail_job(ids.2, "w", "broke", None, at(20))
+        .await
+        .unwrap();
+    let finished = |id| async move { store.get_job(id).await.unwrap().unwrap().finished_at };
+    assert!(finished(ids.1).await.is_some(), "a success is stamped");
+    assert!(finished(ids.2).await.is_some(), "a death is stamped");
+    assert_eq!(finished(ids.0).await, None);
+    assert_eq!(finished(ids.3).await, None, "a new job's stamp is ignored");
+
+    // Only the legacy job finished before this, by its run_at.
+    assert_eq!(store.prune_jobs(at(-100_000_000), 10).await.unwrap(), 1);
+    assert_eq!(store.get_job(ids.3).await.unwrap(), None);
+    let later = chrono::Utc::now() + chrono::TimeDelta::days(1);
+    assert_eq!(store.prune_jobs(later, 1).await.unwrap(), 1);
+    assert_eq!(store.prune_jobs(later, 10).await.unwrap(), 1);
+    assert_eq!(store.prune_jobs(later, 10).await.unwrap(), 0);
+    assert_eq!(store.get_job(ids.1).await.unwrap(), None);
+    assert_eq!(store.get_job(ids.2).await.unwrap(), None);
+    assert!(
+        store.get_job(ids.0).await.unwrap().is_some(),
+        "queued stays"
+    );
+}
+
 /// A holder whose lease lapsed can still finish, until someone else has the
 /// job; then it can't.
 pub async fn a_lapsed_holder_finishes_only_until_the_job_is_claimed_again(store: &dyn Store) {

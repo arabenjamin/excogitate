@@ -55,3 +55,11 @@ budget:
 #   adopt: true
 #   # Where to post each change as it's made.
 #   notify_url: https://example.com/hooks/agent-changes
+
+# retention:
+#   # Days a run's trajectory is kept, from its start; null keeps them. At
+#   # least 8, so Harness² always has its week of runs.
+#   trajectory_days: 30
+#   # Days a finished job is kept, from when it finished; null keeps them. At
+#   # least 8, since a schedule may fire up to 7 days late.
+#   job_days: 30

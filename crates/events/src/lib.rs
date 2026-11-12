@@ -2,7 +2,9 @@
 //! are read for analysis, not served, so they stay out of the store and a
 //! store never has to take them.
 //!
-//! The port has no update and no delete: what happened stays what happened.
+//! The port has no update, and its one delete is retention: a whole run, all
+//! its events and its index entry, once it's older than the owner keeps them.
+//! While a run is kept, what happened stays what happened.
 
 use std::sync::{Mutex, PoisonError};
 
@@ -169,6 +171,16 @@ pub trait EventSink: Send + Sync + std::fmt::Debug {
     ///
     /// [`EventError`] if the sink can't be read.
     async fn list_runs(&self, query: &RunQuery) -> Result<RunPage, EventError>;
+
+    /// Deletes up to `limit` whole runs whose first event is before
+    /// `before`, oldest first, and says how many went. A run is never cut
+    /// in part: all its events and its index entry go together.
+    ///
+    /// # Errors
+    ///
+    /// [`EventError`] if the sink fails; what it deleted before failing is
+    /// gone whole, run by run.
+    async fn prune_runs(&self, before: DateTime<Utc>, limit: usize) -> Result<usize, EventError>;
 }
 
 /// A sink that keeps events in memory, for tests.
@@ -242,6 +254,28 @@ impl EventSink for MemorySink {
         let runs: Vec<RunSummary> = matching.by_ref().take(query.limit).collect();
         let has_more = matching.next().is_some();
         Ok(RunPage { runs, has_more })
+    }
+
+    async fn prune_runs(&self, before: DateTime<Utc>, limit: usize) -> Result<usize, EventError> {
+        let mut all = self.0.lock().unwrap_or_else(PoisonError::into_inner);
+        let mut first: std::collections::HashMap<RunId, DateTime<Utc>> =
+            std::collections::HashMap::new();
+        for event in all.iter() {
+            first
+                .entry(event.run)
+                .and_modify(|at| *at = (*at).min(event.at))
+                .or_insert(event.at);
+        }
+        let mut old: Vec<(DateTime<Utc>, String, RunId)> = first
+            .into_iter()
+            .filter(|(_, at)| *at < before)
+            .map(|(run, at)| (at, run.to_string(), run))
+            .collect();
+        old.sort();
+        old.truncate(limit);
+        let gone: std::collections::HashSet<RunId> = old.iter().map(|(_, _, run)| *run).collect();
+        all.retain(|event| !gone.contains(&event.run));
+        Ok(gone.len())
     }
 }
 
@@ -341,5 +375,38 @@ mod tests {
         let mut bare = started(RunId::generate(), "chat", 1);
         bare.body = json!({ "agent": "chat" });
         assert_eq!(bare.index_entry(), None);
+    }
+
+    #[tokio::test]
+    async fn an_old_run_is_pruned_whole_and_a_newer_one_kept() {
+        let sink = MemorySink::new();
+        let (old, new) = (RunId::generate(), RunId::generate());
+        sink.append(vec![
+            started(old, "chat", 10),
+            started(new, "chat", 50),
+            ended(old, 60),
+            ended(new, 70),
+        ])
+        .await
+        .unwrap();
+        let cutoff = DateTime::from_timestamp(30, 0).unwrap();
+        assert_eq!(sink.prune_runs(cutoff, 10).await.unwrap(), 1);
+        assert_eq!(
+            sink.read_run(old, 0, 10).await.unwrap().events,
+            Vec::<Event>::new()
+        );
+        assert_eq!(sink.read_run(new, 0, 10).await.unwrap().events.len(), 2);
+        let listed = sink
+            .list_runs(&RunQuery {
+                limit: 10,
+                ..RunQuery::default()
+            })
+            .await
+            .unwrap();
+        assert_eq!(
+            listed.runs.iter().map(|run| run.run).collect::<Vec<_>>(),
+            [new]
+        );
+        assert_eq!(sink.prune_runs(cutoff, 10).await.unwrap(), 0);
     }
 }

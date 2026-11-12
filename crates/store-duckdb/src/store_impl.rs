@@ -423,6 +423,15 @@ impl JobQueue for DuckDbStore {
         })
         .await
     }
+
+    async fn prune_jobs(&self, before: DateTime<Utc>, limit: u32) -> Result<u32, StoreError> {
+        self.send(|reply| Command::PruneJobs {
+            before,
+            limit,
+            reply,
+        })
+        .await
+    }
 }
 
 #[async_trait]

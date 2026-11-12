@@ -903,6 +903,14 @@ impl EventSink for BrokenSink {
     async fn list_runs(&self, _: &RunQuery) -> Result<RunPage, EventError> {
         Err(EventError("disk full".to_owned()))
     }
+
+    async fn prune_runs(
+        &self,
+        _: chrono::DateTime<chrono::Utc>,
+        _: usize,
+    ) -> Result<usize, EventError> {
+        Err(EventError("disk full".to_owned()))
+    }
 }
 
 #[tokio::test]
