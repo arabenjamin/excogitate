@@ -3,6 +3,7 @@
 
 use async_trait::async_trait;
 use chrono::{DateTime, NaiveDate, Utc};
+use protocol::DataClass;
 use serde_json::Value;
 
 use crate::{
@@ -25,12 +26,18 @@ pub trait NoteReader {
     /// [`StoreError::Backend`] if the store fails.
     async fn get_note(&self, id: NoteId) -> Result<Option<Note>, StoreError>;
 
-    /// A note with this content hash, if one exists.
+    /// The note of this privacy class with this content hash, if one
+    /// exists; the lowest id when there are several. A note of the other
+    /// class never matches, so a lookup can't reveal that one exists.
     ///
     /// # Errors
     ///
     /// [`StoreError::Backend`] if the store fails.
-    async fn find_note_by_hash(&self, hash: &str) -> Result<Option<Note>, StoreError>;
+    async fn find_note_by_hash(
+        &self,
+        hash: &str,
+        class: DataClass,
+    ) -> Result<Option<Note>, StoreError>;
 
     /// A note's chunks, in order.
     ///

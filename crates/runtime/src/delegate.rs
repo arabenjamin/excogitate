@@ -37,6 +37,22 @@ pub(crate) struct DelegateArgs {
     context: Option<String>,
 }
 
+/// The longest answer passed back; a longer one is cut to this and marked.
+const MAX_ANSWER_CHARS: usize = 200_000;
+/// The longest reason for stopping, as the result's schema allows.
+const MAX_STOPPED_CHARS: usize = 2048;
+
+/// An answer cut to fit the result's schema, and whether it was: a long
+/// answer arrives marked instead of failing the call and losing its cost.
+fn fitted(answer: Option<String>) -> (Option<String>, bool) {
+    match answer {
+        Some(answer) if answer.chars().count() > MAX_ANSWER_CHARS => {
+            (Some(answer.chars().take(MAX_ANSWER_CHARS).collect()), true)
+        }
+        answer => (answer, false),
+    }
+}
+
 /// What comes back.
 #[derive(Debug, Serialize, JsonSchema)]
 #[schemars(deny_unknown_fields)]
@@ -47,6 +63,9 @@ pub(crate) struct DelegateResult {
     /// Its answer, if it gave one.
     #[schemars(length(max = 200_000))]
     answer: Option<String>,
+    /// True when the answer was longer than this tool passes back, and was
+    /// cut to fit. The whole answer is in its run.
+    answer_cut_off: bool,
     /// How its run ended.
     #[schemars(length(max = 32))]
     outcome: String,
@@ -133,12 +152,16 @@ impl Tool for DelegateTool {
             .await
             .map_err(ToolFailure::new)?;
         let cost_usd_micros = result.receipt.totals.cost_usd_micros;
+        let (answer, answer_cut_off) = fitted(result.answer);
         let reply = DelegateResult {
             agent: args.agent,
             outcome: outcome_name(result.receipt.outcome),
             run: result.receipt.run.clone(),
-            answer: result.answer,
-            stopped_because: result.stopped_because,
+            answer,
+            answer_cut_off,
+            stopped_because: result
+                .stopped_because
+                .map(|why| why.chars().take(MAX_STOPPED_CHARS).collect()),
         };
         let value = serde_json::to_value(reply)
             .map_err(|error| ToolFailure::new(schema::bounded(&error.to_string())))?;
@@ -269,6 +292,31 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(notes.items, []);
+    }
+
+    #[test]
+    fn a_long_answer_is_cut_to_fit_and_marked() {
+        let long = "a".repeat(MAX_ANSWER_CHARS + 50_000);
+        let (answer, cut) = fitted(Some(long));
+        assert!(cut);
+        assert_eq!(answer.as_ref().unwrap().chars().count(), MAX_ANSWER_CHARS);
+        assert_eq!(
+            fitted(Some("short".to_owned())),
+            (Some("short".to_owned()), false)
+        );
+        assert_eq!(fitted(None), (None, false));
+        // What it builds passes the result's published schema.
+        let reply = DelegateResult {
+            agent: "researcher".to_owned(),
+            answer,
+            answer_cut_off: cut,
+            outcome: "answered".to_owned(),
+            stopped_because: None,
+            run: "r".to_owned(),
+        };
+        let output =
+            schema::Validator::from_schema(&schema::schema_of::<DelegateResult>()).unwrap();
+        output.check(&serde_json::to_value(reply).unwrap()).unwrap();
     }
 
     #[test]

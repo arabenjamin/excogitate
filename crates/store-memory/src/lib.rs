@@ -296,12 +296,17 @@ impl NoteReader for MemoryStore {
         Ok(self.state().notes.get(&id).cloned())
     }
 
-    async fn find_note_by_hash(&self, hash: &str) -> Result<Option<Note>, StoreError> {
+    async fn find_note_by_hash(
+        &self,
+        hash: &str,
+        class: DataClass,
+    ) -> Result<Option<Note>, StoreError> {
+        // Notes are kept in id order, so the first match is the lowest id.
         Ok(self
             .state()
             .notes
             .values()
-            .find(|note| note.content_hash == hash)
+            .find(|note| note.content_hash == hash && note.provenance.data_class == class)
             .cloned())
     }
 

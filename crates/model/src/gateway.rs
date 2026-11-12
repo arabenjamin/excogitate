@@ -450,6 +450,7 @@ models:
             purpose: "work".to_owned(),
             budget_usd_micros: None,
             embedding_dimension: None,
+            only_model: None,
         }
     }
 

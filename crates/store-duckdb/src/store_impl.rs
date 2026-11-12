@@ -7,6 +7,7 @@ use std::sync::{Arc, Mutex, PoisonError, RwLock};
 use async_trait::async_trait;
 use chrono::{DateTime, NaiveDate, Utc};
 use duckdb::{Connection, params};
+use protocol::DataClass;
 use serde_json::Value;
 use store::{
     Chunk, ChunkHit, ClassFilter, Definition, DefinitionKey, DefinitionKind, DefinitionReader,
@@ -18,8 +19,8 @@ use tokio::sync::{Semaphore, mpsc, oneshot};
 
 use crate::codec::{
     DEFINITION_COLUMNS, JOB_COLUMNS, NOTE_COLUMNS, TASK_COLUMNS, WORKING_COLUMNS, backend,
-    definition_at, definition_kind_name, job_at, job_status_name, note_at, task_at,
-    task_status_name, vector_param, working_at,
+    data_class_name, definition_at, definition_kind_name, job_at, job_status_name, note_at,
+    task_at, task_status_name, vector_param, working_at,
 };
 use crate::read::{self, optional, paged};
 use crate::schema_sql;
@@ -228,14 +229,20 @@ impl NoteReader for DuckDbStore {
         .await
     }
 
-    async fn find_note_by_hash(&self, hash: &str) -> Result<Option<Note>, StoreError> {
+    async fn find_note_by_hash(
+        &self,
+        hash: &str,
+        class: DataClass,
+    ) -> Result<Option<Note>, StoreError> {
         let hash = hash.to_owned();
+        let class = data_class_name(class);
         self.read(move |connection| {
             optional(connection.query_row(
                 &format!(
-                    "SELECT {NOTE_COLUMNS} FROM notes WHERE content_hash = ? ORDER BY id LIMIT 1"
+                    "SELECT {NOTE_COLUMNS} FROM notes WHERE content_hash = ? AND data_class = ? \
+                     ORDER BY id LIMIT 1"
                 ),
-                params![hash],
+                params![hash, class],
                 note_at,
             ))
         })

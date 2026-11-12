@@ -16,6 +16,10 @@
         "null"
       ]
     },
+    "answer_cut_off": {
+      "description": "True when the answer was longer than this tool passes back, and was\ncut to fit. The whole answer is in its run.",
+      "type": "boolean"
+    },
     "outcome": {
       "description": "How its run ended.",
       "maxLength": 32,
@@ -37,6 +41,7 @@
   },
   "required": [
     "agent",
+    "answer_cut_off",
     "outcome",
     "run"
   ],

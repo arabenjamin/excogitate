@@ -21,6 +21,9 @@ pub struct RoutePolicy {
     pub budget_usd_micros: Option<u64>,
     /// The vector width an embedding must have, when embedding.
     pub embedding_dimension: Option<usize>,
+    /// The one model this call may use, by name, when it must be that one:
+    /// a test of a model has to reach the model it tests.
+    pub only_model: Option<String>,
 }
 
 /// How many tokens a call could use, at most.
@@ -58,6 +61,8 @@ pub enum Rejection {
     OverRunBudget,
     /// The provider's daily cap can't cover the call.
     OverDailyCap,
+    /// The call is pinned to another model.
+    NotPinned,
 }
 
 impl fmt::Display for Rejection {
@@ -72,6 +77,7 @@ impl fmt::Display for Rejection {
             Self::PaidNotAllowed => f.write_str("priced, and this purpose may not pay"),
             Self::OverRunBudget => f.write_str("could cost more than the run has left"),
             Self::OverDailyCap => f.write_str("the provider's daily cap can't cover it"),
+            Self::NotPinned => f.write_str("the call is pinned to another model"),
         }
     }
 }
@@ -121,6 +127,13 @@ fn check(
     // Privacy before everything: no other reason can let private work through.
     if policy.data_class == DataClass::Private && !model.provider.no_log {
         return Err(Rejection::NotPrivate);
+    }
+    if policy
+        .only_model
+        .as_ref()
+        .is_some_and(|only| *only != model.name)
+    {
+        return Err(Rejection::NotPinned);
     }
     if let Some(missing) = required.iter().find(|needed| !model.can(**needed)) {
         return Err(Rejection::Lacks(*missing));
@@ -216,6 +229,7 @@ models:
             purpose: "allowed".to_owned(),
             budget_usd_micros: None,
             embedding_dimension: None,
+            only_model: None,
         }
     }
 
@@ -258,6 +272,25 @@ models:
         let needs = [Capability::Investigative];
         let result = plan(&c, &needs, &policy(DataClass::Private), SMALL_CALL);
         assert_eq!(why(result, "paid"), Rejection::NotPrivate);
+    }
+
+    #[test]
+    fn a_pinned_call_goes_only_to_its_model() {
+        let c = catalog(YAML);
+        let mut pinned = policy(DataClass::Public);
+        pinned.only_model = Some("small".to_owned());
+        let result = plan(&c, &[Capability::Chat], &pinned, SMALL_CALL);
+        assert_eq!(names(&result), ["small"]);
+        // Privacy still comes first: a pin can't send private work to a
+        // provider that keeps logs.
+        let mut leaky = policy(DataClass::Private);
+        leaky.only_model = Some("free-cloud".to_owned());
+        let result = plan(&c, &[Capability::Chat], &leaky, SMALL_CALL);
+        assert_eq!(why(result, "free-cloud"), Rejection::NotPrivate);
+        let mut gone = policy(DataClass::Public);
+        gone.only_model = Some("gone".to_owned());
+        let result = plan(&c, &[Capability::Chat], &gone, SMALL_CALL);
+        assert_eq!(why(result, "small"), Rejection::NotPinned);
     }
 
     #[test]

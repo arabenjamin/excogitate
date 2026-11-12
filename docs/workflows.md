@@ -105,7 +105,9 @@ changed is there on the next chat. The agent runs as its own run, with its own
 tools and budget, held to what the chat has left. It sees only the `task` and
 the `context` it's handed, not the conversation. What it returns, its answer,
 how its run ended and the run's id (readable at `/api/v1/runs/{id}`), is
-labelled untrusted, and what it cost goes on the chat's receipt.
+labelled untrusted, and what it cost goes on the chat's receipt. An answer
+over 200,000 characters is cut to that and comes back with
+`answer_cut_off: true`; the whole answer is in the agent's run.
 
 - **Give the front door `memory` too.** The harness's memory search before
   the first round (`recall_limit`) runs only for a run offered `memory`, and

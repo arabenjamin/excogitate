@@ -124,6 +124,7 @@ impl ModelCapability for PluginModel {
             purpose: self.purpose.clone(),
             budget_usd_micros: Some(budget),
             embedding_dimension: None,
+            only_model: None,
         };
         let request = ChatRequest {
             messages: vec![Message::user(prompt)],

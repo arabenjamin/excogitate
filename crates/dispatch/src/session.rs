@@ -387,6 +387,7 @@ impl Session {
                     .saturating_sub(self.totals.cost_usd_micros),
             ),
             embedding_dimension: None,
+            only_model: None,
         };
 
         self.totals.rounds += 1;

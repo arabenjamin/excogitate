@@ -460,13 +460,17 @@ fn calibration_script(broke_effect: &str) -> Vec<ChaosStep> {
     ]
 }
 
-async fn calibrate(setup: &Setup) -> harness::Calibration {
+async fn calibrate_on(setup: &Setup, model: &str) -> harness::Calibration {
     Judges {
         gateway: &setup.engine.gateway,
         max_output_tokens: 4000,
     }
-    .calibrate(0)
+    .calibrate(model, 0)
     .await
+}
+
+async fn calibrate(setup: &Setup) -> harness::Calibration {
+    calibrate_on(setup, "c").await
 }
 
 #[tokio::test]
@@ -476,6 +480,23 @@ async fn a_judge_that_gets_the_known_answers_right_passes() {
     assert!(calibration.passed, "{calibration:#?}");
     assert_eq!(calibration.model, "c");
     assert_eq!(calibration.cases.len(), 3);
+}
+
+#[tokio::test]
+async fn the_test_is_taken_by_the_composers_model_or_not_at_all() {
+    // Pinned to a model that can't be reached, no other model stands in:
+    // every case fails to route, and nothing passes for the model.
+    let setup = setup(calibration_script("regressed")).await;
+    let calibration = calibrate_on(&setup, "elsewhere").await;
+    assert!(!calibration.passed);
+    assert_eq!(calibration.model, "");
+    assert!(
+        calibration.cases.iter().all(|case| case
+            .detail
+            .as_deref()
+            .is_some_and(|detail| detail.contains("pinned to another model"))),
+        "{calibration:#?}"
+    );
 }
 
 #[tokio::test]

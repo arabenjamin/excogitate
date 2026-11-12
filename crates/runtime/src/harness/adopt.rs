@@ -213,7 +213,9 @@ impl Runtime {
             gateway: &self.gateway,
             max_output_tokens: self.config.harness.judge_output_tokens,
         };
-        let test = judges.calibrate(self.config.harness.judge_usd_micros).await;
+        let test = judges
+            .calibrate(model, self.config.harness.judge_usd_micros)
+            .await;
         let record = harness::record(CALIBRATION_TYPE, RecordId::generate(), &test, test.at)?;
         self.workflows
             .store

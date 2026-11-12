@@ -275,7 +275,10 @@ impl Memory {
         (chunks, u32::try_from(unembedded).unwrap_or(u32::MAX), cost)
     }
 
-    /// Stores a note. Identical content returns the note that already has it.
+    /// Stores a note. Identical content of the same privacy class returns
+    /// the note that already has it. A note of the other class is never
+    /// reused: a public run mustn't learn a private note exists, and a
+    /// private note mustn't depend on one that public runs can change.
     ///
     /// # Errors
     ///
@@ -290,7 +293,11 @@ impl Memory {
     ) -> Result<StoredNote, MemoryError> {
         check_body(&note.body)?;
         let hash = content_hash(&note.body);
-        if let Some(existing) = self.store.find_note_by_hash(&hash).await? {
+        if let Some(existing) = self
+            .store
+            .find_note_by_hash(&hash, origin.data_class)
+            .await?
+        {
             let chunks = self.store.list_chunks(existing.id).await?;
             let unembedded = chunks.iter().filter(|c| c.embedding.is_none()).count();
             return Ok(StoredNote {
