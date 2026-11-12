@@ -97,6 +97,8 @@ pub enum PluginCapability {
     Http,
     /// Model calls through the runtime.
     Model,
+    /// Notes in the runtime's long-term memory, which its search finds.
+    Memory,
 }
 
 /// A manifest that can't be used.

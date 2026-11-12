@@ -325,6 +325,51 @@
             "prompt"
           ],
           "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "`MemoryCapability::store`.",
+          "properties": {
+            "op": {
+              "const": "memory_store",
+              "type": "string"
+            },
+            "source_url": {
+              "description": "The URL it came from.",
+              "maxLength": 2048,
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "tags": {
+              "description": "Tags.",
+              "items": {
+                "maxLength": 64,
+                "type": "string"
+              },
+              "maxItems": 16,
+              "type": "array"
+            },
+            "text": {
+              "description": "The text.",
+              "maxLength": 100000,
+              "minLength": 1,
+              "type": "string"
+            },
+            "title": {
+              "description": "A short title.",
+              "maxLength": 256,
+              "type": "string"
+            }
+          },
+          "required": [
+            "op",
+            "title",
+            "text",
+            "tags"
+          ],
+          "type": "object"
         }
       ]
     },

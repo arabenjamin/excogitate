@@ -1,5 +1,7 @@
 //! The records capability: the store port, narrowed to one plugin's own
-//! records, with provenance set by the runtime.
+//! records, with provenance set by the runtime. In a Harness² probe its
+//! writes pass their name checks and aren't made, as a probe's other writes
+//! aren't.
 
 use std::sync::Arc;
 
@@ -93,6 +95,9 @@ impl RecordsCapability for ScopedRecords {
     ) -> Result<RecordId, CapabilityError> {
         self.own(record_type)?;
         let id = id.unwrap_or_else(RecordId::generate);
+        if context.probing {
+            return Ok(id);
+        }
         let record = self.record(record_type.to_owned(), id, data, context);
         self.write(WriteOp::PutRecord(record)).await?;
         Ok(id)
@@ -124,9 +129,12 @@ impl RecordsCapability for ScopedRecords {
         &self,
         record_type: &str,
         id: RecordId,
-        _: ToolContext,
+        context: ToolContext,
     ) -> Result<(), CapabilityError> {
         self.own(record_type)?;
+        if context.probing {
+            return Ok(());
+        }
         self.write(WriteOp::DeleteRecord {
             record_type: record_type.to_owned(),
             id,
@@ -139,9 +147,12 @@ impl RecordsCapability for ScopedRecords {
         relation: &str,
         from: RecordId,
         to: RecordId,
-        _: ToolContext,
+        context: ToolContext,
     ) -> Result<(), CapabilityError> {
         self.own(relation)?;
+        if context.probing {
+            return Ok(());
+        }
         self.write(WriteOp::Link {
             relation: relation.to_owned(),
             from,
@@ -187,7 +198,7 @@ impl RecordsCapability for ScopedRecords {
                 context,
             )));
         }
-        if !ids.is_empty() {
+        if !ids.is_empty() && !context.probing {
             self.apply(unit).await?;
         }
         Ok(ids)
@@ -196,13 +207,13 @@ impl RecordsCapability for ScopedRecords {
     async fn link_many(
         &self,
         links: Vec<RecordLink>,
-        _: ToolContext,
+        context: ToolContext,
     ) -> Result<(), CapabilityError> {
         check_batch(links.len())?;
         for link in &links {
             self.own(&link.relation)?;
         }
-        if links.is_empty() {
+        if links.is_empty() || context.probing {
             return Ok(());
         }
         let unit = links.into_iter().fold(UnitOfWork::new(), |unit, link| {

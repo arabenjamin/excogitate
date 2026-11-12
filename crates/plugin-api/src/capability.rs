@@ -369,6 +369,152 @@ pub trait ModelCapability: Send + Sync + std::fmt::Debug {
     ) -> Result<ModelReply, CapabilityError>;
 }
 
+/// The longest title a stored note may have.
+pub const MAX_NOTE_TITLE: usize = 256;
+/// The longest text a stored note may have.
+pub const MAX_NOTE_TEXT: usize = 100_000;
+/// The most tags a stored note may have.
+pub const MAX_NOTE_TAGS: usize = 16;
+/// The longest tag.
+pub const MAX_NOTE_TAG: usize = 64;
+/// The longest source URL.
+pub const MAX_NOTE_URL: usize = 2048;
+
+/// A note for long-term memory, as a plugin offers it. Who may see it and
+/// whether it's trusted are the runtime's to say, never the plugin's.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct NoteToStore {
+    /// A short title.
+    pub title: String,
+    /// The text.
+    pub text: String,
+    /// Tags.
+    pub tags: Vec<String>,
+    /// The URL it came from.
+    pub source_url: Option<String>,
+}
+
+impl NoteToStore {
+    /// A note with no tags or source.
+    #[must_use]
+    pub fn new(title: impl Into<String>, text: impl Into<String>) -> Self {
+        Self {
+            title: title.into(),
+            text: text.into(),
+            tags: Vec::new(),
+            source_url: None,
+        }
+    }
+
+    /// The same note, with these tags.
+    #[must_use]
+    pub fn with_tags(mut self, tags: Vec<String>) -> Self {
+        self.tags = tags;
+        self
+    }
+
+    /// The same note, from this URL.
+    #[must_use]
+    pub fn with_source_url(mut self, url: impl Into<String>) -> Self {
+        self.source_url = Some(url.into());
+        self
+    }
+
+    /// Refuses a note past the limits, or with no text.
+    ///
+    /// # Errors
+    ///
+    /// [`CapabilityError::Refused`], saying which limit.
+    pub fn check(&self) -> Result<(), CapabilityError> {
+        let refuse = |why: String| Err(CapabilityError::Refused(why));
+        let chars = |text: &str| text.chars().count();
+        if self.text.trim().is_empty() {
+            return refuse("a note needs some text".to_owned());
+        }
+        if chars(&self.text) > MAX_NOTE_TEXT {
+            return refuse(format!(
+                "a note's text is at most {MAX_NOTE_TEXT} characters"
+            ));
+        }
+        if chars(&self.title) > MAX_NOTE_TITLE {
+            return refuse(format!(
+                "a note's title is at most {MAX_NOTE_TITLE} characters"
+            ));
+        }
+        if self.tags.len() > MAX_NOTE_TAGS || self.tags.iter().any(|tag| chars(tag) > MAX_NOTE_TAG)
+        {
+            return refuse(format!(
+                "a note has at most {MAX_NOTE_TAGS} tags, each at most {MAX_NOTE_TAG} characters"
+            ));
+        }
+        if self
+            .source_url
+            .as_deref()
+            .is_some_and(|url| chars(url) > MAX_NOTE_URL)
+        {
+            return refuse(format!("a source URL is at most {MAX_NOTE_URL} characters"));
+        }
+        Ok(())
+    }
+}
+
+/// What storing a note did.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct NoteStored {
+    /// The note's id.
+    pub id: uuid::Uuid,
+    /// False when the same text, in the same privacy class, was already
+    /// kept: this is that note.
+    pub created: bool,
+    /// How many chunks it has.
+    pub chunks: u32,
+    /// How many have no vector, and so are found only by their words.
+    pub unembedded_chunks: u32,
+    /// What embedding it cost, in millionths of a dollar. It's charged to
+    /// the run.
+    pub cost_usd_micros: u64,
+}
+
+impl NoteStored {
+    /// What a store did.
+    #[must_use]
+    pub const fn new(id: uuid::Uuid, created: bool, chunks: u32, unembedded_chunks: u32) -> Self {
+        Self {
+            id,
+            created,
+            chunks,
+            unembedded_chunks,
+            cost_usd_micros: 0,
+        }
+    }
+
+    /// The same, with what it cost.
+    #[must_use]
+    pub const fn with_cost(mut self, cost_usd_micros: u64) -> Self {
+        self.cost_usd_micros = cost_usd_micros;
+        self
+    }
+}
+
+/// Writing into the runtime's long-term memory, so its search finds what a
+/// plugin brought in. Each note is kept under the calling run's privacy
+/// class, marked untrusted, and stored by `plugin:<name>`.
+#[async_trait]
+pub trait MemoryCapability: Send + Sync + std::fmt::Debug {
+    /// Stores a note. Its embedding is paid from what the run has left.
+    ///
+    /// # Errors
+    ///
+    /// [`CapabilityError`] if it's refused, as past a limit, or fails.
+    async fn store(
+        &self,
+        note: NoteToStore,
+        context: ToolContext,
+    ) -> Result<NoteStored, CapabilityError>;
+}
+
 /// The capabilities handed to a plugin: those it declared and was granted.
 #[derive(Debug, Clone, Default)]
 #[non_exhaustive]
@@ -379,6 +525,8 @@ pub struct Capabilities {
     pub http: Option<Arc<dyn HttpCapability>>,
     /// Model calls, if granted.
     pub model: Option<Arc<dyn ModelCapability>>,
+    /// Long-term memory, if granted.
+    pub memory: Option<Arc<dyn MemoryCapability>>,
 }
 
 impl Capabilities {
@@ -401,6 +549,24 @@ impl Capabilities {
     pub fn with_model(mut self, model: Arc<dyn ModelCapability>) -> Self {
         self.model = Some(model);
         self
+    }
+
+    /// The same set, with the memory capability.
+    #[must_use]
+    pub fn with_memory(mut self, memory: Arc<dyn MemoryCapability>) -> Self {
+        self.memory = Some(memory);
+        self
+    }
+
+    /// The memory capability.
+    ///
+    /// # Errors
+    ///
+    /// [`CapabilityError::NotGranted`] if the plugin doesn't have it.
+    pub fn memory(&self) -> Result<Arc<dyn MemoryCapability>, CapabilityError> {
+        self.memory
+            .clone()
+            .ok_or(CapabilityError::NotGranted(PluginCapability::Memory))
     }
 
     /// The records capability.

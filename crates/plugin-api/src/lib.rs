@@ -21,7 +21,9 @@ pub mod wire;
 
 pub use capability::{
     Capabilities, CapabilityError, HttpCapability, HttpRequest, HttpResponse, MAX_BATCH,
-    ModelCapability, ModelReply, RecordLink, RecordWrite, RecordsCapability, check_batch,
+    MAX_NOTE_TAG, MAX_NOTE_TAGS, MAX_NOTE_TEXT, MAX_NOTE_TITLE, MAX_NOTE_URL, MemoryCapability,
+    ModelCapability, ModelReply, NoteStored, NoteToStore, RecordLink, RecordWrite,
+    RecordsCapability, check_batch,
 };
 pub use manifest::{
     API_VERSION, ManifestError, PluginCapability, PluginManifest, RESERVED_NAMES, ToolManifest,

@@ -214,10 +214,21 @@ impl PluginHost {
                     let meter = Arc::clone(meter.get_or_insert_with(Arc::default));
                     capabilities.model = Some(source.model(&manifest.name, meter));
                 }
+                PluginCapability::Memory => {
+                    let source = self
+                        .source
+                        .as_ref()
+                        .ok_or_else(|| not_available(capability))?;
+                    let meter = Arc::clone(meter.get_or_insert_with(Arc::default));
+                    capabilities.memory = Some(source.memory(&manifest.name, meter));
+                }
                 _ => return Err(not_available(capability)),
             }
         }
-        let guarded = capabilities.http.is_some() || capabilities.model.is_some();
+        // Memory is metered too: what its embedding costs goes on the run.
+        let guarded = capabilities.http.is_some()
+            || capabilities.model.is_some()
+            || capabilities.memory.is_some();
         Ok(Granted {
             capabilities,
             meter,
@@ -703,6 +714,31 @@ mod tests {
             linked.items.iter().map(|r| r.id).collect::<Vec<_>>(),
             [ids[1]]
         );
+    }
+
+    #[tokio::test]
+    async fn a_probes_record_writes_pass_their_checks_and_are_not_made() {
+        use plugin_api::RecordWrite;
+        let (mut host, store) = host("records");
+        host.install_compiled(&Demo::new(with_records()))
+            .await
+            .unwrap();
+        let scoped = ScopedRecords::new(Arc::clone(&store) as Arc<dyn Store>, "demo");
+        let probing = context().with_probing(true);
+        scoped
+            .put("demo.a", None, json!({ "a": 1 }), probing)
+            .await
+            .unwrap();
+        scoped
+            .put_many(vec![RecordWrite::new("demo.a", json!({ "a": 2 }))], probing)
+            .await
+            .unwrap();
+        assert_eq!(count(&store).await, 0);
+        // The names are still checked.
+        let foreign = scoped
+            .put("other.a", None, json!({ "a": 1 }), probing)
+            .await;
+        assert!(matches!(foreign, Err(CapabilityError::Refused(_))));
     }
 
     #[test]
