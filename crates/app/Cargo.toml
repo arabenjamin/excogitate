@@ -11,6 +11,7 @@ publish = false
 [features]
 # One feature per compiled-in plugin. The default build has none.
 plugin-example = ["dep:plugin-example"]
+plugin-search = ["dep:plugin-search"]
 # The Neo4j store. A store, not a plugin; DuckDB is the default.
 neo4j = ["runtime/neo4j"]
 
@@ -18,6 +19,7 @@ neo4j = ["runtime/neo4j"]
 runtime = { path = "../runtime" }
 plugin-api = { path = "../plugin-api" }
 plugin-example = { path = "../../plugins/example", optional = true }
+plugin-search = { path = "../../examples/search", optional = true }
 tokio.workspace = true
 
 [[bin]]

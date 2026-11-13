@@ -115,7 +115,8 @@ your own repo: run one as its own process on the stock image, listed in
 `plugins.yaml`, or compile them into a small binary of your own. Either way,
 nothing in Excogitate changes. Start one with `scripts/plugin_template.sh new`, which
 stamps a plugin that already meets the contract and passes its tests; see
-[the guide](docs/plugins.md) and the worked [`plugins/example`](plugins/example).
+[the guide](docs/plugins.md), the worked [`plugins/example`](plugins/example),
+and [`examples/`](examples), a daily news brief built end to end from plugins.
 
 ## Getting help, contributing, security
 

@@ -25,6 +25,8 @@ fn compiled_plugins() -> Vec<Arc<dyn Plugin>> {
     let mut plugins: Vec<Arc<dyn Plugin>> = Vec::new();
     #[cfg(feature = "plugin-example")]
     plugins.push(Arc::new(plugin_example::ExamplePlugin));
+    #[cfg(feature = "plugin-search")]
+    plugins.push(Arc::new(plugin_search::SearchPlugin));
     plugins
 }
 
@@ -37,6 +39,10 @@ mod tests {
         #[allow(unused_mut, reason = "one block per plugin feature")]
         let mut expected = 0;
         #[cfg(feature = "plugin-example")]
+        {
+            expected += 1;
+        }
+        #[cfg(feature = "plugin-search")]
         {
             expected += 1;
         }
