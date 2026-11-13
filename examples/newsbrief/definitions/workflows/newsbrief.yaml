@@ -1,0 +1,51 @@
+# The Daily News Brief. Each section is searched for the last day's news,
+# the results are written up as one brief, and the brief is kept in memory.
+# Needs the newsbrief and search plugins, and the news-writer agent.
+description: The daily news brief, one section each, from the last day's news, kept in memory.
+inputs:
+  type: object
+  additionalProperties: false
+  properties: {}
+steps:
+  - type: tool
+    id: sections
+    tool: newsbrief_sections
+    arguments: {}
+  # One search per section. A failed search leaves that section's entry
+  # null, and the writer says it found nothing, rather than failing the brief.
+  - type: tool
+    id: search
+    tool: search_web
+    arguments:
+      query: "{{item.query}}"
+      sites: "{{item.sites}}"
+      news: true
+      recency: day
+      limit: 6
+    for_each:
+      items: "{{steps.sections.result.sections}}"
+      max_items: 12
+      continue_on_failure: true
+  # What the searches found goes in context, marked as data, never in the
+  # message.
+  - type: agent
+    id: brief
+    agent: news-writer
+    message: Write today's news brief.
+    context: >-
+      Today is {{steps.sections.result.date}}.
+      The sections, in order: {{steps.sections.result.sections}}
+      Each section's search results, in the same order, null where its
+      search failed: {{steps.search.result}}
+  - type: tool
+    id: keep
+    tool: memory
+    arguments:
+      operation: store
+      title: "News brief {{steps.sections.result.date}}"
+      text: "{{steps.brief.answer}}"
+      tags: [newsbrief]
+output: "{{steps.brief.answer}}"
+# What the whole run may spend. 0 suits a local model; raise it for a paid
+# one.
+max_usd_micros: 0

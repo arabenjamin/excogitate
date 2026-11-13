@@ -1,0 +1,12 @@
+# Copy to newsbrief.yaml to write the brief every morning. The file's name
+# is the schedule's name.
+cron: "0 7 * * *"
+# An IANA zone. UTC if left out.
+timezone: UTC
+kind: workflow
+payload:
+  workflow: newsbrief
+  inputs: {}
+# A retry would search and write again.
+max_attempts: 1
+catch_up_seconds: 3600

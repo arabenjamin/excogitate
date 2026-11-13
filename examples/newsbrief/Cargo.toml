@@ -1,0 +1,42 @@
+[package]
+name = "plugin-newsbrief"
+description = "The Daily News Brief: the sections it covers, kept as records, for the workflow that searches and writes it."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+# The same plugin as its own process (src/main.rs).
+[[bin]]
+name = "newsbrief-service"
+path = "src/main.rs"
+
+[dependencies]
+async-trait.workspace = true
+chrono.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+plugin-api = { path = "../../crates/plugin-api" }
+
+# The tests run the plugin through the real host and dispatcher, and the
+# whole brief through the real runtime (tests/brief.rs).
+[dev-dependencies]
+axum.workspace = true
+chaos-model = { path = "../../crates/chaos-model" }
+chrono.workspace = true
+plugin-search = { path = "../search" }
+reqwest = { version = "0.13", default-features = false, features = ["json"] }
+runtime = { path = "../../crates/runtime" }
+work = { path = "../../crates/work" }
+dispatch = { path = "../../crates/dispatch" }
+events = { path = "../../crates/events" }
+model = { path = "../../crates/model" }
+plugin-host = { path = "../../crates/plugin-host" }
+store = { path = "../../crates/store" }
+store-memory = { path = "../../crates/store-memory" }
+
+[lints]
+workspace = true

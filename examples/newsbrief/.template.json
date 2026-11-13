@@ -1,0 +1,6 @@
+{
+  "template": "templates/plugin",
+  "tree": "6643916bef7f0ce27adf2081abb84a2805e33419",
+  "answers": {"name": "newsbrief", "description": "The Daily News Brief: the sections it covers, kept as records, for the workflow that searches and writes it.", "capabilities": "records", "tools": "sections,section_set,section_remove", "records": "section", "crates": "path"},
+  "skip": ["README.md"]
+}
