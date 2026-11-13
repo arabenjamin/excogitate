@@ -3,6 +3,12 @@
 All notable changes are listed here. The file is generated from the
 Conventional Commits by [git-cliff](https://git-cliff.org) (`cliff.toml`).
 
+## [0.7.1] - 2026-11-13
+
+### Fixed
+
+- The template's manifest no longer breaks a git dependency's build output
+
 ## [0.7.0] - 2026-11-13
 
 ### Added
