@@ -2,6 +2,7 @@
 
 use std::error::Error;
 use std::fmt;
+use std::fmt::Write as _;
 use std::sync::{Arc, LazyLock};
 use std::time::Duration;
 
@@ -16,6 +17,7 @@ use schema::Validator;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
+
 use url::{Host, Url};
 
 use super::config::{HttpConfig, HttpConfigError, MAX_BODY_CHARS, Method};
@@ -154,13 +156,36 @@ impl fmt::Debug for Secret {
     }
 }
 
+/// Where a key goes.
+#[derive(Debug)]
+enum Placement {
+    /// In this header, with its prefix.
+    Header {
+        name: HeaderName,
+        value: HeaderValue,
+    },
+    /// As this query parameter.
+    Query { param: String },
+}
+
 #[derive(Debug)]
 struct ResolvedCredential {
     host: String,
-    header: HeaderName,
-    value: HeaderValue,
+    placement: Placement,
     secret: Secret,
+    /// The key as it reads in a URL, which a response may echo back.
+    secret_in_url: Secret,
     allow_insecure: bool,
+    methods: Vec<Method>,
+}
+
+impl ResolvedCredential {
+    fn header(&self) -> Option<&HeaderName> {
+        match &self.placement {
+            Placement::Header { name, .. } => Some(name),
+            Placement::Query { .. } => None,
+        }
+    }
 }
 
 /// One request of a call. A call is one or more, one per redirect.
@@ -197,15 +222,31 @@ fn resolve_credentials(
                 .filter(|secret| !secret.is_empty())
                 .ok_or_else(|| HttpConfigError::MissingSecret(credential.env.clone()))?;
             let bad = || HttpConfigError::BadCredential(credential.host.clone());
-            let mut value = HeaderValue::from_str(&format!("{}{secret}", credential.prefix))
-                .map_err(|_| bad())?;
-            value.set_sensitive(true);
+            let placement = match (&credential.header, &credential.query) {
+                (Some(header), None) => {
+                    let mut value =
+                        HeaderValue::from_str(&format!("{}{secret}", credential.prefix))
+                            .map_err(|_| bad())?;
+                    value.set_sensitive(true);
+                    Placement::Header {
+                        name: HeaderName::from_bytes(header.as_bytes()).map_err(|_| bad())?,
+                        value,
+                    }
+                }
+                (None, Some(param)) if !param.trim().is_empty() => Placement::Query {
+                    param: param.clone(),
+                },
+                _ => return Err(bad()),
+            };
             Ok(ResolvedCredential {
                 host: credential.host.to_ascii_lowercase(),
-                header: HeaderName::from_bytes(credential.header.as_bytes()).map_err(|_| bad())?,
-                value,
+                placement,
+                secret_in_url: Secret(
+                    url::form_urlencoded::byte_serialize(secret.as_bytes()).collect(),
+                ),
                 secret: Secret(secret),
                 allow_insecure: credential.allow_insecure,
+                methods: credential.methods.clone(),
             })
         })
         .collect()
@@ -323,17 +364,40 @@ impl HttpRequestTool {
 
     fn method_names(&self) -> String {
         let names: Vec<&str> = self.methods.iter().map(|method| method.as_str()).collect();
-        names.join(", ")
+        let mut text = names.join(", ");
+        for credential in &self.credentials {
+            let extra: Vec<&str> = credential
+                .methods
+                .iter()
+                .filter(|method| !self.methods.contains(method))
+                .map(|method| method.as_str())
+                .collect();
+            if !extra.is_empty() {
+                let _ = write!(text, "; {} to {} only", extra.join(", "), credential.host);
+            }
+        }
+        text
+    }
+
+    /// Whether `method` may go to the host `credential` is for (none: a
+    /// host without one).
+    fn method_allowed(&self, method: Method, credential: Option<&ResolvedCredential>) -> bool {
+        self.methods.contains(&method)
+            || credential.is_some_and(|credential| credential.methods.contains(&method))
     }
 
     /// Removes any key a response has echoed back.
     fn scrub(&self, text: String) -> String {
         self.credentials.iter().fold(text, |text, credential| {
-            if text.contains(&credential.secret.0) {
-                text.replace(&credential.secret.0, REDACTED)
-            } else {
-                text
-            }
+            [&credential.secret.0, &credential.secret_in_url.0]
+                .into_iter()
+                .fold(text, |text, secret| {
+                    if text.contains(secret.as_str()) {
+                        text.replace(secret.as_str(), REDACTED)
+                    } else {
+                        text
+                    }
+                })
         })
     }
 
@@ -380,7 +444,7 @@ impl HttpRequestTool {
                 || self
                     .credentials
                     .iter()
-                    .any(|c| c.header.as_str() == lowered)
+                    .any(|c| c.header().is_some_and(|name| name.as_str() == lowered))
             {
                 return Err(refuse(format!("a model may not set {lowered}")));
             }
@@ -399,9 +463,10 @@ impl HttpRequestTool {
         hop: &Hop,
         status: StatusCode,
         target: Url,
-        carries_key: bool,
+        credential: Option<&ResolvedCredential>,
         redirects: u32,
     ) -> Result<Hop, String> {
+        let carries_key = credential.is_some();
         if redirects >= self.max_redirects {
             return Err(format!("the limit of {} redirects", self.max_redirects));
         }
@@ -414,7 +479,9 @@ impl HttpRequestTool {
         }
         let becomes_get = matches!(status.as_u16(), 301..=303) && hop.method != Method::Head;
         let method = if becomes_get { Method::Get } else { hop.method };
-        if !self.methods.contains(&method) {
+        // A key never leaves its origin (above), so a host's own methods
+        // apply only while the request stays there.
+        if !self.method_allowed(method, credential) {
             return Err(format!("{} isn't allowed", method.as_str()));
         }
         Ok(Hop {
@@ -436,12 +503,27 @@ impl HttpRequestTool {
     ) -> Result<Response, ToolFailure> {
         let method = reqwest::Method::from_bytes(hop.method.as_str().as_bytes())
             .map_err(|_| refuse("that isn't a method"))?;
+        // A query key is added here, as the request leaves, so the address
+        // kept and returned never holds it.
+        let mut url = hop.url.clone();
+        if let Some(ResolvedCredential {
+            placement: Placement::Query { param },
+            secret,
+            ..
+        }) = credential
+        {
+            url.query_pairs_mut().append_pair(param, &secret.0);
+        }
         let mut request = self
             .client
-            .request(method, hop.url.clone())
+            .request(method, url)
             .headers(hop.headers.clone());
-        if let Some(credential) = credential {
-            request = request.header(credential.header.clone(), credential.value.clone());
+        if let Some(ResolvedCredential {
+            placement: Placement::Header { name, value },
+            ..
+        }) = credential
+        {
+            request = request.header(name.clone(), value.clone());
         }
         if let Some(body) = &hop.body {
             request = request.body(body.clone());
@@ -484,7 +566,7 @@ impl HttpRequestTool {
                     .ok_or_else(|| refuse("the redirect's address isn't valid"))?,
                 _ => return Ok((response, hop.url, redirects, None)),
             };
-            match self.next_hop(&hop, status, target, credential.is_some(), redirects) {
+            match self.next_hop(&hop, status, target, credential, redirects) {
                 Ok(next) => {
                     hop = next;
                     redirects += 1;
@@ -495,7 +577,9 @@ impl HttpRequestTool {
     }
 
     async fn fetch(&self, args: HttpArgs) -> Result<HttpResult, ToolFailure> {
-        if !self.methods.contains(&args.method) {
+        let url = Url::parse(&args.url).map_err(|_| refuse("that isn't a valid URL"))?;
+        let credential = self.credential_for(&url)?;
+        if !self.method_allowed(args.method, credential) {
             return Err(refuse(format!(
                 "{} isn't allowed here; allowed: {}",
                 args.method.as_str(),
@@ -505,8 +589,17 @@ impl HttpRequestTool {
         if args.body.is_some() && args.method.is_read() {
             return Err(refuse("a GET or HEAD can't carry a body"));
         }
+        if let Some(ResolvedCredential {
+            placement: Placement::Query { param },
+            host,
+            ..
+        }) = credential
+            && url.query_pairs().any(|(name, _)| name == param.as_str())
+        {
+            return Err(refuse(format!("a caller may not set {param} for {host}")));
+        }
         let first = Hop {
-            url: Url::parse(&args.url).map_err(|_| refuse("that isn't a valid URL"))?,
+            url,
             method: args.method,
             headers: self.request_headers(&args.headers)?,
             body: args.body,

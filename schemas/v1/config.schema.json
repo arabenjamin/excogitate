@@ -63,7 +63,7 @@
     },
     "Credential": {
       "additionalProperties": false,
-      "description": "A key the runtime attaches to requests for one host. The model never sees\nits value.",
+      "description": "A key the runtime attaches to requests for one host. The model never sees\nits value. It goes in a header or, for a service that takes it no other\nway, a query parameter: one of the two.",
       "properties": {
         "allow_insecure": {
           "default": false,
@@ -80,7 +80,10 @@
           "description": "The header that carries it.",
           "maxLength": 64,
           "minLength": 1,
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "host": {
           "description": "The exact host it's for. A subdomain doesn't count.",
@@ -88,16 +91,32 @@
           "minLength": 1,
           "type": "string"
         },
+        "methods": {
+          "description": "Methods allowed for this host only, besides `allowed_methods`: POST\nto a search API, without letting a model POST anywhere else.",
+          "items": {
+            "$ref": "#/$defs/Method"
+          },
+          "maxItems": 6,
+          "type": "array"
+        },
         "prefix": {
           "default": "",
           "description": "Text before the key, such as `Bearer `.",
           "maxLength": 32,
           "type": "string"
+        },
+        "query": {
+          "description": "The query parameter that carries it, instead of a header. A caller\nthat sets this parameter itself is refused.",
+          "maxLength": 64,
+          "minLength": 1,
+          "type": [
+            "string",
+            "null"
+          ]
         }
       },
       "required": [
         "host",
-        "header",
         "env"
       ],
       "type": "object"
@@ -169,7 +188,7 @@
             "GET",
             "HEAD"
           ],
-          "description": "The methods a model may use. Any method but GET and HEAD can send\ndata out.",
+          "description": "The methods a model may use, for every host. Any method but GET and\nHEAD can send data out; to allow one for a single host, give it in\nthat host's credential (`methods`) instead.",
           "items": {
             "$ref": "#/$defs/Method"
           },

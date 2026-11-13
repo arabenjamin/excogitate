@@ -47,7 +47,8 @@ impl Method {
 }
 
 /// A key the runtime attaches to requests for one host. The model never sees
-/// its value.
+/// its value. It goes in a header or, for a service that takes it no other
+/// way, a query parameter: one of the two.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct Credential {
@@ -55,8 +56,19 @@ pub struct Credential {
     #[schemars(length(min = 1, max = 253))]
     pub host: String,
     /// The header that carries it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(length(min = 1, max = 64))]
-    pub header: String,
+    pub header: Option<String>,
+    /// The query parameter that carries it, instead of a header. A caller
+    /// that sets this parameter itself is refused.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(length(min = 1, max = 64))]
+    pub query: Option<String>,
+    /// Methods allowed for this host only, besides `allowed_methods`: POST
+    /// to a search API, without letting a model POST anywhere else.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[schemars(length(max = 6))]
+    pub methods: Vec<Method>,
     /// Text before the key, such as `Bearer `.
     #[serde(default)]
     #[schemars(length(max = 32))]
@@ -80,8 +92,9 @@ pub struct HttpConfig {
     /// network.
     #[schemars(length(max = 256), inner(length(max = 64)))]
     pub allowed_ranges: Vec<String>,
-    /// The methods a model may use. Any method but GET and HEAD can send
-    /// data out.
+    /// The methods a model may use, for every host. Any method but GET and
+    /// HEAD can send data out; to allow one for a single host, give it in
+    /// that host's credential (`methods`) instead.
     #[schemars(length(min = 1, max = 6))]
     pub allowed_methods: Vec<Method>,
     /// Keys to attach, by host.
@@ -159,8 +172,11 @@ pub enum HttpConfigError {
     /// A credential's variable isn't set, or is empty.
     #[error("environment variable {0} isn't set")]
     MissingSecret(String),
-    /// A credential can't be made into a header.
-    #[error("the credential for {0} can't be sent as a header")]
+    /// A credential can't be sent: its header or key isn't valid, or it
+    /// names both a header and a query parameter, or neither.
+    #[error(
+        "the credential for {0} can't be sent: it needs a valid header or query parameter, one of them"
+    )]
     BadCredential(String),
     /// The HTTP client couldn't be built.
     #[error("couldn't build the http client: {0}")]
