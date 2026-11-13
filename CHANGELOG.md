@@ -3,6 +3,12 @@
 All notable changes are listed here. The file is generated from the
 Conventional Commits by [git-cliff](https://git-cliff.org) (`cliff.toml`).
 
+## [0.7.2] - 2026-11-13
+
+### Added
+
+- A tool step says how many capability calls its tool may make
+
 ## [0.7.1] - 2026-11-13
 
 ### Fixed
