@@ -3,6 +3,18 @@
 All notable changes are listed here. The file is generated from the
 Conventional Commits by [git-cliff](https://git-cliff.org) (`cliff.toml`).
 
+## [0.7.0] - 2026-11-13
+
+### Added
+
+- A TinyFish search plugin, the showcase's first
+- A method for one host, and a key in the query (breaking)
+- The Daily News Brief, end to end
+
+### Fixed
+
+- The search's publisher is the site's name
+
 ## [0.6.1] - 2026-11-12
 
 ### Added
