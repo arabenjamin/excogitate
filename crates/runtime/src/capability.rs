@@ -4,13 +4,14 @@
 //! and charged like the runtime's own; notes go into the runtime's own
 //! memory; and workflow runs are queued as the REST API queues them.
 
+use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::time::Instant;
 
 use async_trait::async_trait;
 use chrono::Utc;
 use memory::{Memory, NewNote, NoteOrigin};
-use model::{ChatRequest, Gateway, Message, RoutePolicy};
+use model::{Capability, ChatRequest, Gateway, Message, RoutePolicy};
 use plugin_api::{
     CapabilityError, CapabilityUse, HttpCapability, HttpRequest, HttpResponse, JobPhase,
     JobStarted, JobState, JobsCapability, MAX_IDEMPOTENCY_KEY, MAX_OUTSTANDING_JOBS,
@@ -32,6 +33,8 @@ pub(crate) struct RuntimeCapabilities {
     pub(crate) max_output_tokens: u32,
     pub(crate) memory: Memory,
     pub(crate) store: Arc<dyn Store>,
+    /// What each plugin's model calls need, from its grant.
+    pub(crate) model_needs: BTreeMap<String, Vec<Capability>>,
 }
 
 impl CapabilitySource for RuntimeCapabilities {
@@ -45,6 +48,7 @@ impl CapabilitySource for RuntimeCapabilities {
     fn model(&self, plugin: &str, meter: Arc<CapabilityMeter>) -> Arc<dyn ModelCapability> {
         Arc::new(PluginModel {
             gateway: Arc::clone(&self.gateway),
+            needs: self.model_needs.get(plugin).cloned().unwrap_or_default(),
             purpose: purpose(plugin),
             meter,
             max_output_tokens: self.max_output_tokens,
@@ -137,6 +141,8 @@ impl HttpCapability for PluginHttp {
 struct PluginModel {
     gateway: Arc<Gateway>,
     purpose: String,
+    /// What a model must be able to do to answer, from the plugin's grant.
+    needs: Vec<Capability>,
     meter: Arc<CapabilityMeter>,
     max_output_tokens: u32,
 }
@@ -158,7 +164,7 @@ impl ModelCapability for PluginModel {
             .budget_usd_micros
             .saturating_sub(self.meter.pending(context.run));
         let policy = RoutePolicy {
-            capabilities: Vec::new(),
+            capabilities: self.needs.clone(),
             data_class: context.data_class,
             purpose: self.purpose.clone(),
             budget_usd_micros: Some(budget),

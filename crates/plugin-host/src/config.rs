@@ -38,6 +38,12 @@ pub struct PluginConfig {
     #[serde(default = "default_source_time_limit")]
     #[schemars(range(min = 1, max = 60))]
     pub source_time_limit_secs: u32,
+    /// What a model must be able to do, beyond chat, to answer this
+    /// plugin's `model` calls, such as `investigative`: the deployment's
+    /// say, never the plugin's. Left out, the cheapest that can chat.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[schemars(length(max = 4))]
+    pub model_needs: Vec<model::Capability>,
 }
 
 const fn default_source_time_limit() -> u32 {

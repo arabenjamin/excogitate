@@ -541,6 +541,7 @@ fn candidate(tools: &[&str]) -> workflow::Agent {
         memory: None,
         skills: Vec::new(),
         guardrails: Vec::new(),
+        needs: Vec::new(),
     }
 }
 

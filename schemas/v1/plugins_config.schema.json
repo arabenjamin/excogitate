@@ -1,5 +1,35 @@
 {
   "$defs": {
+    "Capability": {
+      "description": "What a model can do. Agents ask for these, never for a model by name.",
+      "oneOf": [
+        {
+          "const": "chat",
+          "description": "Chat completions.",
+          "type": "string"
+        },
+        {
+          "const": "tools",
+          "description": "Tool calls.",
+          "type": "string"
+        },
+        {
+          "const": "json_schema",
+          "description": "The server enforces a JSON Schema on the reply.",
+          "type": "string"
+        },
+        {
+          "const": "embeddings",
+          "description": "Embeddings.",
+          "type": "string"
+        },
+        {
+          "const": "investigative",
+          "description": "Measured able to run a multi-step investigative loop.",
+          "type": "string"
+        }
+      ]
+    },
     "PluginCapability": {
       "description": "A thing a plugin can ask for. A closed list, granted by name.",
       "oneOf": [
@@ -45,6 +75,14 @@
             "$ref": "#/$defs/PluginCapability"
           },
           "maxItems": 8,
+          "type": "array"
+        },
+        "model_needs": {
+          "description": "What a model must be able to do, beyond chat, to answer this\nplugin's `model` calls, such as `investigative`: the deployment's\nsay, never the plugin's. Left out, the cheapest that can chat.",
+          "items": {
+            "$ref": "#/$defs/Capability"
+          },
+          "maxItems": 4,
           "type": "array"
         },
         "name": {

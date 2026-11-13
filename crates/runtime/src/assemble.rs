@@ -240,6 +240,12 @@ impl Runtime {
             max_output_tokens: config.max_output_tokens,
             memory: parts.memory.clone(),
             store: Arc::clone(&store),
+            model_needs: plugins
+                .grants
+                .plugins
+                .iter()
+                .map(|plugin| (plugin.name.clone(), plugin.model_needs.clone()))
+                .collect(),
         };
         let processes: Vec<(String, ProcessConfig)> = plugins
             .grants

@@ -43,6 +43,22 @@ names every model and why.
 Excogitate keeps this ledger in the store (`SpendLog`), so a restart can't reset
 a cap. `MemoryLedger` forgets on a restart, and is only for tests.
 
+## Asking for a capable model
+
+The cheapest model that passes the checks answers, so a free local model
+answers everything it can. Work that needs more asks for it by capability,
+never by name:
+
+- an agent, with `needs` in its definition: `needs: [investigative]`;
+- a plugin's `model` calls, with `model_needs` in its grant in
+  `plugins.yaml`. The deployment says it, never the plugin.
+
+Only a model marked with each capability asked for in `models.yaml` is
+chosen; if it's priced, its provider's `paid_for` still has to name the
+purpose (`chat`, `workflow`, `plugin:<name>`), and its daily cap still
+holds. Nothing else changes: work that asks for nothing still goes to the
+cheapest.
+
 ## Credentials
 
 A key is read from the environment variable named by `api_key_env`, and
