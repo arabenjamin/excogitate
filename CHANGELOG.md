@@ -3,6 +3,12 @@
 All notable changes are listed here. The file is generated from the
 Conventional Commits by [git-cliff](https://git-cliff.org) (`cliff.toml`).
 
+## [0.9.0] - 2026-11-13
+
+### Added
+
+- Remote MCP servers' tools, offered as the runtime's own
+
 ## [0.8.0] - 2026-11-13
 
 ### Added
