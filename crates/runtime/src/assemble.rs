@@ -23,6 +23,7 @@ use crate::capability::RuntimeCapabilities;
 use crate::delegate::DelegateTool;
 use crate::ledger::StoreLedger;
 use crate::mcp::{ChatTool, DispatchedTool};
+use crate::metrics::{Metrics, MetricsSink};
 
 /// What embedding is for, which decides whether it may pay.
 const EMBEDDING_PURPOSE: &str = "memory";
@@ -107,6 +108,8 @@ pub struct Runtime {
     pub(crate) plugins: Arc<Vec<String>>,
     /// The sources memory reads, as `plugin.name`.
     pub(crate) sources: Arc<Vec<String>>,
+    /// What every run's events have counted, for `/metrics`.
+    pub(crate) metrics: Arc<Metrics>,
 }
 
 /// The parts made before plugins are installed.
@@ -354,6 +357,10 @@ impl Runtime {
             choices,
             ..
         } = parts;
+        // Every path to the sink goes through this one, so every event is
+        // counted.
+        let metrics = Arc::new(Metrics::new());
+        let sink: Arc<dyn EventSink> = Arc::new(MetricsSink::new(sink, Arc::clone(&metrics)));
         let mut names: Vec<String> = registry
             .definitions()
             .into_iter()
@@ -424,6 +431,7 @@ impl Runtime {
             changing: Arc::new(tokio::sync::Mutex::new(())),
             plugins: Arc::new(Vec::new()),
             sources: Arc::new(Vec::new()),
+            metrics,
         })
     }
 

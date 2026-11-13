@@ -9,6 +9,7 @@ the scheduler. `docker compose up -d` runs it.
 | `GET /v1/models`, `POST /v1/chat/completions` | An OpenAI-compatible front door |
 | `/api/v1/...` | The REST API |
 | `GET /health` | `{"status":"ok"}`, with no key needed |
+| `GET /metrics` | [Prometheus metrics](metrics.md), keyed unless `server.open_metrics` is set |
 
 ## Access
 

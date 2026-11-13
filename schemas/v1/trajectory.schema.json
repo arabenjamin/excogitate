@@ -344,6 +344,13 @@
               "minimum": 0,
               "type": "integer"
             },
+            "duration_ms": {
+              "default": 0,
+              "description": "How long the call took, retries and fallbacks included.",
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
             "error": {
               "description": "Why it failed, if it did.",
               "maxLength": 2048,
@@ -352,6 +359,13 @@
                 "null"
               ]
             },
+            "input_tokens": {
+              "default": 0,
+              "description": "The prompt's tokens, as the model counted them or as estimated.\nZero on a failed call, and in events written before 0.10.0.",
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
+            },
             "model": {
               "description": "The model that answered, if one did.",
               "maxLength": 256,
@@ -359,6 +373,13 @@
                 "string",
                 "null"
               ]
+            },
+            "output_tokens": {
+              "default": 0,
+              "description": "The reply's tokens, likewise.",
+              "format": "uint64",
+              "minimum": 0,
+              "type": "integer"
             },
             "reply": {
               "description": "What it said, cut if long.",

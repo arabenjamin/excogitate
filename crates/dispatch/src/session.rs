@@ -552,8 +552,11 @@ impl Session {
         let (request, policy, estimate) = self.ready_call(capabilities, request)?;
         self.totals.rounds += 1;
         let abandoned = Abandoned::default();
+        let begun = Instant::now();
         let call = gateway.chat_counting(&policy, &request, Some(&abandoned));
-        let result = match self.within(call).await {
+        let waited = self.within(call).await;
+        let duration_ms = u64::try_from(begun.elapsed().as_millis()).unwrap_or(u64::MAX);
+        let result = match waited {
             Waited::Done(result) => result,
             cut => {
                 let stopped = matches!(cut, Waited::Stopped);
@@ -570,7 +573,8 @@ impl Session {
         };
         match result {
             Ok(completion) => {
-                self.record_model_success(&completion, estimate, request.max_output_tokens);
+                let (input_tokens, output_tokens) =
+                    self.record_model_success(&completion, estimate, request.max_output_tokens);
                 self.emit(Step::Model {
                     model: Some(completion.model.clone()),
                     reply: Some(event_text(&completion.response.content)),
@@ -578,6 +582,9 @@ impl Session {
                         .unwrap_or(u32::MAX),
                     cost_usd_micros: completion.cost_usd_micros,
                     error: None,
+                    input_tokens,
+                    output_tokens,
+                    duration_ms,
                 })
                 .await;
                 Ok(completion)
@@ -596,6 +603,9 @@ impl Session {
                     tool_calls: 0,
                     cost_usd_micros,
                     error: Some(bounded(&error.to_string())),
+                    input_tokens: 0,
+                    output_tokens: 0,
+                    duration_ms,
                 })
                 .await;
                 if let GatewayError::NoRoute(no_route) = &error
@@ -611,7 +621,14 @@ impl Session {
         }
     }
 
-    fn record_model_success(&mut self, completion: &Completion, estimate: u64, output: u32) {
+    /// Counts a model's answer against the run, and says its input and
+    /// output tokens.
+    fn record_model_success(
+        &mut self,
+        completion: &Completion,
+        estimate: u64,
+        output: u32,
+    ) -> (u64, u64) {
         let usage = completion.response.usage;
         let (input_tokens, output_tokens) = usage.map_or((estimate, u64::from(output)), |usage| {
             (
@@ -637,6 +654,7 @@ impl Session {
             failed_attempts: u32::try_from(completion.failed_attempts.len()).unwrap_or(u32::MAX),
             detail: None,
         });
+        (input_tokens, output_tokens)
     }
 
     fn record_model_failure(&mut self, detail: String, failed_attempts: usize, cost: u64) {

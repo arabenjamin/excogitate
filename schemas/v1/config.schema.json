@@ -469,6 +469,11 @@
           "maximum": 1024,
           "minimum": 1,
           "type": "integer"
+        },
+        "open_metrics": {
+          "default": false,
+          "description": "When true, `/metrics` answers without the owner key, as `/health`\ndoes. Off by default: the metrics name every agent, tool and model.\nTurn it on only where the port is on a private network.",
+          "type": "boolean"
         }
       },
       "type": "object"
@@ -605,7 +610,8 @@
       "$ref": "#/$defs/ServerConfig",
       "default": {
         "allowed_origins": [],
-        "max_concurrent_requests": 8
+        "max_concurrent_requests": 8,
+        "open_metrics": false
       },
       "description": "How the HTTP server behaves."
     },
