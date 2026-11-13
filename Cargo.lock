@@ -70,6 +70,7 @@ version = "0.6.1"
 dependencies = [
  "plugin-api",
  "plugin-example",
+ "plugin-newsbrief",
  "plugin-search",
  "runtime",
  "tokio",
@@ -2311,6 +2312,30 @@ dependencies = [
 ]
 
 [[package]]
+name = "plugin-newsbrief"
+version = "0.6.1"
+dependencies = [
+ "async-trait",
+ "axum",
+ "chaos-model",
+ "chrono",
+ "dispatch",
+ "events",
+ "model",
+ "plugin-api",
+ "plugin-host",
+ "plugin-search",
+ "reqwest",
+ "runtime",
+ "serde",
+ "serde_json",
+ "store",
+ "store-memory",
+ "tokio",
+ "work",
+]
+
+[[package]]
 name = "plugin-search"
 version = "0.6.1"
 dependencies = [
@@ -2645,6 +2670,8 @@ dependencies = [
  "rustls",
  "rustls-pki-types",
  "rustls-platform-verifier",
+ "serde",
+ "serde_json",
  "sync_wrapper",
  "tokio",
  "tokio-rustls",

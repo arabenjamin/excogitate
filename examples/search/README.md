@@ -26,17 +26,19 @@ workflow written against this one runs on it unchanged.
 Grant it in `plugins.yaml`:
 
 ```yaml
+version: 1
 plugins:
   - {name: search, capabilities: [http]}
 ```
 
 The plugin never holds the key. The runtime attaches it by host, from the
-`http_request` configuration (`docs/tools.md`), and reads it from the
-environment:
+`http_request` configuration (`http:` in `config.yaml`, `docs/tools.md`),
+and reads it from the environment:
 
 ```yaml
-credentials:
-  - { host: api.search.tinyfish.ai, header: x-api-key, env: TINYFISH_API_KEY }
+http:
+  credentials:
+    - { host: api.search.tinyfish.ai, header: x-api-key, env: TINYFISH_API_KEY }
 ```
 
 TinyFish takes GET, so the default `allowed_methods` (`GET`, `HEAD`) serve:

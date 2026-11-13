@@ -27,6 +27,8 @@ fn compiled_plugins() -> Vec<Arc<dyn Plugin>> {
     plugins.push(Arc::new(plugin_example::ExamplePlugin));
     #[cfg(feature = "plugin-search")]
     plugins.push(Arc::new(plugin_search::SearchPlugin));
+    #[cfg(feature = "plugin-newsbrief")]
+    plugins.push(Arc::new(plugin_newsbrief::NewsbriefPlugin));
     plugins
 }
 
@@ -43,6 +45,10 @@ mod tests {
             expected += 1;
         }
         #[cfg(feature = "plugin-search")]
+        {
+            expected += 1;
+        }
+        #[cfg(feature = "plugin-newsbrief")]
         {
             expected += 1;
         }

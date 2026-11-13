@@ -1,0 +1,105 @@
+# newsbrief: the sections the Daily News Brief covers, kept as records, for
+# the workflow in definitions/ that searches and writes it. Every schema is
+# strict: objects close with additionalProperties: false, strings have a
+# maxLength, arrays a maxItems.
+api_version: 1
+name: newsbrief
+version: 0.1.0
+description: "The Daily News Brief: the sections it covers, kept as records, for the workflow that searches and writes it."
+
+capabilities: [records]
+
+records:
+  types:
+    # One per section of the brief, in `order`.
+    - name: newsbrief.section
+      schema:
+        type: object
+        additionalProperties: false
+        required: [name, query, sites, order]
+        properties:
+          name: { type: string, minLength: 1, maxLength: 64 }
+          query: { type: string, minLength: 1, maxLength: 400 }
+          sites:
+            type: array
+            maxItems: 20
+            items: { type: string, maxLength: 253, pattern: "^[a-z0-9.-]+$" }
+          order: { type: integer, minimum: 0, maximum: 1000 }
+      filterable:
+        - { name: name, kind: text }
+  relations: []
+
+tools:
+  - name: newsbrief_sections
+    description: >-
+      The brief's sections, in order, each with the search it runs and the
+      sites it keeps to, and today's date (UTC). Fails when there are none,
+      saying how to add one.
+    effect: read
+    input_schema:
+      type: object
+      additionalProperties: false
+      properties: {}
+    output_schema:
+      type: object
+      additionalProperties: false
+      required: [date, sections]
+      properties:
+        date: { type: string, format: date }
+        sections:
+          type: array
+          maxItems: 50
+          items: &section
+            type: object
+            additionalProperties: false
+            required: [name, query, sites, order]
+            properties:
+              name: { type: string, maxLength: 64 }
+              query: { type: string, maxLength: 400 }
+              sites:
+                type: array
+                maxItems: 20
+                items: { type: string, maxLength: 253 }
+              order: { type: integer, minimum: 0, maximum: 1000 }
+
+  - name: newsbrief_section_set
+    description: >-
+      Adds a section to the brief, or replaces the one with that name. query
+      is what it searches for; sites, if given, the only domains it reads;
+      order, where it goes (lowest first, then by name).
+    effect: write
+    input_schema:
+      type: object
+      additionalProperties: false
+      required: [name, query]
+      properties:
+        name: { type: string, minLength: 1, maxLength: 64 }
+        query: { type: string, minLength: 1, maxLength: 400 }
+        sites:
+          type: array
+          maxItems: 20
+          items: { type: string, maxLength: 253, pattern: "^[a-z0-9.-]+$" }
+        order: { type: integer, minimum: 0, maximum: 1000 }
+    output_schema:
+      type: object
+      additionalProperties: false
+      required: [section, replaced]
+      properties:
+        section: *section
+        replaced: { type: boolean }
+
+  - name: newsbrief_section_remove
+    description: Removes the section with that name from the brief.
+    effect: write
+    input_schema:
+      type: object
+      additionalProperties: false
+      required: [name]
+      properties:
+        name: { type: string, minLength: 1, maxLength: 64 }
+    output_schema:
+      type: object
+      additionalProperties: false
+      required: [removed]
+      properties:
+        removed: { type: boolean }
