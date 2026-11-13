@@ -25,6 +25,7 @@ memory = { path = "../memory" }
 model = { path = "../model" }
 plugin-api = { path = "../plugin-api" }
 plugin-host = { path = "../plugin-host" }
+prometheus-client = "0.26"
 protocol = { path = "../protocol" }
 reqwest = { version = "0.13", default-features = false, features = ["http2", "rustls"] }
 schema = { path = "../schema" }

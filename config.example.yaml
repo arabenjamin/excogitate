@@ -58,6 +58,8 @@ budget:
 #   max_concurrent_requests: 8
 #   # Browser origins allowed to call it. Others are refused.
 #   allowed_origins: []
+#   # Serve /metrics without the owner key. Only on a private network.
+#   open_metrics: false
 
 # harness:
 #   # Tools a Harness² probe really runs, for their reads only. Writes never run.

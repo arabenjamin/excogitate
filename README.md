@@ -13,7 +13,8 @@ itself from evidence.
 API](docs/api.md): it can chat, read a URL, remember what it read and run
 [workflows](docs/workflows.md) on a schedule, and [improve its own
 agents](docs/harness.md). It can also offer a [remote MCP
-server's tools](docs/mcp.md#remote-servers) as its own. CI runs the quickstart below with a scripted model,
+server's tools](docs/mcp.md#remote-servers) as its own, and serves [Prometheus
+metrics](docs/metrics.md). CI runs the quickstart below with a scripted model,
 Harness² included. [Recall on a small local model](docs/mcp.md#recall) has been measured
 only on a small set of short notes.
 Expect everything to change, and don't depend on any interface.
@@ -105,7 +106,7 @@ built: so far, [the store port](docs/store.md), [the model
 port](docs/models.md), [memory and retrieval](docs/memory.md), [dispatch](docs/dispatch.md),
 [the bundled tools](docs/tools.md), [MCP](docs/mcp.md), [the API](docs/api.md), [work](docs/work.md),
 [workflows](docs/workflows.md), [Harness²](docs/harness.md),
-[plugins](docs/plugins.md) and [schemas](docs/schemas.md).
+[plugins](docs/plugins.md), [schemas](docs/schemas.md) and [metrics](docs/metrics.md).
 
 ## Writing a plugin
 

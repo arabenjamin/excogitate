@@ -150,6 +150,10 @@ pub struct ServerConfig {
     /// refused.
     #[schemars(length(max = 32), inner(length(max = 256)))]
     pub allowed_origins: Vec<String>,
+    /// When true, `/metrics` answers without the owner key, as `/health`
+    /// does. Off by default: the metrics name every agent, tool and model.
+    /// Turn it on only where the port is on a private network.
+    pub open_metrics: bool,
 }
 
 impl Default for ServerConfig {
@@ -157,6 +161,7 @@ impl Default for ServerConfig {
         Self {
             max_concurrent_requests: 8,
             allowed_origins: Vec::new(),
+            open_metrics: false,
         }
     }
 }

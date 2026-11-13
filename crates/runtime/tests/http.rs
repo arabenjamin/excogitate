@@ -1591,3 +1591,70 @@ async fn a_workflow_attempt_needs_a_workflow_and_its_inputs() {
             .contains("no workflow helper")
     );
 }
+
+#[tokio::test]
+async fn metrics_count_a_chat_and_need_the_key_unless_opened() {
+    let running = quiet("metrics", vec![ChaosStep::Text("Hello.".to_owned())]).await;
+    let response = running.post("/v1/chat/completions", &ask(&json!({}))).await;
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let bare = running
+        .client
+        .get(format!("{}/metrics", running.url))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(bare.status(), StatusCode::UNAUTHORIZED, "keyed by default");
+
+    let response = running.get("/metrics").await;
+    assert_eq!(response.status(), StatusCode::OK);
+    assert!(
+        response.headers()["content-type"]
+            .to_str()
+            .unwrap()
+            .starts_with("application/openmetrics-text")
+    );
+    let text = response.text().await.unwrap();
+    for expected in [
+        r#"test_model_calls_total{model="c",ok="true"} 1"#,
+        r#"test_model_tokens_total{model="c",direction="output"}"#,
+        r#"test_http_requests_total{route="/v1/chat/completions",status="200"} 1"#,
+        r#"test_http_requests_total{route="/metrics",status="401"} 1"#,
+        r#"test_jobs{state="queued"} 0"#,
+        r#"test_jobs{state="claimed"} 0"#,
+    ] {
+        assert!(
+            text.lines().any(|line| line.starts_with(expected)),
+            "{expected} not in:\n{text}"
+        );
+    }
+    assert!(
+        text.lines()
+            .any(|line| line.starts_with("test_runs_total{")
+                && line.contains(r#"outcome="answered""#)),
+        "{text}"
+    );
+    assert!(!text.contains("an-owner-key"), "no secret in the metrics");
+
+    let mut config = Config::default();
+    config.server.open_metrics = true;
+    let open = start("metrics-open", vec![], config).await;
+    let bare = open
+        .client
+        .get(format!("{}/metrics", open.url))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(bare.status(), StatusCode::OK, "opened by the owner");
+    let missing = open
+        .client
+        .get(format!("{}/nowhere", open.url))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(
+        missing.status(),
+        StatusCode::UNAUTHORIZED,
+        "the rest stays keyed"
+    );
+}

@@ -32,6 +32,7 @@ use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 use work::{JobTransport, StoreTransport};
 
 use crate::Runtime;
+use crate::metrics::prefix_for;
 
 pub use harness::{
     AttemptList, AttemptView, ChangeList, ChangeView, HoldList, HoldRequest, LessonList,
@@ -287,6 +288,26 @@ async fn health() -> Json<Value> {
     Json(serde_json::json!({ "status": "ok" }))
 }
 
+/// The metrics, with the jobs gauge read now.
+async fn metrics_page(State(app): State<App>) -> Response {
+    let metrics = &app.runtime.metrics;
+    metrics
+        .read_jobs(app.runtime.workflows.store.as_ref())
+        .await;
+    (
+        [(
+            CONTENT_TYPE,
+            HeaderValue::from_static("application/openmetrics-text; version=1.0.0; charset=utf-8"),
+        )],
+        metrics.render(&prefix_for(&app.model_id)),
+    )
+        .into_response()
+}
+
+async fn timing(State(app): State<App>, request: Request, next: Next) -> Response {
+    crate::metrics::timed(Arc::clone(&app.runtime.metrics), request, next).await
+}
+
 async fn nowhere() -> ApiError {
     ApiError::not_found("there's nothing at this path")
 }
@@ -299,7 +320,7 @@ fn validator<T: JsonSchema>() -> Result<Arc<Validator>, HttpError> {
 
 impl Runtime {
     /// The HTTP server, ready to be served. Only `/health` works without the
-    /// key.
+    /// key, and `/metrics` too when `server.open_metrics` is set.
     ///
     /// # Errors
     ///
@@ -328,18 +349,27 @@ impl Runtime {
             improve_request: validator::<::harness::Request>()?,
             hold_request: validator::<harness::HoldRequest>()?,
         };
+        let metrics = Router::new().route("/metrics", get(metrics_page));
+        let (open, keyed) = if self.config.server.open_metrics {
+            (metrics, Router::new())
+        } else {
+            (Router::new(), metrics)
+        };
         let guarded = Router::new()
             .merge(mcp::routes())
             .merge(openai::routes())
             .merge(rest::routes())
             .merge(runs::routes())
             .merge(harness::routes())
+            .merge(keyed)
             .fallback(nowhere)
             .layer(middleware::from_fn_with_state(app.clone(), guard));
         Ok(Router::new()
             .route("/health", get(health))
+            .merge(open)
             .merge(guarded)
             .layer(DefaultBodyLimit::max(MAX_BODY_BYTES))
+            .layer(middleware::from_fn_with_state(app.clone(), timing))
             .with_state(app))
     }
 }

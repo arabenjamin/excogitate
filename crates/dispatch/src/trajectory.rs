@@ -127,6 +127,16 @@ pub enum Step {
         /// Why it failed, if it did.
         #[schemars(length(max = 2048))]
         error: Option<String>,
+        /// The prompt's tokens, as the model counted them or as estimated.
+        /// Zero on a failed call, and in events written before 0.10.0.
+        #[serde(default)]
+        input_tokens: u64,
+        /// The reply's tokens, likewise.
+        #[serde(default)]
+        output_tokens: u64,
+        /// How long the call took, retries and fallbacks included.
+        #[serde(default)]
+        duration_ms: u64,
     },
     /// A call to a tool, whether it ran or was refused.
     Tool {

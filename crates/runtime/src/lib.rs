@@ -17,6 +17,7 @@ mod http;
 mod jobs;
 mod ledger;
 mod mcp;
+mod metrics;
 mod retention;
 mod run;
 mod schemas;
@@ -37,6 +38,7 @@ pub use http::{
 };
 pub use jobs::WorkflowArgs;
 pub use mcp::{ChatArgs, ChatReply, ToolEnvelope};
+pub use metrics::{MAX_JOBS_COUNTED, MAX_VALUES, Metrics, MetricsSink, prefix_for};
 pub use plugin_host::PluginsConfig;
 pub use retention::Swept;
 pub use run::{RunError, run_connect, run_export, run_import, run_server, run_stdio};
