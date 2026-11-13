@@ -94,6 +94,13 @@ pub enum Step {
         /// Its arguments. Strings may hold references.
         #[schemars(extend("x-extension" = "checked against the tool's input schema"))]
         arguments: Value,
+        /// The most calls a plugin's tool may make through its capabilities
+        /// (`http`, `model`, `memory`, `jobs`), each one counted as a tool
+        /// call of the step: 1 unless set. A tool that fetches pages or asks
+        /// a model more than once needs more.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[schemars(range(min = 1, max = 200))]
+        capability_calls: Option<u32>,
         /// Runs it once per item, which the arguments see as `{{item}}`.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         for_each: Option<ForEach>,

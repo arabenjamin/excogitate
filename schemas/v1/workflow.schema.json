@@ -40,6 +40,16 @@
               "description": "Its arguments. Strings may hold references.",
               "x-extension": "checked against the tool's input schema"
             },
+            "capability_calls": {
+              "description": "The most calls a plugin's tool may make through its capabilities\n(`http`, `model`, `memory`, `jobs`), each one counted as a tool\ncall of the step: 1 unless set. A tool that fetches pages or asks\na model more than once needs more.",
+              "format": "uint32",
+              "maximum": 200,
+              "minimum": 1,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
             "for_each": {
               "anyOf": [
                 {
