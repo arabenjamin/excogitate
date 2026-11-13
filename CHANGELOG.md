@@ -3,6 +3,12 @@
 All notable changes are listed here. The file is generated from the
 Conventional Commits by [git-cliff](https://git-cliff.org) (`cliff.toml`).
 
+## [0.10.0] - 2026-11-13
+
+### Added
+
+- Prometheus metrics, counted from every run's events
+
 ## [0.9.0] - 2026-11-13
 
 ### Added
