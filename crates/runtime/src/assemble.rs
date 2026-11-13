@@ -46,6 +46,9 @@ pub enum RuntimeError {
     /// A plugin was refused. Nothing starts with a plugin missing.
     #[error(transparent)]
     Plugin(#[from] HostError),
+    /// A remote MCP server couldn't be set up.
+    #[error(transparent)]
+    Remote(#[from] mcp_remote::RemoteError),
 }
 
 /// The plugins to install, and what the deployment grants them.
@@ -213,6 +216,11 @@ impl Runtime {
         config: Config,
         secret_of: &dyn Fn(&str) -> Option<String>,
     ) -> Result<Self, RuntimeError> {
+        if !config.mcp_servers.is_empty() {
+            return Err(RuntimeError::Config(
+                "mcp_servers are listed when the runtime is built with its plugins".to_owned(),
+            ));
+        }
         let parts = Self::bundled(&store, catalog, &config, secret_of)?;
         Self::finish(store, sink, parts, config)
     }
@@ -274,6 +282,19 @@ impl Runtime {
             .attach_sources(lake)
             .map_err(|error| RuntimeError::Config(error.to_string()))?;
         parts.registry = host.into_registry();
+        for remote in mcp_remote::install(
+            &mut parts.registry,
+            Arc::clone(&store),
+            &config.http,
+            &config.mcp_servers,
+            secret_of,
+        )
+        .await?
+        {
+            if let Some(why) = &remote.from_kept {
+                eprintln!("MCP server {} couldn't be listed: {why}", remote.server);
+            }
+        }
         let mut runtime = Self::finish(store, sink, parts, config)?;
         runtime.plugins = Arc::new(installed);
         runtime.sources = Arc::new(source_ids);

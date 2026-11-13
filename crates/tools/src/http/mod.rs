@@ -11,5 +11,6 @@ mod text;
 mod tool;
 
 pub use config::{Credential, HttpConfig, HttpConfigError, MAX_BODY_CHARS, Method};
+pub use guard::AddressGuard;
 pub use text::readable_text;
 pub use tool::HttpRequestTool;

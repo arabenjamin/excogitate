@@ -12,7 +12,8 @@ itself from evidence.
 **Pre-alpha.** It serves [MCP, an OpenAI-compatible endpoint and a REST
 API](docs/api.md): it can chat, read a URL, remember what it read and run
 [workflows](docs/workflows.md) on a schedule, and [improve its own
-agents](docs/harness.md). CI runs the quickstart below with a scripted model,
+agents](docs/harness.md). It can also offer a [remote MCP
+server's tools](docs/mcp.md#remote-servers) as its own. CI runs the quickstart below with a scripted model,
 Harness² included. [Recall on a small local model](docs/mcp.md#recall) has been measured
 only on a small set of short notes.
 Expect everything to change, and don't depend on any interface.

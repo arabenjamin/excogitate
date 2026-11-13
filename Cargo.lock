@@ -1846,6 +1846,31 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "47e1ffaa40ddd1f3ed91f717a33c8c0ee23fff369e3aa8772b9605cc1d22f4c3"
 
 [[package]]
+name = "mcp-remote"
+version = "0.8.0"
+dependencies = [
+ "async-trait",
+ "axum",
+ "chrono",
+ "dispatch",
+ "events",
+ "model",
+ "plugin-api",
+ "protocol",
+ "reqwest",
+ "schema",
+ "schemars",
+ "serde",
+ "serde_json",
+ "store",
+ "store-memory",
+ "thiserror 2.0.21",
+ "tokio",
+ "tools",
+ "url",
+]
+
+[[package]]
 name = "memchr"
 version = "2.8.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2717,6 +2742,7 @@ dependencies = [
  "events",
  "futures-util",
  "harness",
+ "mcp-remote",
  "memory",
  "model",
  "plugin-api",

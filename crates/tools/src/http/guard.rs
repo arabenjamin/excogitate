@@ -9,8 +9,9 @@ use std::sync::Arc;
 
 use ipnet::IpNet;
 use reqwest::dns::{Addrs, Name, Resolve, Resolving};
+use url::{Host, Url};
 
-use super::config::HttpConfigError;
+use super::config::{HttpConfig, HttpConfigError};
 
 /// The address ranges a request may and may not reach.
 #[derive(Debug)]
@@ -81,6 +82,72 @@ impl Resolve for GuardedResolver {
     }
 }
 
+/// The address rules `http_request` follows, for other clients the runtime
+/// runs that must reach only what it may: the same ranges, checked after
+/// DNS on the addresses a connection will use, and on address literals.
+#[derive(Debug, Clone)]
+pub struct AddressGuard {
+    policy: Arc<AddressPolicy>,
+}
+
+impl AddressGuard {
+    /// The guard for `config`'s ranges.
+    ///
+    /// # Errors
+    ///
+    /// [`HttpConfigError::Range`] if a range isn't valid.
+    pub fn new(config: &HttpConfig) -> Result<Self, HttpConfigError> {
+        Ok(Self {
+            policy: Arc::new(AddressPolicy::new(
+                &config.blocked_ranges,
+                &config.allowed_ranges,
+            )?),
+        })
+    }
+
+    /// A client that resolves names through the guard, follows no
+    /// redirect and uses no proxy, with `user_agent`.
+    ///
+    /// # Errors
+    ///
+    /// [`HttpConfigError::Client`] if the client can't be built.
+    pub fn client(&self, user_agent: &str) -> Result<reqwest::Client, HttpConfigError> {
+        reqwest::Client::builder()
+            .redirect(reqwest::redirect::Policy::none())
+            .no_proxy()
+            .dns_resolver(Arc::new(GuardedResolver(Arc::clone(&self.policy))))
+            .user_agent(user_agent)
+            .build()
+            .map_err(|error| HttpConfigError::Client(error.to_string()))
+    }
+
+    /// Why `url` may not be reached, if it may not: not http or https, a
+    /// user name or password in it, or an address literal that's blocked.
+    /// A name is checked when it's resolved.
+    ///
+    /// # Errors
+    ///
+    /// What's wrong with it.
+    pub fn check(&self, url: &Url) -> Result<(), String> {
+        if !matches!(url.scheme(), "http" | "https") {
+            return Err("only http and https are allowed".to_owned());
+        }
+        if !url.username().is_empty() || url.password().is_some() {
+            return Err("a URL may not carry a user name or password".to_owned());
+        }
+        let literal: Option<IpAddr> = match url.host() {
+            Some(Host::Ipv4(address)) => Some(address.into()),
+            Some(Host::Ipv6(address)) => Some(address.into()),
+            Some(Host::Domain(_)) => None,
+            None => return Err("the URL has no host".to_owned()),
+        };
+        if literal.is_some_and(|address| !self.policy.permits(address)) {
+            return Err("that address is blocked".to_owned());
+        }
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -134,6 +201,25 @@ mod tests {
         assert!(policy.permits(ip("127.0.0.1")));
         assert!(policy.permits(ip("::ffff:127.0.0.1")));
         assert!(!policy.permits(ip("127.0.0.2")));
+    }
+
+    #[test]
+    fn the_guard_checks_literals_schemes_and_user_names() {
+        let guard = AddressGuard::new(&HttpConfig::default()).unwrap();
+        let url = |text: &str| Url::parse(text).unwrap();
+        assert_eq!(guard.check(&url("https://example.com/mcp")), Ok(()));
+        assert_eq!(
+            guard.check(&url("http://127.0.0.1:9/mcp")),
+            Err("that address is blocked".to_owned())
+        );
+        assert!(guard.check(&url("ftp://example.com/")).is_err());
+        assert!(guard.check(&url("https://user:pw@example.com/")).is_err());
+        let open = HttpConfig {
+            allowed_ranges: vec!["127.0.0.0/8".to_owned()],
+            ..HttpConfig::default()
+        };
+        let guard = AddressGuard::new(&open).unwrap();
+        assert_eq!(guard.check(&url("http://127.0.0.1:9/mcp")), Ok(()));
     }
 
     #[test]

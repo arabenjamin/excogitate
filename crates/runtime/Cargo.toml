@@ -20,6 +20,7 @@ dispatch = { path = "../dispatch" }
 events = { path = "../events" }
 futures-util = { version = "0.3", default-features = false, features = ["std"] }
 harness = { path = "../harness" }
+mcp-remote = { path = "../mcp-remote" }
 memory = { path = "../memory" }
 model = { path = "../model" }
 plugin-api = { path = "../plugin-api" }

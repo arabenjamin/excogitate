@@ -36,6 +36,23 @@ budget:
 #   # A service on your own network, reachable even though it's private.
 #   allowed_ranges: ["192.0.2.10/32"]
 
+# Remote MCP servers whose tools are offered as the runtime's own, each as
+# <name>_<tool>. Only the tools listed are reachable; see docs/mcp.md.
+# mcp_servers:
+#   - name: docs
+#     url: https://mcp.example.com/mcp
+#     # Its key, from an environment variable, in this header.
+#     header: authorization
+#     prefix: "Bearer "
+#     env: DOCS_MCP_KEY
+#     # It keeps nothing it's sent, so private runs may call it.
+#     no_log: false
+#     tools: [search, fetch_page, save_note]
+#     # The rest count as writes.
+#     read_only: [search, fetch_page]
+#     timeout_seconds: 30
+#     max_result_chars: 50000
+
 # server:
 #   # How many chats and tool calls run at once. Past this, requests get a 503.
 #   max_concurrent_requests: 8

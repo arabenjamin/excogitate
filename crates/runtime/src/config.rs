@@ -1,6 +1,7 @@
 //! The owner's settings. A model can't reach any of them.
 
 use dispatch::Budget;
+use mcp_remote::McpServerConfig;
 use schema::bounded;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -56,8 +57,14 @@ pub struct Config {
     /// The longest one workflow run may take, in seconds.
     #[schemars(range(min = 1, max = 86_400))]
     pub workflow_time_limit_seconds: u32,
-    /// How `http_request` behaves.
+    /// How `http_request` behaves. Its address ranges hold for the remote
+    /// MCP servers too.
     pub http: HttpConfig,
+    /// Remote MCP servers whose tools are offered as the runtime's own,
+    /// each as `<name>_<tool>`. Only the tools each names are reachable.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    #[schemars(length(max = 32))]
+    pub mcp_servers: Vec<McpServerConfig>,
     /// How the HTTP server behaves.
     pub server: ServerConfig,
     /// How Harness² improves agents.
@@ -175,6 +182,7 @@ impl Default for Config {
             workers: 1,
             workflow_time_limit_seconds: 1800,
             http: HttpConfig::default(),
+            mcp_servers: Vec::new(),
             server: ServerConfig::default(),
             harness: HarnessConfig::default(),
             retention: RetentionConfig::default(),

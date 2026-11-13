@@ -289,6 +289,101 @@
       },
       "type": "object"
     },
+    "McpServerConfig": {
+      "additionalProperties": false,
+      "description": "One remote MCP server and the tools taken from it.",
+      "properties": {
+        "allow_insecure": {
+          "default": false,
+          "description": "Allows plain http, such as to a server on the same host.",
+          "type": "boolean"
+        },
+        "env": {
+          "description": "The environment variable holding the key. With `header`.",
+          "maxLength": 128,
+          "minLength": 1,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "header": {
+          "description": "The header its key goes in, such as `authorization` or `x-api-key`.\nWith `env`, or not at all.",
+          "maxLength": 64,
+          "minLength": 1,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "max_result_chars": {
+          "default": 50000,
+          "description": "How much of a result a run sees, in characters; past it the result\nis cut and says so.",
+          "format": "uint",
+          "maximum": 200000,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "name": {
+          "description": "Its name. Each of its tools is offered as `<name>_<tool>`.",
+          "maxLength": 24,
+          "minLength": 1,
+          "pattern": "^[a-z][a-z0-9]{0,23}$",
+          "type": "string"
+        },
+        "no_log": {
+          "default": false,
+          "description": "The server keeps nothing it's sent, so private runs may call it. A\npublic run may call any server.",
+          "type": "boolean"
+        },
+        "prefix": {
+          "description": "Put before the key, such as `Bearer `.",
+          "maxLength": 32,
+          "type": "string"
+        },
+        "read_only": {
+          "description": "Which of `tools` only read. Every other one counts as a write, so a\nprobe never runs it and it spends the run's write budget.",
+          "items": {
+            "maxLength": 128,
+            "minLength": 1,
+            "type": "string"
+          },
+          "maxItems": 128,
+          "type": "array"
+        },
+        "timeout_seconds": {
+          "default": 30,
+          "description": "How long one call may take, in seconds.",
+          "format": "uint32",
+          "maximum": 600,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "tools": {
+          "description": "The tools taken from it, by the names it lists them under. Nothing\nelse it offers is reachable.",
+          "items": {
+            "maxLength": 128,
+            "minLength": 1,
+            "type": "string"
+          },
+          "maxItems": 128,
+          "minItems": 1,
+          "type": "array"
+        },
+        "url": {
+          "description": "Its Streamable HTTP endpoint. https, unless `allow_insecure`.",
+          "maxLength": 2048,
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "url",
+        "tools"
+      ],
+      "type": "object"
+    },
     "Method": {
       "description": "An HTTP method.",
       "oneOf": [
@@ -456,7 +551,7 @@
         "timeout_seconds": 30,
         "user_agent": "runtime"
       },
-      "description": "How `http_request` behaves."
+      "description": "How `http_request` behaves. Its address ranges hold for the remote\nMCP servers too."
     },
     "max_output_tokens": {
       "default": 2048,
@@ -473,6 +568,14 @@
       "maximum": 1000000,
       "minimum": 1,
       "type": "integer"
+    },
+    "mcp_servers": {
+      "description": "Remote MCP servers whose tools are offered as the runtime's own,\neach as `<name>_<tool>`. Only the tools each names are reachable.",
+      "items": {
+        "$ref": "#/$defs/McpServerConfig"
+      },
+      "maxItems": 32,
+      "type": "array"
     },
     "recall_limit": {
       "default": 3,
