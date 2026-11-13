@@ -84,7 +84,8 @@ plugin's prefix, and every record against its type's schema, before
 anything is written. A batch must also fit in one message to the runtime,
 8 MiB for a plugin run as a process, so very large records take smaller
 batches. Records calls don't count against a run's tool calls; `http` and
-`model` calls do.
+`model` calls do. A workflow's tool step allows a plugin's tool one capability
+call unless it sets `capability_calls` (docs/workflows.md).
 
 **Starting work.** `run_workflow` queues a run and returns its job; with an
 idempotency key, the same key starts the workflow once for that plugin,

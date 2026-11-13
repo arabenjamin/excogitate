@@ -1049,3 +1049,75 @@ async fn a_workflow_probe_checks_the_candidate_and_its_inputs() {
         .unwrap_err();
     assert!(wrong.starts_with("the inputs"), "{wrong}");
 }
+
+/// Says how many tool calls its run has left: what a plugin's capability
+/// calls are held to.
+#[derive(Debug)]
+struct CallsLeft;
+
+#[async_trait]
+impl Tool for CallsLeft {
+    fn definition(&self) -> ToolDefinition {
+        ToolDefinition::new(
+            "calls_left".to_owned(),
+            "says how many calls are left".to_owned(),
+            open_object(),
+            open_object(),
+            Effect::Read,
+        )
+    }
+
+    async fn run(&self, _: Value, context: ToolContext) -> Result<ToolOutput, ToolFailure> {
+        Ok(ToolOutput::new(
+            json!({ "count": context.tool_calls_left }),
+            Trust::Untrusted,
+        ))
+    }
+}
+
+#[tokio::test]
+async fn a_tool_step_allows_its_tool_the_capability_calls_it_says() {
+    let log = Arc::new(Recorder::default());
+    let mut harness = harness(vec![], vec![], log).await;
+    let mut registry = ToolRegistry::new();
+    registry.register(Arc::new(CallsLeft)).unwrap();
+    harness.engine.registry = Arc::new(registry);
+    let steps = json!([
+        tool_step("plain", "calls_left", &json!({})),
+        { "type": "tool", "id": "many", "tool": "calls_left", "arguments": {},
+          "capability_calls": 40 },
+        { "type": "tool", "id": "each", "tool": "calls_left", "arguments": {},
+          "capability_calls": 3,
+          "for_each": { "items": "{{inputs.links}}", "max_items": 2 } },
+    ]);
+    let output = "{{steps.plain.result.count}} {{steps.many.result.count}} {{steps.each.result}}";
+    define(
+        &harness,
+        steps,
+        json!({ "inputs": list_inputs(), "output": output }),
+    )
+    .await;
+
+    let run = harness
+        .engine
+        .run("flow", json!({ "links": ["a", "b"] }))
+        .await
+        .unwrap();
+
+    assert_eq!(run.outcome, RunOutcome::Completed, "{run:?}");
+    // The call itself is one; each item of a step gets the step's allowance.
+    assert_eq!(run.output, Some(json!(r#"1 40 [{"count":3},{"count":3}]"#)));
+}
+
+#[tokio::test]
+async fn a_tool_steps_capability_calls_are_bounded() {
+    for calls in [0, 201] {
+        let steps = json!([{ "type": "tool", "id": "a", "tool": "fake", "arguments": {},
+                             "capability_calls": calls }]);
+        let definition = json!({ "inputs": inputs(), "steps": steps });
+        let checked = schema::Validator::for_type::<workflow::Workflow>()
+            .unwrap()
+            .parse::<workflow::Workflow>(definition);
+        assert!(checked.is_err(), "{calls} is out of bounds");
+    }
+}

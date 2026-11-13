@@ -26,6 +26,8 @@ const PURPOSE: &str = "workflow";
 const PROBE_PURPOSE: &str = "harness";
 /// How much of a tool's result a later step can use, in characters.
 const STEP_RESULT_CHARS: usize = 500_000;
+/// The most capability calls one tool step may allow its tool.
+const MAX_CAPABILITY_CALLS: u32 = 200;
 /// The most of its output a run keeps.
 const MAX_OUTPUT_CHARS: usize = 200_000;
 
@@ -589,11 +591,13 @@ impl Engine {
                 id,
                 tool,
                 arguments,
+                capability_calls,
                 ..
             } => {
                 let rendered =
                     render_value(arguments, context).map_err(|error| error.to_string())?;
-                self.run_tool(id, tool, &rendered, left, probe).await
+                let calls = capability_calls.unwrap_or(1).clamp(1, MAX_CAPABILITY_CALLS);
+                self.run_tool(id, tool, &rendered, calls, left, probe).await
             }
             Step::Agent {
                 agent,
@@ -620,14 +624,16 @@ impl Engine {
         id: &str,
         tool: &str,
         arguments: &Value,
+        capability_calls: u32,
         left: Left,
         probe: Option<&Probe>,
     ) -> Result<StepDone, StepFailure> {
-        // One call, made by the harness. No model runs, so the model limits
-        // are as low as a budget can go.
+        // One call, made by the harness, and the calls a plugin's tool makes
+        // through its capabilities, each counted as a tool call. No model
+        // runs, so the model limits are as low as a budget can go.
         let budget = Budget {
             max_rounds: 1,
-            max_tool_calls: 2,
+            max_tool_calls: 1 + capability_calls,
             max_writes: 1,
             max_total_tokens: 1,
             max_usd_micros: left.money,

@@ -76,6 +76,25 @@ pass: text a step returned can contain `{{` and it stays as text.
 A value that's filled in can't be checked until the step runs, so a step's
 arguments go through the tool's schema again then, as every tool call does.
 
+## A plugin's tool in a step
+
+A tool step is one call. A plugin's tool can make more through its
+capabilities (`http`, `model`, `memory`, `jobs`), and each of those counts
+as one of the step's tool calls, so a step allows one unless it says how
+many:
+
+```yaml
+  - type: tool
+    id: read
+    tool: feeds_read
+    arguments: {url: "{{inputs.url}}"}
+    capability_calls: 40    # 1 to 200; 1 if left out
+```
+
+Past it, the plugin's next capability call is refused, and the step fails
+saying the run has no tool calls left. With `for_each`, each item gets the
+step's allowance. Records calls never count.
+
 ## Once per item
 
 A tool or agent step with `for_each` runs once for each item of a list:
