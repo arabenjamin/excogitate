@@ -246,6 +246,13 @@ cmd_link() {
 
 cmd_check() {
   local tree bad=0 dir
+  # Cargo reads every Cargo.toml in a git dependency, so a template one
+  # (Tera, not TOML) printed an error in every build on these crates. The
+  # template's is named Cargo.{{"toml"}}, which kickstart renders.
+  if [ -n "$(git ls-files -- ':(glob)templates/**/Cargo.toml')" ]; then
+    echo "templates/: a file named Cargo.toml; name it Cargo.{{\"toml\"}} (cargo reads it in a git dependency)"
+    bad=1
+  fi
   tree=$(template_tree)
   for dir in plugins/*/ examples/*/; do
     [ -d "$dir" ] || continue
