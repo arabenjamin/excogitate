@@ -13,6 +13,7 @@ mod http;
 mod memory_tool;
 
 pub use http::{
-    Credential, HttpConfig, HttpConfigError, HttpRequestTool, MAX_BODY_CHARS, Method, readable_text,
+    AddressGuard, Credential, HttpConfig, HttpConfigError, HttpRequestTool, MAX_BODY_CHARS, Method,
+    readable_text,
 };
 pub use memory_tool::MemoryTool;

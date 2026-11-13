@@ -1,0 +1,35 @@
+[package]
+name = "mcp-remote"
+description = "Tools from remote MCP servers, offered as the runtime's own."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[dependencies]
+async-trait.workspace = true
+chrono.workspace = true
+dispatch = { path = "../dispatch" }
+plugin-api = { path = "../plugin-api" }
+protocol = { path = "../protocol" }
+reqwest = { version = "0.13", default-features = false, features = ["http2", "rustls"] }
+schema = { path = "../schema" }
+schemars.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+store = { path = "../store" }
+thiserror.workspace = true
+tokio.workspace = true
+tools = { path = "../tools" }
+url = "2.5"
+
+[dev-dependencies]
+axum.workspace = true
+events = { path = "../events" }
+model = { path = "../model" }
+store-memory = { path = "../store-memory" }
+
+[lints]
+workspace = true

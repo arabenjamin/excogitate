@@ -73,6 +73,9 @@ successful call that reports a 404.
 
 ### What it doesn't stop
 
+Remote MCP servers' tools go through the same address guard, with their
+own rules: see [MCP](mcp.md#remote-servers).
+
 **A run that can read private data and reach the web can send that data out,**
 in a URL's query or path, even with only `GET`. Allowing `POST` widens that.
 The defaults (`GET` and `HEAD`, and no keys) bound this, and don't remove it.
