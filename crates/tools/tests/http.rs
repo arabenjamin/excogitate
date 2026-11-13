@@ -106,6 +106,10 @@ fn site() -> Router {
                 format!("{method}:{body}")
             }),
         )
+        .route(
+            "/query",
+            any(|uri: axum::http::Uri| async move { uri.query().unwrap_or("").to_owned() }),
+        )
 }
 
 fn loopback_config() -> HttpConfig {
@@ -126,7 +130,9 @@ fn tool() -> HttpRequestTool {
 fn credential_for(address: SocketAddr) -> Credential {
     Credential {
         host: address.ip().to_string(),
-        header: "x-api-key".to_owned(),
+        header: Some("x-api-key".to_owned()),
+        query: None,
+        methods: Vec::new(),
         prefix: "Key ".to_owned(),
         env: "THE_KEY".to_owned(),
         allow_insecure: true,
@@ -611,4 +617,116 @@ async fn a_plugins_request_meets_the_same_schema_and_rules_as_a_models() {
     let blocked = plugin_api::HttpRequest::get("http://169.254.169.254/latest/meta-data");
     assert!(tool.request_for_plugin(blocked).await.is_err());
     assert_eq!(server.hits(), 0);
+}
+
+/// The loopback and one more loopback address, which counts as another host.
+fn two_host_config() -> HttpConfig {
+    HttpConfig {
+        allowed_ranges: vec!["127.0.0.1/32".to_owned(), "127.0.0.2/32".to_owned()],
+        ..HttpConfig::default()
+    }
+}
+
+#[tokio::test]
+async fn a_method_given_to_one_host_reaches_that_host_only() {
+    let keyed = serve_on("127.0.0.1:0", site()).await;
+    let other = serve_on("127.0.0.2:0", site()).await;
+    let tool = tool_with(&HttpConfig {
+        credentials: vec![Credential {
+            methods: vec![Method::Post],
+            ..credential_for(keyed.address)
+        }],
+        ..two_host_config()
+    });
+    let post = |url: String| json!({ "url": url, "method": "POST", "body": "query" });
+    let got = call(&tool, post(keyed.url("/method"))).await.unwrap().value;
+    assert_eq!(got["body"], "POST:query");
+
+    let error = refused(&tool, post(other.url("/method"))).await;
+    assert!(error.contains("POST isn't allowed"), "{error}");
+    assert_eq!(other.hits(), 0);
+
+    // The model is told where it may POST.
+    let description = tool.definition().description;
+    assert!(
+        description.contains("GET, HEAD; POST to 127.0.0.1 only"),
+        "{description}"
+    );
+}
+
+#[tokio::test]
+async fn a_hosts_method_doesnt_follow_a_redirect_off_it() {
+    let other = serve_on("127.0.0.2:0", site()).await;
+    let target = other.url("/method");
+    let router = Router::new().route(
+        "/out",
+        any(move || {
+            let target = target.clone();
+            async move { Redirect::temporary(&target).into_response() }
+        }),
+    );
+    let keyed = serve_on("127.0.0.1:0", router).await;
+    let tool = tool_with(&HttpConfig {
+        credentials: vec![Credential {
+            methods: vec![Method::Post],
+            ..credential_for(keyed.address)
+        }],
+        ..two_host_config()
+    });
+    let args = json!({ "url": keyed.url("/out"), "method": "POST", "body": "x" });
+    let got = call(&tool, args).await.unwrap().value;
+    assert_eq!(got["status"], 307);
+    assert!(got["redirect_not_followed"].is_string(), "{got}");
+    assert_eq!(other.hits(), 0);
+}
+
+fn query_credential(address: SocketAddr) -> Credential {
+    Credential {
+        header: None,
+        query: Some("api_key".to_owned()),
+        ..credential_for(address)
+    }
+}
+
+#[tokio::test]
+async fn a_query_key_is_added_as_the_request_leaves_and_never_comes_back() {
+    let server = serve_on("127.0.0.1:0", site()).await;
+    let tool = tool_with(&HttpConfig {
+        credentials: vec![query_credential(server.address)],
+        ..loopback_config()
+    });
+    let got = fetch(&tool, &server.url("/query?q=news")).await;
+    assert_eq!(got["body"], "q=news&api_key=[redacted]", "{got}");
+    assert!(!got.to_string().contains(SECRET));
+    assert_eq!(got["url"], server.url("/query?q=news"));
+
+    // Setting the key's parameter itself is refused.
+    let error = refused(&tool, json!({ "url": server.url("/query?api_key=mine") })).await;
+    assert!(error.contains("may not set api_key"), "{error}");
+    assert_eq!(server.hits(), 1);
+}
+
+#[test]
+fn a_credential_names_a_header_or_a_query_parameter_not_both() {
+    let address: SocketAddr = "127.0.0.1:1".parse().unwrap();
+    for credential in [
+        Credential {
+            query: Some("api_key".to_owned()),
+            ..credential_for(address)
+        },
+        Credential {
+            header: None,
+            ..credential_for(address)
+        },
+    ] {
+        let config = HttpConfig {
+            credentials: vec![credential],
+            ..loopback_config()
+        };
+        let error = HttpRequestTool::new(&config, &|_| Some(SECRET.to_owned())).unwrap_err();
+        assert!(
+            matches!(error, HttpConfigError::BadCredential(_)),
+            "{error}"
+        );
+    }
 }

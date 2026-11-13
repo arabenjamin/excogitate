@@ -88,14 +88,34 @@ The owner's, and validated at startup against
 [`schemas/v1/http_config.schema.json`](../schemas/v1/http_config.schema.json).
 
 ```yaml
-allowed_methods: [GET, HEAD]
-allowed_ranges: ["192.0.2.10/32"]   # reachable even though it's blocked
+allowed_methods: [GET, HEAD]          # for every host
+allowed_ranges: ["192.0.2.10/32"]     # reachable even though it's blocked
 credentials:
   - host: api.example.com
     header: authorization
     prefix: "Bearer "
     env: EXAMPLE_API_KEY
+    methods: [POST]                   # POST to this host only
+  - host: search.example.net
+    query: api_key                    # a service that takes its key no other way
+    env: SEARCH_API_KEY
 ```
 
 Leaving out `blocked_ranges` keeps the built-in list. Replacing it removes
 the built-in list, and it can't be empty.
+
+**A method for one host.** `allowed_methods` holds for every host, so
+adding POST there lets a model send to anywhere. A credential's `methods`
+allow more only for its own host: an API that takes only POST is reachable,
+and the model's calls everywhere else stay GET and HEAD. The worst a model
+can do with them is what that API allows with your key, such as spending
+its quota. They don't follow a redirect off the host, since a request
+with a key never does.
+
+**Where the key goes.** A credential names a `header` (with an optional
+`prefix`) or a `query` parameter, one of the two. A query key is added as
+the request leaves, so the address the call keeps and returns never holds
+it; it's scrubbed, as is a header's, from anything a response echoes back;
+and a call that sets that parameter itself is refused. Prefer a header
+where the service takes one: an address can end up in the service's own
+logs.
