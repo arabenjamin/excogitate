@@ -3,6 +3,16 @@
 All notable changes are listed here. The file is generated from the
 Conventional Commits by [git-cliff](https://git-cliff.org) (`cliff.toml`).
 
+## [0.6.1] - 2026-11-12
+
+### Added
+
+- A plugin template, stamped and kept current by script
+
+### Performance
+
+- The Neo4j store searches vectors through its index
+
 ## [0.6.0] - 2026-11-12
 
 ### Changed
