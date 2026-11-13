@@ -37,7 +37,8 @@ scripts/plugin_template.sh new media --description "Watches channels and feeds."
   a later release, brings the template's changes in three-way per file: your
   edits are kept, and a conflict is marked in the file. Your `README.md` is
   never touched.
-- **In this repo** (`new` without `--out`), the plugin is also compiled
+- **In this repo** (`new` without `--out`; `--examples` for the showcase in
+  `examples/`), the plugin is also compiled
   into the app behind a `plugin-<name>` feature, then formatted, linted and
   tested. CI runs `check` (every plugin here is on the current template)
   and `selftest` (the template, rendered with every option and with the

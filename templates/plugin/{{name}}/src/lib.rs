@@ -5,7 +5,7 @@
 {%- if capability in caps %}{% set_global granted = granted | concat(with=capability) %}{% endif -%}
 {%- endfor -%}
 {%- set kind = name | title -%}
-//! {{ description }}
+//! The `{{ name }}` plugin: what it does is its manifest's description.
 //!
 //! The same plugin runs compiled in ([`{{ kind }}Plugin`]) and as its own
 //! process (`src/main.rs`), with one manifest and the same capabilities

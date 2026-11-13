@@ -6,7 +6,8 @@
 #   scripts/plugin_template.sh new <name> --description "..."
 #       [--capabilities records,http,model,memory,jobs,sources]
 #       [--tools a,b] [--records a,b]
-#     Stamp plugins/<name> in this repo, compile it into the app behind a
+#     Stamp plugins/<name> in this repo (or examples/<name> with
+#     --examples, for the showcase), compile it into the app behind a
 #     `plugin-<name>` feature, then format, lint and test it. Leaves
 #     everything unstaged.
 #
@@ -127,7 +128,7 @@ check_answers() { # name description capabilities tools records crates
   for tool in ${tools//,/ }; do
     case "$tool" in run | definition | effect_of) die "a tool can't be named '$tool': the Tool trait has that method" ;; esac
     [ "$(tr ',' '\n' <<<"$tools" | grep -cx "$tool")" = 1 ] || die "tool '$tool' is given twice"
-    ! grep -qx "  - name: ${name}_$tool" plugins/*/plugin.yaml 2>/dev/null ||
+    ! grep -qx "  - name: ${name}_$tool" plugins/*/plugin.yaml examples/*/plugin.yaml 2>/dev/null ||
       die "tool ${name}_$tool already belongs to a plugin"
   done
 }
@@ -145,12 +146,12 @@ after_last() {
   mv "$file.new" "$file"
 }
 
-register() { # name
-  local name=$1 kind
+register() { # name dir
+  local name=$1 dir=$2 kind
   kind="$(tr '[:lower:]' '[:upper:]' <<<"${name:0:1}")${name:1}"
   after_last crates/app/Cargo.toml '^plugin-[a-z0-9]+ = \["dep:plugin-' "plugin-$name = [\"dep:plugin-$name\"]"
-  after_last crates/app/Cargo.toml '^plugin-[a-z0-9]+ = \{ path = "\.\./\.\./plugins/' \
-    "plugin-$name = { path = \"../../plugins/$name\", optional = true }"
+  after_last crates/app/Cargo.toml '^plugin-[a-z0-9]+ = \{ path = "\.\./\.\./(plugins|examples)/' \
+    "plugin-$name = { path = \"../../$dir/$name\", optional = true }"
   after_last crates/app/src/main.rs 'plugins\.push\(Arc::new\(plugin_' \
     "    #[cfg(feature = \"plugin-$name\")]
     plugins.push(Arc::new(plugin_$name::${kind}Plugin));"
@@ -173,13 +174,14 @@ cmd_new() {
       --records) records=$2; shift 2 ;;
       --out) out=$2; shift 2 ;;
       --crates) dep=$2; shift 2 ;;
+      --examples) out=examples; dep=path; shift ;;
       *) die "unknown option $1" ;;
     esac
   done
-  if [ -z "$out" ]; then
+  if [ -z "$out" ] || [ "$out" = examples ]; then
     [ -z "$dep" ] || [ "$dep" = path ] || die "--crates is for --out; in this repo it's path"
     dep=path
-    out=plugins
+    out=${out:-plugins}
   else
     [ "$dep" != path ] || die "--crates path is for this repo's own plugins/"
     [ -n "$dep" ] || dep="v$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml | head -1)"
@@ -193,7 +195,7 @@ cmd_new() {
   record "$out/$name" "$tree" "$SCRATCH/answers.json"
   echo "stamped $out/$name from template ${tree:0:12}"
   if [ "$dep" = path ]; then
-    register "$name"
+    register "$name" "$out"
     cargo fmt --all
     cargo clippy -p "plugin-$name" -p app --all-targets --features "app/plugin-$name" -- -D warnings
     cargo test -p "plugin-$name"
@@ -245,7 +247,8 @@ cmd_link() {
 cmd_check() {
   local tree bad=0 dir
   tree=$(template_tree)
-  for dir in plugins/*/; do
+  for dir in plugins/*/ examples/*/; do
+    [ -d "$dir" ] || continue
     dir=${dir%/}
     # The worked example is written by hand, to show what the template's
     # stubs become; merging the template into it would only conflict.
@@ -284,7 +287,7 @@ cmd_selftest() {
     [ "$caps" != - ] || caps=""
     [ "$tools" != - ] || tools=""
     [ "$records" != - ] || records=""
-    answers_json "$name" "A case the template must render." "$caps" "$tools" "$records" path >"$SCRATCH/$name.json"
+    answers_json "$name" "A case the template must render, for TinyFish or GitHub." "$caps" "$tools" "$records" path >"$SCRATCH/$name.json"
     render "$tree" "$SCRATCH/$name.json" plugins
     packages+=(-p "plugin-$name")
   done

@@ -1,0 +1,34 @@
+[package]
+name = "plugin-search"
+description = "Web search through TinyFish, the starting example of a plugin that calls an outside API."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+# The same plugin as its own process (src/main.rs).
+[[bin]]
+name = "search-service"
+path = "src/main.rs"
+
+[dependencies]
+async-trait.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+plugin-api = { path = "../../crates/plugin-api" }
+
+# The test runs the plugin through the real host and dispatcher.
+[dev-dependencies]
+uuid.workspace = true
+dispatch = { path = "../../crates/dispatch" }
+events = { path = "../../crates/events" }
+model = { path = "../../crates/model" }
+plugin-host = { path = "../../crates/plugin-host" }
+store = { path = "../../crates/store" }
+store-memory = { path = "../../crates/store-memory" }
+
+[lints]
+workspace = true

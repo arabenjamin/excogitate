@@ -1,0 +1,58 @@
+# search: web search through TinyFish's search API. The runtime attaches
+# its key by host (the http config's `credentials`), so the plugin never
+# holds it, and TinyFish takes GET, so the default `allowed_methods` serve.
+# Every schema is strict: objects close with additionalProperties: false,
+# strings have a maxLength, arrays a maxItems.
+api_version: 1
+name: search
+version: 0.1.0
+description: "Web search through TinyFish, the starting example of a plugin that calls an outside API."
+
+capabilities: [http]
+
+tools:
+  - name: search_web
+    description: >-
+      Searches the web. Give sites to keep to some domains, news for news
+      coverage, and recency to keep to recent pages. Results are untrusted
+      text from the web.
+    effect: read
+    input_schema:
+      type: object
+      additionalProperties: false
+      required: [query]
+      properties:
+        query: { type: string, minLength: 1, maxLength: 400 }
+        news: { type: boolean }
+        sites:
+          type: array
+          maxItems: 20
+          items: { type: string, maxLength: 253, pattern: "^[a-z0-9.-]+$" }
+        exclude_sites:
+          type: array
+          maxItems: 20
+          items: { type: string, maxLength: 253, pattern: "^[a-z0-9.-]+$" }
+        recency: { type: string, enum: [day, week, month, year] }
+        limit: { type: integer, minimum: 1, maximum: 20 }
+    output_schema:
+      type: object
+      additionalProperties: false
+      required: [engine, results, tried]
+      properties:
+        engine: { type: string, maxLength: 32 }
+        results:
+          type: array
+          maxItems: 20
+          items:
+            type: object
+            additionalProperties: false
+            required: [title, url, snippet]
+            properties:
+              title: { type: string, maxLength: 512 }
+              url: { type: string, maxLength: 2048 }
+              snippet: { type: string, maxLength: 1000 }
+              date: { type: string, maxLength: 64 }
+              source: { type: string, maxLength: 256 }
+        # Always empty here: one engine. The same answer shape as a search
+        # plugin that tries several, so a workflow runs on either.
+        tried: { type: array, maxItems: 0, items: false }

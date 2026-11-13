@@ -70,6 +70,7 @@ version = "0.6.1"
 dependencies = [
  "plugin-api",
  "plugin-example",
+ "plugin-search",
  "runtime",
  "tokio",
 ]
@@ -2305,6 +2306,24 @@ dependencies = [
  "store",
  "store-memory",
  "thiserror 2.0.21",
+ "tokio",
+ "uuid",
+]
+
+[[package]]
+name = "plugin-search"
+version = "0.6.1"
+dependencies = [
+ "async-trait",
+ "dispatch",
+ "events",
+ "model",
+ "plugin-api",
+ "plugin-host",
+ "serde",
+ "serde_json",
+ "store",
+ "store-memory",
  "tokio",
  "uuid",
 ]
