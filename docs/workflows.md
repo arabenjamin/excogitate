@@ -135,6 +135,11 @@ first.
 refuses a `message` that refers to a step. `context` is labelled as data for the
 model, and the text inside it can't end that label. A `message` can use `inputs`.
 
+**An agent says what its model must be able to do.** `needs:
+[investigative]` sends its calls only to a model marked so in
+`models.yaml` ([models](models.md#asking-for-a-capable-model)). Left out,
+it gets the cheapest that can chat.
+
 **An agent chooses what its memory reads.** `memory: {sources: [lake.notes]}`
 limits the `memory` tool, in that agent's runs, to the sources named; an empty
 list reads none, and left out, it reads every source the plugins offer, so a

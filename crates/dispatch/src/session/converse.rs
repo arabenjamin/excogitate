@@ -82,7 +82,8 @@ impl Session {
                 temperature,
                 response_schema: None,
             };
-            let completion = match self.call_model(gateway, &[], request).await {
+            let needs = self.model_needs().to_vec();
+            let completion = match self.call_model(gateway, &needs, request).await {
                 Ok(completion) => completion,
                 Err(ModelStop::Budget(kind)) => return Ending::budget(kind),
                 Err(ModelStop::Failed(error)) => {

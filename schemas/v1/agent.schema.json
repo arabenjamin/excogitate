@@ -104,6 +104,36 @@
       ],
       "type": "object"
     },
+    "Capability": {
+      "description": "What a model can do. Agents ask for these, never for a model by name.",
+      "oneOf": [
+        {
+          "const": "chat",
+          "description": "Chat completions.",
+          "type": "string"
+        },
+        {
+          "const": "tools",
+          "description": "Tool calls.",
+          "type": "string"
+        },
+        {
+          "const": "json_schema",
+          "description": "The server enforces a JSON Schema on the reply.",
+          "type": "string"
+        },
+        {
+          "const": "embeddings",
+          "description": "Embeddings.",
+          "type": "string"
+        },
+        {
+          "const": "investigative",
+          "description": "Measured able to run a multi-step investigative loop.",
+          "type": "string"
+        }
+      ]
+    },
     "Guardrail": {
       "additionalProperties": false,
       "description": "A rule on one of the agent's tools.",
@@ -269,6 +299,14 @@
         }
       ],
       "description": "What its memory reads. Left out, every source the plugins offer."
+    },
+    "needs": {
+      "description": "What its model must be able to do beyond chat, such as\n`investigative`: only a model marked with each in `models.yaml` is\nchosen for it. Left out, the cheapest that can chat.",
+      "items": {
+        "$ref": "#/$defs/Capability"
+      },
+      "maxItems": 4,
+      "type": "array"
     },
     "skills": {
       "description": "Instructions for some tasks, added when the task matches.",

@@ -3,6 +3,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use dispatch::{Budget, Guardrail, check_guardrails};
+use model::Capability;
 use plugin_api::ToolDefinition;
 use schema::{Validator, bounded, check_strict};
 use schemars::JsonSchema;
@@ -46,6 +47,12 @@ pub struct Agent {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     #[schemars(length(max = 16))]
     pub guardrails: Vec<Guardrail>,
+    /// What its model must be able to do beyond chat, such as
+    /// `investigative`: only a model marked with each in `models.yaml` is
+    /// chosen for it. Left out, the cheapest that can chat.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[schemars(length(max = 4))]
+    pub needs: Vec<Capability>,
 }
 
 /// What an agent's memory reads, beside the store.

@@ -846,6 +846,7 @@ impl Engine {
     ) -> Result<(Session, Option<ChoiceHeld>), dispatch::SessionError> {
         let session = session
             .with_skills(skills)
+            .with_model_needs(agent.needs.clone())
             .with_guardrails(agent.guardrails.clone())?;
         let chosen = self.choose_sources(session.run(), agent);
         Ok((session, chosen))

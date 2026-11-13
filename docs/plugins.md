@@ -72,7 +72,7 @@ nothing.
 |---|---|
 | `records` | The plugin's own records in the store, and no one else's. `put_many` and `link_many` write up to 500 at once as one unit: all of a batch, or none of it if any part is refused. |
 | `http` | HTTP through `http_request` itself, in raw mode: the same address guard, redirect checks, credentials and size limits a model's call gets, and the same argument schema. |
-| `model` | One-shot model calls through the gateway, under the calling run's privacy class and within what's left of its budget. |
+| `model` | One-shot model calls through the gateway, under the calling run's privacy class and within what's left of its budget. The cheapest model answers unless the grant asks for more with `model_needs` (docs/models.md). |
 | `memory` | Notes in the runtime's long-term memory, so its search finds what the plugin brought in. A note is kept under the calling run's privacy class, marked untrusted, and stored by `plugin:<name>`; its embedding is paid from what the run has left. The limits are the `memory` tool's: text up to 100,000 characters, a title up to 256 (the first line when empty), 16 tags. |
 | `jobs` | Starting workflow runs, each its own job, as `POST /api/v1/workflows/{name}/runs` starts them: the workflow must exist and the inputs fit. A run is held to its workflow's own budget, not to what the calling run has left, and is never retried. The plugin reads back only the jobs it started. |
 | `sources` | Offering memory the sources its manifest declares, to search beside its own notes. Nothing is handed to the plugin; see [Sources](#sources). |

@@ -180,6 +180,8 @@ pub struct Session {
     about: Vec<usize>,
     /// Guardrails whose claim the answer made without the call.
     claims_unmet: Vec<String>,
+    /// What every model it calls must be able to do, beyond chat.
+    model_needs: Vec<Capability>,
 }
 
 /// A refusal on its way back to the model.
@@ -244,6 +246,7 @@ impl Session {
             skills: Vec::new(),
             about: Vec::new(),
             claims_unmet: Vec::new(),
+            model_needs: Vec::new(),
         })
     }
 
@@ -278,6 +281,21 @@ impl Session {
     pub fn with_stop(mut self, stop: StopSignal) -> Self {
         self.stop = Some(stop);
         self
+    }
+
+    /// The same session, asking every model it calls for `needs` too: an
+    /// agent that needs a capable model says so, and a model without it is
+    /// never chosen for it.
+    #[must_use]
+    pub fn with_model_needs(mut self, needs: Vec<Capability>) -> Self {
+        self.model_needs = needs;
+        self
+    }
+
+    /// What every model this session calls must be able to do.
+    #[must_use]
+    pub fn model_needs(&self) -> &[Capability] {
+        &self.model_needs
     }
 
     /// The same session, holding the agent's calls to `guardrails`.

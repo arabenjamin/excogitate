@@ -2297,6 +2297,7 @@ dependencies = [
  "async-trait",
  "chrono",
  "dispatch",
+ "model",
  "plugin-api",
  "protocol",
  "schema",
