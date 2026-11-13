@@ -190,7 +190,9 @@ fn result(item: &Value) -> Option<Value> {
     if let Some(date) = text("date", 64) {
         shown.insert("date".to_owned(), date.into());
     }
-    if let Some(source) = text("publisher", 256) {
+    // `site_name` is the publisher's site; `publisher`, when filtered by
+    // domain, is a breadcrumb of the address, so it's only the fallback.
+    if let Some(source) = text("site_name", 256).or_else(|| text("publisher", 256)) {
         shown.insert("source".to_owned(), source.into());
     }
     Some(Value::Object(shown))
@@ -233,7 +235,8 @@ mod tests {
     #[test]
     fn an_answer_maps_to_results_and_a_result_needs_an_address() {
         let body = json!({"results": [
-            {"title": "T", "url": "https://a.org/1", "snippet": "S", "date": "2 days ago", "publisher": "AP"},
+            {"title": "T", "url": "https://a.org/1", "snippet": "S", "date": "2 days ago",
+             "site_name": "apnews.com", "publisher": "apnews.com › world › …"},
             {"title": "no address"},
             {"url": "https://b.org"}
         ]})
@@ -242,7 +245,7 @@ mod tests {
         assert_eq!(results.len(), 2);
         assert_eq!(
             results[0],
-            json!({"title": "T", "url": "https://a.org/1", "snippet": "S", "date": "2 days ago", "source": "AP"})
+            json!({"title": "T", "url": "https://a.org/1", "snippet": "S", "date": "2 days ago", "source": "apnews.com"})
         );
         assert_eq!(results[1]["title"], "https://b.org");
     }
