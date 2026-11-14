@@ -15,7 +15,7 @@ use plugin_host::{
     CapabilityMeter, HostError, PluginHost, PluginSource, PluginsConfig, ProcessConfig, ServiceSpec,
 };
 use store::Store;
-use tools::{HttpConfigError, HttpRequestTool, MemoryTool};
+use tools::{HttpConfigError, HttpRequestTool, JobHistoryTool, MemoryTool};
 use workflow::{DELEGATE_TOOL, Engine, EngineLimits};
 
 use crate::Config;
@@ -304,7 +304,7 @@ impl Runtime {
         Ok(runtime)
     }
 
-    /// The gateway, a registry holding the two bundled tools, and the HTTP
+    /// The gateway, a registry holding the three bundled tools, and the HTTP
     /// tool again, for plugins granted `http`.
     fn bundled(
         store: &Arc<dyn Store>,
@@ -335,6 +335,7 @@ impl Runtime {
         ))?;
         let http = Arc::new(HttpRequestTool::new(&config.http, secret_of)?);
         registry.register(Arc::clone(&http) as Arc<dyn Tool>)?;
+        registry.register(Arc::new(JobHistoryTool::new(Arc::clone(store))))?;
         Ok(Bundled {
             gateway,
             registry,

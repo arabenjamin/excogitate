@@ -107,7 +107,7 @@ async fn it_lists_a_chat_and_the_two_tools_in_forms_clients_accept() {
     .await;
     let tools = replies[0]["result"]["tools"].as_array().unwrap();
     let names: Vec<&str> = tools.iter().map(|t| t["name"].as_str().unwrap()).collect();
-    assert_eq!(names, ["chat", "http_request", "memory"]);
+    assert_eq!(names, ["chat", "http_request", "job_history", "memory"]);
     for tool in tools {
         assert_eq!(tool["inputSchema"]["type"], "object", "{}", tool["name"]);
         assert_eq!(
@@ -368,7 +368,7 @@ async fn the_model_gets_the_owners_prompt_and_only_the_tools() {
         .iter()
         .map(|tool| tool["function"]["name"].as_str().unwrap())
         .collect();
-    assert_eq!(names, ["http_request", "memory"]);
+    assert_eq!(names, ["http_request", "job_history", "memory"]);
     for tool in tools {
         assert_eq!(tool["function"]["parameters"]["allOf"], Value::Null);
     }
