@@ -66,7 +66,7 @@ checksum = "940b3a0ca603d1eade50a4846a2afffd5ef57a9feac2c0e2ec2e14f9ead76000"
 
 [[package]]
 name = "app"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "plugin-api",
  "plugin-example",
@@ -529,7 +529,7 @@ dependencies = [
 
 [[package]]
 name = "chaos-model"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "axum",
  "serde_json",
@@ -829,7 +829,7 @@ dependencies = [
 
 [[package]]
 name = "dispatch"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "async-trait",
  "chaos-model",
@@ -945,7 +945,7 @@ dependencies = [
 
 [[package]]
 name = "events"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "async-trait",
  "chrono",
@@ -1247,7 +1247,7 @@ dependencies = [
 
 [[package]]
 name = "harness"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "async-trait",
  "chaos-model",
@@ -1853,7 +1853,7 @@ checksum = "47e1ffaa40ddd1f3ed91f717a33c8c0ee23fff369e3aa8772b9605cc1d22f4c3"
 
 [[package]]
 name = "mcp-remote"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "async-trait",
  "axum",
@@ -1884,7 +1884,7 @@ checksum = "cf8baf1c55e62ffcace7a9f06f4bd9cd3f0c4beb022d3b367256b91b87513d98"
 
 [[package]]
 name = "memory"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "async-trait",
  "chrono",
@@ -1938,7 +1938,7 @@ dependencies = [
 
 [[package]]
 name = "model"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "async-trait",
  "axum",
@@ -2287,7 +2287,7 @@ checksum = "f6b464fbc74e149a392436b17d523f769e057cb6877f6a5c4618bc6f11800548"
 
 [[package]]
 name = "plugin-api"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "async-trait",
  "chrono",
@@ -2305,7 +2305,7 @@ dependencies = [
 
 [[package]]
 name = "plugin-example"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "async-trait",
  "dispatch",
@@ -2323,7 +2323,7 @@ dependencies = [
 
 [[package]]
 name = "plugin-host"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "async-trait",
  "chrono",
@@ -2345,7 +2345,7 @@ dependencies = [
 
 [[package]]
 name = "plugin-newsbrief"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "async-trait",
  "axum",
@@ -2369,7 +2369,7 @@ dependencies = [
 
 [[package]]
 name = "plugin-search"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "async-trait",
  "dispatch",
@@ -2472,7 +2472,7 @@ dependencies = [
 
 [[package]]
 name = "protocol"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "uuid",
 ]
@@ -2761,7 +2761,7 @@ dependencies = [
 
 [[package]]
 name = "runtime"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "async-trait",
  "axum",
@@ -2971,7 +2971,7 @@ dependencies = [
 
 [[package]]
 name = "schema"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "jsonschema",
  "schemars",
@@ -2983,7 +2983,7 @@ dependencies = [
 
 [[package]]
 name = "schema-gen"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "dispatch",
  "harness",
@@ -3259,7 +3259,7 @@ checksum = "6ce2be8dc25455e1f91df71bfa12ad37d7af1092ae736f3a6cd0e37bc7810596"
 
 [[package]]
 name = "store"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "async-trait",
  "chrono",
@@ -3274,7 +3274,7 @@ dependencies = [
 
 [[package]]
 name = "store-conformance"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "chrono",
  "protocol",
@@ -3285,7 +3285,7 @@ dependencies = [
 
 [[package]]
 name = "store-duckdb"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "async-trait",
  "chrono",
@@ -3304,7 +3304,7 @@ dependencies = [
 
 [[package]]
 name = "store-memory"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "async-trait",
  "chrono",
@@ -3317,7 +3317,7 @@ dependencies = [
 
 [[package]]
 name = "store-neo4j"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "async-trait",
  "chrono",
@@ -3645,7 +3645,7 @@ dependencies = [
 
 [[package]]
 name = "tools"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "async-trait",
  "axum",
@@ -4209,7 +4209,7 @@ checksum = "1ebf944e87a7c253233ad6766e082e3cd714b5d03812acc24c318f549614536e"
 
 [[package]]
 name = "work"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "async-trait",
  "chrono",
@@ -4230,7 +4230,7 @@ dependencies = [
 
 [[package]]
 name = "workflow"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "async-trait",
  "chaos-model",

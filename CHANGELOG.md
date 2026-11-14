@@ -3,6 +3,13 @@
 All notable changes are listed here. The file is generated from the
 Conventional Commits by [git-cliff](https://git-cliff.org) (`cliff.toml`).
 
+## [0.11.0] - 2026-11-14
+
+### Added
+
+- Recent, the notes stored in a time window (breaking)
+- Job_history, what the job queue ran
+
 ## [0.10.0] - 2026-11-13
 
 ### Added
