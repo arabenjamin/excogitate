@@ -61,6 +61,7 @@ Counters end in `_total`.
 | `tool_call_duration_seconds` | `tool` | Histogram, 10 ms to about 11 minutes |
 | `tool_refusals_total` | `tool`, `kind` | Calls refused, by why |
 | `model_calls_total` | `model`, `ok` | Model calls. `model` is `none` when no model answered |
+| `model_failures_total` | `model`, `reason` | Models a call passed over: failed (`rate_limited`, `timeout`, `unreachable`, `server_error`, `refused`, `bad_reply`) or left alone while `cooling` ([models](models.md#a-failing-model-is-left-alone-while-it-cools)) |
 | `model_tokens_total` | `model`, `direction` | Tokens `input` and `output`, as the model counted them or as estimated |
 | `model_call_duration_seconds` | `model` | Histogram, retries and fallbacks included |
 | `capability_calls_total` | `capability`, `ok` | Calls plugins' tools made through a capability |

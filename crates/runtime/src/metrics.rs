@@ -73,6 +73,7 @@ pub struct Metrics {
     tool_seconds: Timings,
     refusals: Counters,
     model_calls: Counters,
+    model_failures: Counters,
     model_tokens: Counters,
     model_seconds: Timings,
     capability_calls: Counters,
@@ -97,6 +98,7 @@ impl Default for Metrics {
             tool_seconds: timings(),
             refusals: Family::default(),
             model_calls: Family::default(),
+            model_failures: Family::default(),
             model_tokens: Family::default(),
             model_seconds: timings(),
             capability_calls: Family::default(),
@@ -184,8 +186,16 @@ impl Metrics {
                 input_tokens,
                 output_tokens,
                 duration_ms,
+                fell_back,
                 ..
             } => {
+                for passed in fell_back {
+                    let name = self.label("model", &passed.model);
+                    let reason = self.label("reason", &passed.reason);
+                    self.model_failures
+                        .get_or_create(&vec![("model", name), ("reason", reason)])
+                        .inc();
+                }
                 let model = self.label("model", model.as_deref().unwrap_or("none"));
                 let ok = if error.is_none() { "true" } else { "false" };
                 self.model_calls
@@ -345,6 +355,12 @@ impl Metrics {
             "model_calls",
             "Model calls, by the model that answered (none when none did)",
             self.model_calls.clone(),
+        );
+        registry.register(
+            "model_failures",
+            "Models a call passed over before one answered, or before it gave up: \
+             failed, or left alone while cooling, by reason",
+            self.model_failures.clone(),
         );
         registry.register(
             "model_tokens",
@@ -517,6 +533,16 @@ mod tests {
                 input_tokens: 120,
                 output_tokens: 30,
                 duration_ms: 1500,
+                fell_back: vec![
+                    dispatch::FellBack {
+                        model: "cloud".to_owned(),
+                        reason: "rate_limited".to_owned(),
+                    },
+                    dispatch::FellBack {
+                        model: "spare".to_owned(),
+                        reason: "cooling".to_owned(),
+                    },
+                ],
             },
             Step::Tool {
                 index: 0,
@@ -546,6 +572,8 @@ mod tests {
             r#"rt_runs_total{agent="agent:digest",outcome="answered"} 1"#,
             r#"rt_run_cost_usd_micros_total{agent="agent:digest"} 7"#,
             r#"rt_model_calls_total{model="local",ok="true"} 1"#,
+            r#"rt_model_failures_total{model="cloud",reason="rate_limited"} 1"#,
+            r#"rt_model_failures_total{model="spare",reason="cooling"} 1"#,
             r#"rt_model_tokens_total{model="local",direction="input"} 120"#,
             r#"rt_model_tokens_total{model="local",direction="output"} 30"#,
             r#"rt_model_call_duration_seconds_count{model="local"} 1"#,

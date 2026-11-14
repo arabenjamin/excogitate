@@ -63,6 +63,11 @@ pub enum Rejection {
     OverDailyCap,
     /// The call is pinned to another model.
     NotPinned,
+    /// It failed or was rate-limited lately, and is left alone until then.
+    Cooling {
+        /// When it may be tried again.
+        until: chrono::DateTime<chrono::Utc>,
+    },
 }
 
 impl fmt::Display for Rejection {
@@ -78,6 +83,11 @@ impl fmt::Display for Rejection {
             Self::OverRunBudget => f.write_str("could cost more than the run has left"),
             Self::OverDailyCap => f.write_str("the provider's daily cap can't cover it"),
             Self::NotPinned => f.write_str("the call is pinned to another model"),
+            Self::Cooling { until } => write!(
+                f,
+                "failed or rate-limited lately, left alone until {}",
+                until.format("%H:%M:%S UTC")
+            ),
         }
     }
 }

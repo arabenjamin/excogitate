@@ -1,9 +1,10 @@
 //! The one way the rest of the runtime calls a model: route, reserve the money,
 //! call, settle, and move to the next model when that could help.
 
+use std::collections::HashMap;
 use std::fmt;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex, PoisonError};
 
 use chrono::{DateTime, Utc};
 
@@ -79,6 +80,8 @@ pub struct Completion {
     pub cost_usd_micros: u64,
     /// The models that failed first.
     pub failed_attempts: Vec<FailedAttempt>,
+    /// The models passed over without a call, because they were cooling.
+    pub cooling: Vec<String>,
 }
 
 /// An answered embeddings call.
@@ -168,11 +171,69 @@ impl Drop for Reservation {
     }
 }
 
+/// Which models are left alone, until when, and whether the server said
+/// so. A model that failed in a way the next call would too
+/// ([`ModelError::cooling_secs`]) is passed over while it cools, so a rate
+/// limit is waited out by using another model, never by asking again in a
+/// loop. A model that said to wait (a 429) isn't asked before its time is
+/// up, even when there's no other. One that failed or was slow is asked
+/// again if nothing else can take the call: one timeout mustn't stop a
+/// one-model setup for a minute.
+#[derive(Debug, Default)]
+struct Cooling(Mutex<HashMap<String, Cooled>>);
+
+#[derive(Debug, Clone, Copy)]
+struct Cooled {
+    until: DateTime<Utc>,
+    /// The server said to slow down.
+    told_to_wait: bool,
+}
+
+impl Cooling {
+    fn of(&self, model: &str, now: DateTime<Utc>) -> Option<Cooled> {
+        let mut held = self.0.lock().unwrap_or_else(PoisonError::into_inner);
+        match held.get(model) {
+            Some(cooled) if cooled.until > now => Some(*cooled),
+            Some(_) => {
+                held.remove(model);
+                None
+            }
+            None => None,
+        }
+    }
+
+    fn start(&self, model: &str, error: &ModelError, now: DateTime<Utc>) {
+        if let Some(secs) = error.cooling_secs() {
+            let until = now + chrono::Duration::seconds(i64::try_from(secs).unwrap_or(i64::MAX));
+            let told_to_wait = matches!(error, ModelError::RateLimited { .. });
+            let mut held = self.0.lock().unwrap_or_else(PoisonError::into_inner);
+            // A later failure never shortens a wait already set, nor
+            // forgets that the server said to wait.
+            let entry = held.entry(model.to_owned()).or_insert(Cooled {
+                until,
+                told_to_wait,
+            });
+            entry.until = entry.until.max(until);
+            entry.told_to_wait |= told_to_wait;
+        }
+    }
+
+    /// A call answered: the model is fine again.
+    fn end(&self, model: &str) {
+        self.0
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .remove(model);
+    }
+}
+
 /// Routes calls to models.
 pub struct Gateway {
     catalog: Catalog,
     client: Arc<dyn ModelClient>,
     ledger: Arc<dyn SpendLedger>,
+    cooling: Cooling,
+    clock: fn() -> DateTime<Utc>,
 }
 
 impl fmt::Debug for Gateway {
@@ -195,7 +256,48 @@ impl Gateway {
             catalog,
             client,
             ledger,
+            cooling: Cooling::default(),
+            clock: Utc::now,
         }
+    }
+
+    /// The candidates to try, in order, and the names of those passed over
+    /// while they cool. Those not cooling go first, and only they when
+    /// there are any. With none, the ones that only failed are tried again;
+    /// with those gone too, every model said to wait, and the call fails at
+    /// once saying until when.
+    fn not_cooling(
+        &self,
+        candidates: Vec<Candidate>,
+    ) -> Result<(Vec<Candidate>, Vec<String>), NoRoute> {
+        let now = (self.clock)();
+        let mut ready = Vec::new();
+        let mut failed_lately = Vec::new();
+        let mut rejected = Vec::new();
+        for candidate in candidates {
+            match self.cooling.of(&candidate.model.name, now) {
+                None => ready.push(candidate),
+                Some(cooled) => {
+                    rejected.push((
+                        candidate.model.name.clone(),
+                        Rejection::Cooling {
+                            until: cooled.until,
+                        },
+                    ));
+                    if !cooled.told_to_wait {
+                        failed_lately.push(candidate);
+                    }
+                }
+            }
+        }
+        if ready.is_empty() && failed_lately.is_empty() {
+            return Err(NoRoute { rejected });
+        }
+        if ready.is_empty() {
+            // Nothing else can take it: ask again rather than fail.
+            return Ok((failed_lately, Vec::new()));
+        }
+        Ok((ready, rejected.into_iter().map(|(name, _)| name).collect()))
     }
 
     /// Reserves the worst case on a priced model. Returns false at the cap.
@@ -281,6 +383,7 @@ impl Gateway {
             open.close();
             match answer {
                 Ok((value, cost_usd_micros)) => {
+                    self.cooling.end(&model_name);
                     self.settle(&candidate, cost_usd_micros, reserved_at).await;
                     return Ok(Answered {
                         value,
@@ -291,6 +394,7 @@ impl Gateway {
                     });
                 }
                 Err(error) => {
+                    self.cooling.start(&model_name, &error, (self.clock)());
                     // A request that may have reached the model may be
                     // billed: charge the least such a call costs.
                     let charged = if error.reached_the_model() {
@@ -359,7 +463,8 @@ impl Gateway {
             largest_input: input,
             output: request.max_output_tokens,
         };
-        let candidates = plan(&self.catalog, &required, policy, estimate)?;
+        let (candidates, cooling) =
+            self.not_cooling(plan(&self.catalog, &required, policy, estimate)?)?;
         let client = &self.client;
         let answered = self
             .first_success(candidates, abandoned, |candidate| async move {
@@ -383,6 +488,7 @@ impl Gateway {
             model: answered.model,
             cost_usd_micros: answered.cost_usd_micros,
             failed_attempts: answered.failed_attempts,
+            cooling,
         })
     }
 
@@ -405,7 +511,12 @@ impl Gateway {
             largest_input: tokens(inputs.iter().map(String::len).max().unwrap_or(0)),
             output: 0,
         };
-        let candidates = plan(&self.catalog, &[Capability::Embeddings], policy, estimate)?;
+        let (candidates, _) = self.not_cooling(plan(
+            &self.catalog,
+            &[Capability::Embeddings],
+            policy,
+            estimate,
+        )?)?;
         let client = &self.client;
         let answered = self
             .first_success(candidates, None, |candidate| async move {
@@ -578,6 +689,110 @@ models:
     }
 
     #[tokio::test]
+    async fn a_rate_limited_model_is_left_alone_while_it_cools() {
+        let client = Arc::new(Scripted::new([
+            Err(ModelError::RateLimited {
+                retry_after_secs: Some(30),
+            }),
+            Ok(text("a")),
+            Ok(text("b")),
+        ]));
+        let gateway = gateway(Arc::clone(&client));
+        gateway.chat(&policy(), &request()).await.unwrap();
+        let second = gateway.chat(&policy(), &request()).await.unwrap();
+        // Straight to the next model: no second try at the cooling one.
+        assert_eq!(second.model, "second");
+        assert_eq!(second.failed_attempts.len(), 0);
+        assert_eq!(client.called(), ["first", "second", "second"]);
+    }
+
+    fn two_hours_on() -> DateTime<Utc> {
+        Utc::now() + chrono::Duration::hours(2)
+    }
+
+    #[tokio::test]
+    async fn with_every_model_told_to_wait_a_call_fails_at_once_and_says_until_when() {
+        let client = Arc::new(Scripted::new([
+            Err(ModelError::RateLimited {
+                retry_after_secs: Some(30),
+            }),
+            Ok(text("later")),
+        ]));
+        let mut gateway = gateway(Arc::clone(&client));
+        // Only `priced` can do this call.
+        assert!(gateway.chat(&priced_policy(), &request()).await.is_err());
+        let error = gateway
+            .chat(&priced_policy(), &request())
+            .await
+            .unwrap_err();
+        let GatewayError::NoRoute(why) = &error else {
+            panic!("{error}");
+        };
+        assert!(
+            matches!(why.rejected.as_slice(), [(name, Rejection::Cooling { .. })] if name == "priced"),
+            "{error}"
+        );
+        assert!(error.to_string().contains("left alone until"), "{error}");
+        assert_eq!(client.called(), ["priced"]);
+
+        // Once its time is up, it's tried again.
+        gateway.clock = two_hours_on;
+        let done = gateway.chat(&priced_policy(), &request()).await.unwrap();
+        assert_eq!(done.model, "priced");
+    }
+
+    #[tokio::test]
+    async fn a_model_that_only_failed_is_asked_again_when_nothing_else_can() {
+        let client = Arc::new(Scripted::new([
+            // Never reached it, so the tiny test cap isn't spent.
+            Err(ModelError::Transport("refused".to_owned())),
+            Ok(text("back")),
+            Ok(text("again")),
+        ]));
+        let gateway = gateway(Arc::clone(&client));
+        // Only `priced` can do this call.
+        assert!(gateway.chat(&priced_policy(), &request()).await.is_err());
+        // It's cooling, but there's no other: one failure mustn't stop it
+        // for a minute.
+        let done = gateway.chat(&priced_policy(), &request()).await.unwrap();
+        assert_eq!(done.model, "priced");
+        assert_eq!(done.cooling.len(), 0);
+        // Its answer ends the cooling.
+        gateway.chat(&priced_policy(), &request()).await.unwrap();
+        assert_eq!(client.called(), ["priced", "priced", "priced"]);
+    }
+
+    #[test]
+    fn what_cools_a_model_and_for_how_long() {
+        let limited = |secs| ModelError::RateLimited {
+            retry_after_secs: secs,
+        };
+        assert_eq!(limited(Some(5)).cooling_secs(), Some(5));
+        assert_eq!(
+            limited(None).cooling_secs(),
+            Some(crate::client::DEFAULT_COOLING_SECS)
+        );
+        // A server's own wait can't keep a model out of use for long.
+        assert_eq!(
+            limited(Some(86_400)).cooling_secs(),
+            Some(crate::client::MAX_COOLING_SECS)
+        );
+        assert!(ModelError::Timeout.cooling_secs().is_some());
+        assert!(
+            ModelError::Transport("refused".to_owned())
+                .cooling_secs()
+                .is_some()
+        );
+        let status = |code| ModelError::Status {
+            code,
+            excerpt: String::new(),
+        };
+        assert!(status(503).cooling_secs().is_some());
+        assert_eq!(status(400).cooling_secs(), None);
+        assert_eq!(ModelError::BadResponse("x".to_owned()).cooling_secs(), None);
+    }
+
+    #[tokio::test]
     async fn a_request_the_server_calls_bad_is_not_retried() {
         let bad = ModelError::Status {
             code: 400,
@@ -680,7 +895,12 @@ models:
         for (error, charged) in [
             (ModelError::Timeout, true),
             (ModelError::BadResponse("no choices".to_owned()), true),
-            (ModelError::RateLimited, false),
+            (
+                ModelError::RateLimited {
+                    retry_after_secs: None,
+                },
+                false,
+            ),
             (ModelError::Transport("refused".to_owned()), false),
         ] {
             let ledger = Arc::new(Settlements::default());
@@ -850,9 +1070,13 @@ models:
 
     #[tokio::test]
     async fn a_failed_call_gives_its_reservation_back() {
-        // A refusal never reached the model, so it's charged nothing.
+        // A refusal never reached the model, so it's charged nothing. (A
+        // 400: it doesn't cool the model, so the next calls reach it.)
         let client = Arc::new(Scripted::new([
-            Err(ModelError::RateLimited),
+            Err(ModelError::Status {
+                code: 400,
+                excerpt: String::new(),
+            }),
             Ok(text("a")),
             Ok(text("b")),
         ]));

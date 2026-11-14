@@ -22,9 +22,12 @@ pub enum ModelError {
     /// It took too long.
     #[error("the model server timed out")]
     Timeout,
-    /// The server said to slow down.
+    /// The server said to slow down, and maybe for how long.
     #[error("the model server is rate limiting")]
-    RateLimited,
+    RateLimited {
+        /// Seconds its `retry-after` said to wait, if it said.
+        retry_after_secs: Option<u64>,
+    },
     /// The server answered with an error.
     #[error("the model server answered {code}: {excerpt}")]
     Status {
@@ -62,7 +65,44 @@ impl ModelError {
     pub const fn reached_the_model(&self) -> bool {
         matches!(self, Self::Timeout | Self::TooLarge | Self::BadResponse(_))
     }
+
+    /// A short name for what went wrong, for a trajectory and a metric.
+    #[must_use]
+    pub const fn kind(&self) -> &'static str {
+        match self {
+            Self::Transport(_) => "unreachable",
+            Self::Timeout => "timeout",
+            Self::RateLimited { .. } => "rate_limited",
+            Self::Status { code, .. } if *code >= 500 => "server_error",
+            Self::Status { .. } => "refused",
+            Self::TooLarge | Self::BadResponse(_) => "bad_reply",
+        }
+    }
+
+    /// How long the model should be left alone after this, if at all: it
+    /// said to slow down, it's failing or slow, or it can't be reached.
+    /// Asking it again at once would only fail the same way. A request it
+    /// refused as bad, or a reply it got wrong, says nothing about the next
+    /// call.
+    #[must_use]
+    pub fn cooling_secs(&self) -> Option<u64> {
+        match self {
+            Self::RateLimited { retry_after_secs } => Some(
+                retry_after_secs
+                    .unwrap_or(DEFAULT_COOLING_SECS)
+                    .clamp(1, MAX_COOLING_SECS),
+            ),
+            Self::Timeout | Self::Transport(_) => Some(DEFAULT_COOLING_SECS),
+            Self::Status { code, .. } if *code >= 500 => Some(DEFAULT_COOLING_SECS),
+            Self::Status { .. } | Self::TooLarge | Self::BadResponse(_) => None,
+        }
+    }
 }
+
+/// How long a model is left alone after failing, unless it said.
+pub const DEFAULT_COOLING_SECS: u64 = 60;
+/// The longest a model's own `retry-after` can keep it out of use.
+pub const MAX_COOLING_SECS: u64 = 900;
 
 /// Talks to a model server. Everything above this is tested against fakes;
 /// [`OpenAiClient`] is the real one.
@@ -123,9 +163,16 @@ impl OpenAiClient {
         }
         let mut response = request.send().await.map_err(map_error)?;
         let status = response.status();
+        // Seconds only: an HTTP date is rare from a model server, and the
+        // default covers it.
+        let retry_after_secs = response
+            .headers()
+            .get(reqwest::header::RETRY_AFTER)
+            .and_then(|value| value.to_str().ok())
+            .and_then(|value| value.trim().parse::<u64>().ok());
         let body = read_bounded(&mut response).await;
         if status == StatusCode::TOO_MANY_REQUESTS {
-            return Err(ModelError::RateLimited);
+            return Err(ModelError::RateLimited { retry_after_secs });
         }
         if !status.is_success() {
             let excerpt = match &body {
@@ -343,6 +390,34 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_rate_limit_says_how_long_to_wait() {
+        let base = serve(Router::new().route(
+            "/v1/chat/completions",
+            post(|| async {
+                (
+                    AxumStatus::TOO_MANY_REQUESTS,
+                    [(axum::http::header::RETRY_AFTER, "42")],
+                    "slow down",
+                )
+                    .into_response()
+            }),
+        ))
+        .await;
+        let error = OpenAiClient::new()
+            .unwrap()
+            .chat(&model_at(&base, false, 5), &request(), 5)
+            .await
+            .unwrap_err();
+        assert_eq!(
+            error,
+            ModelError::RateLimited {
+                retry_after_secs: Some(42)
+            }
+        );
+        assert_eq!(error.cooling_secs(), Some(42));
+    }
+
+    #[tokio::test]
     async fn rate_limits_and_errors_are_told_apart() {
         let client = OpenAiClient::new().unwrap();
         let base = failing(AxumStatus::TOO_MANY_REQUESTS, String::new()).await;
@@ -350,7 +425,12 @@ mod tests {
             .chat(&model_at(&base, false, 5), &request(), 5)
             .await
             .unwrap_err();
-        assert_eq!(error, ModelError::RateLimited);
+        assert_eq!(
+            error,
+            ModelError::RateLimited {
+                retry_after_secs: None
+            }
+        );
         assert!(error.worth_trying_elsewhere());
 
         let base = failing(AxumStatus::BAD_REQUEST, "x".repeat(100_000)).await;
