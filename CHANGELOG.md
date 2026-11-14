@@ -3,6 +3,12 @@
 All notable changes are listed here. The file is generated from the
 Conventional Commits by [git-cliff](https://git-cliff.org) (`cliff.toml`).
 
+## [0.13.1] - 2026-11-14
+
+### Fixed
+
+- Grounding keeps a field the call requires through allOf
+
 ## [0.13.0] - 2026-11-14
 
 ### Added
