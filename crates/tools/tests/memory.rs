@@ -436,3 +436,102 @@ async fn a_run_limited_to_no_sources_reads_none() {
         "the choice ends with its run"
     );
 }
+
+/// A note kept `hours_ago`, by a model's run, in `data_class`.
+async fn kept(memory: &Memory, text: &str, hours_ago: i64, data_class: DataClass) {
+    memory
+        .store(
+            NewNote {
+                title: text.to_owned(),
+                body: text.to_owned(),
+                tags: Vec::new(),
+                source_url: None,
+            },
+            NoteOrigin {
+                data_class,
+                trust: Trust::Untrusted,
+                stored_by: Actor::new("run:x"),
+            },
+            None,
+            Utc::now() - chrono::Duration::hours(hours_ago),
+        )
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
+async fn recent_lists_a_window_the_latest_first_and_counts_it() {
+    let memory = memory();
+    kept(&memory, "kept an hour ago", 1, DataClass::Private).await;
+    kept(&memory, "kept five hours ago", 5, DataClass::Private).await;
+    kept(&memory, "kept public, ten hours ago", 10, DataClass::Public).await;
+    kept(&memory, "kept three days ago", 72, DataClass::Private).await;
+    let tool = MemoryTool::new(memory);
+    assert_eq!(
+        tool.effect_of(&json!({ "operation": "recent", "days": 1 })),
+        Effect::Read
+    );
+
+    let day = call(
+        &tool,
+        json!({ "operation": "recent", "days": 1, "limit": 2 }),
+        private(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(day.value["result"], "recent");
+    assert_eq!(day.value["total"], 3, "{}", day.value);
+    assert_eq!(day.value["has_more"], true);
+    let titles: Vec<&str> = day.value["notes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|note| note["title"].as_str().unwrap())
+        .collect();
+    assert_eq!(titles, ["kept an hour ago", "kept five hours ago"]);
+    // A model's notes are untrusted, and so is a listing of them.
+    assert_eq!(day.trust, Trust::Untrusted);
+
+    // A public run counts only what's public.
+    let public_day = call(&tool, json!({ "operation": "recent", "days": 1 }), public())
+        .await
+        .unwrap();
+    assert_eq!(public_day.value["total"], 1);
+
+    // A date is its start in UTC; `until` isn't included.
+    let today = Utc::now().date_naive();
+    let past = call(
+        &tool,
+        json!({ "operation": "recent", "since": "2000-01-01", "until": today.to_string() }),
+        private(),
+    )
+    .await
+    .unwrap();
+    let older = past.value["notes"].as_array().unwrap();
+    assert!(
+        older
+            .iter()
+            .all(|note| note["stored_at"].as_str().unwrap() < today.to_string().as_str()),
+        "{}",
+        past.value
+    );
+    assert!(
+        older
+            .iter()
+            .any(|note| note["title"] == "kept three days ago")
+    );
+}
+
+#[tokio::test]
+async fn recent_needs_one_window_that_makes_sense() {
+    let tool = MemoryTool::new(memory());
+    for args in [
+        json!({ "operation": "recent" }),
+        json!({ "operation": "recent", "days": 1, "since": "2026-11-01" }),
+        json!({ "operation": "recent", "since": "last tuesday" }),
+        json!({ "operation": "recent", "since": "2026-11-14", "until": "2026-11-13" }),
+    ] {
+        let refused = tool.run(args.clone(), private()).await;
+        assert!(refused.is_err(), "{args}");
+    }
+}

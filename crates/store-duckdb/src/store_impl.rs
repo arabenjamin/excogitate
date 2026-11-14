@@ -11,9 +11,9 @@ use protocol::DataClass;
 use serde_json::Value;
 use store::{
     Chunk, ChunkHit, ClassFilter, Definition, DefinitionKey, DefinitionKind, DefinitionReader,
-    Direction, Job, JobId, JobQueue, JobStatus, Note, NoteId, NoteReader, Page, PageRequest,
-    Record, RecordCatalog, RecordDecls, RecordId, RecordQuery, RecordReader, SpendLog, Store,
-    StoreError, Task, TaskId, TaskQuery, TaskReader, UnitOfWork, WorkingEntry,
+    Direction, Job, JobId, JobQueue, JobStatus, Note, NoteId, NoteReader, NotesStored, Page,
+    PageRequest, Record, RecordCatalog, RecordDecls, RecordId, RecordQuery, RecordReader, SpendLog,
+    Store, StoreError, StoredWindow, Task, TaskId, TaskQuery, TaskReader, UnitOfWork, WorkingEntry,
 };
 use tokio::sync::{Semaphore, mpsc, oneshot};
 
@@ -252,6 +252,38 @@ impl NoteReader for DuckDbStore {
     async fn list_chunks(&self, note_id: NoteId) -> Result<Vec<Chunk>, StoreError> {
         self.read(move |connection| read::chunks_of(connection, &note_id.to_string()))
             .await
+    }
+
+    async fn notes_stored(
+        &self,
+        window: StoredWindow,
+        classes: ClassFilter,
+        page: PageRequest,
+    ) -> Result<NotesStored, StoreError> {
+        let public_only = matches!(classes, ClassFilter::PublicOnly);
+        self.read(move |connection| {
+            let filter = "WHERE stored_at >= ? AND (?::TIMESTAMP IS NULL OR stored_at < ?) \
+                          AND (NOT ? OR data_class = 'public')";
+            let total: i64 = connection
+                .query_row(
+                    &format!("SELECT count(*) FROM notes {filter}"),
+                    params![window.since, window.until, window.until, public_only],
+                    |row| row.get(0),
+                )
+                .map_err(backend)?;
+            let notes = paged(
+                connection,
+                &format!("SELECT {NOTE_COLUMNS} FROM notes {filter} ORDER BY stored_at DESC, id"),
+                params![window.since, window.until, window.until, public_only],
+                page,
+                note_at,
+            )?;
+            Ok(NotesStored {
+                notes,
+                total: u64::try_from(total).unwrap_or_default(),
+            })
+        })
+        .await
     }
 
     async fn search_text(

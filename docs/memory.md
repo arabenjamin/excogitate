@@ -33,6 +33,16 @@ labelled when it comes back into a prompt.
 When vectors aren't available, search uses keywords and `SearchMode` says why.
 A half-blind search must not look like a healthy one.
 
+### By when it was stored
+
+`recent` (and `Memory::recent`) lists the notes stored in a window, the
+latest first, with no query: it reads each note's `stored_at`, so a note
+copied in from elsewhere keeps the time it was first kept if its importer
+set it. The store counts the whole window too, so a listing that's cut says
+by how much. Each store implements it as `NoteReader::notes_stored`, and the
+conformance suite checks the order, the window's open end and the class
+filter on every one.
+
 ### Sources
 
 Plugins can offer memory sources, such as a data lake

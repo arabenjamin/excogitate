@@ -6,8 +6,8 @@ use neo4rs::query;
 use protocol::DataClass;
 use store::{
     Chunk, ChunkHit, ClassFilter, Definition, DefinitionKey, DefinitionKind, DefinitionReader,
-    Note, NoteId, NoteReader, Page, PageRequest, StoreError, Task, TaskId, TaskQuery, TaskReader,
-    WorkingEntry,
+    Note, NoteId, NoteReader, NotesStored, Page, PageRequest, StoreError, StoredWindow, Task,
+    TaskId, TaskQuery, TaskReader, WorkingEntry,
 };
 
 use crate::codec::{
@@ -102,6 +102,44 @@ impl NoteReader for Neo4jStore {
             )
             .await?;
         rows.iter().map(|row| codec::chunk(row, true)).collect()
+    }
+
+    async fn notes_stored(
+        &self,
+        window: StoredWindow,
+        classes: ClassFilter,
+        page: PageRequest,
+    ) -> Result<NotesStored, StoreError> {
+        let filter = format!(
+            "MATCH (n:Note) WHERE n.stored_at >= $since \
+             AND ($until IS NULL OR n.stored_at < $until) AND {}",
+            class_condition(classes)
+        );
+        let total = self
+            .rows(
+                query(&format!("{filter} RETURN count(n) AS total"))
+                    .param("since", codec::at(window.since))
+                    .param("until", codec::maybe_at(window.until)),
+            )
+            .await?;
+        let total: i64 = total
+            .first()
+            .map_or(Ok(0), |row| codec::get(row, "total"))?;
+        let rows = self
+            .rows(
+                query(&format!(
+                    "{filter} RETURN {} ORDER BY n.stored_at DESC, n.id {}",
+                    codec::note_columns(),
+                    page_clause(page)
+                ))
+                .param("since", codec::at(window.since))
+                .param("until", codec::maybe_at(window.until)),
+            )
+            .await?;
+        Ok(NotesStored {
+            notes: page_of(&rows, page, codec::note)?,
+            total: u64::try_from(total).unwrap_or_default(),
+        })
     }
 
     async fn search_text(

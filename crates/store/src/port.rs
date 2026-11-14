@@ -8,8 +8,8 @@ use serde_json::Value;
 
 use crate::{
     Chunk, ChunkHit, ClassFilter, Definition, DefinitionKey, DefinitionKind, Direction, Job, JobId,
-    JobStatus, Note, NoteId, Page, PageRequest, Record, RecordDecls, RecordId, RecordQuery,
-    StoreError, Task, TaskId, TaskQuery, UnitOfWork, WorkingEntry,
+    JobStatus, Note, NoteId, NotesStored, Page, PageRequest, Record, RecordDecls, RecordId,
+    RecordQuery, StoreError, StoredWindow, Task, TaskId, TaskQuery, UnitOfWork, WorkingEntry,
 };
 
 /// Reads notes, and searches their chunks. Fusing the two searches happens
@@ -45,6 +45,20 @@ pub trait NoteReader {
     ///
     /// [`StoreError::Backend`] if the store fails.
     async fn list_chunks(&self, note_id: NoteId) -> Result<Vec<Chunk>, StoreError>;
+
+    /// The notes stored in `window`, the latest first and then by id, with
+    /// how many it holds in all, so a page that's cut says so and by how
+    /// much.
+    ///
+    /// # Errors
+    ///
+    /// [`StoreError::Backend`] if the store fails.
+    async fn notes_stored(
+        &self,
+        window: StoredWindow,
+        classes: ClassFilter,
+        page: PageRequest,
+    ) -> Result<NotesStored, StoreError>;
 
     /// Full-text search, best first. Case doesn't matter, and digits count
     /// (`2026` and `v3` must be findable).

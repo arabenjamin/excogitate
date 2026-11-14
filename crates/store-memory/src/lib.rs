@@ -12,9 +12,9 @@ use serde_json::Value;
 use store::{
     Archive, Chunk, ChunkHit, ChunkId, ClassFilter, Definition, DefinitionKey, DefinitionKind,
     DefinitionReader, Direction, Job, JobId, JobQueue, JobStatus, Lease, Link, Note, NoteId,
-    NoteReader, Page, PageRequest, Record, RecordCatalog, RecordDecls, RecordId, RecordQuery,
-    RecordReader, SpendDay, SpendLog, Store, StoreError, Task, TaskId, TaskQuery, TaskReader,
-    UnitOfWork, WorkingEntry, WriteOp,
+    NoteReader, NotesStored, Page, PageRequest, Record, RecordCatalog, RecordDecls, RecordId,
+    RecordQuery, RecordReader, SpendDay, SpendLog, Store, StoreError, StoredWindow, Task, TaskId,
+    TaskQuery, TaskReader, UnitOfWork, WorkingEntry, WriteOp,
 };
 
 #[derive(Debug, Clone, Default)]
@@ -325,6 +325,32 @@ impl NoteReader for MemoryStore {
             .get(&note_id)
             .cloned()
             .unwrap_or_default())
+    }
+
+    async fn notes_stored(
+        &self,
+        window: StoredWindow,
+        classes: ClassFilter,
+        page: PageRequest,
+    ) -> Result<NotesStored, StoreError> {
+        let mut held: Vec<Note> = self
+            .state()
+            .notes
+            .values()
+            .filter(|note| admits(classes, note) && window.holds(note.provenance.stored_at))
+            .cloned()
+            .collect();
+        held.sort_by(|a, b| {
+            b.provenance
+                .stored_at
+                .cmp(&a.provenance.stored_at)
+                .then_with(|| a.id.cmp(&b.id))
+        });
+        let total = held.len() as u64;
+        Ok(NotesStored {
+            notes: Page::from_sorted(held, page),
+            total,
+        })
     }
 
     async fn search_text(

@@ -64,6 +64,67 @@
       ],
       "type": "object"
     },
+    "RecentNote": {
+      "additionalProperties": false,
+      "description": "One note `recent` lists.",
+      "properties": {
+        "excerpt": {
+          "description": "Its start; `get` reads it whole.",
+          "maxLength": 400,
+          "type": "string"
+        },
+        "id": {
+          "description": "The note.",
+          "format": "uuid",
+          "type": "string"
+        },
+        "source_url": {
+          "description": "The URL it came from.",
+          "maxLength": 2048,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "stored_at": {
+          "description": "When it was stored.",
+          "format": "date-time",
+          "type": "string"
+        },
+        "tags": {
+          "description": "Its tags.",
+          "items": {
+            "maxLength": 64,
+            "type": "string"
+          },
+          "maxItems": 16,
+          "type": "array"
+        },
+        "title": {
+          "description": "Its title.",
+          "maxLength": 256,
+          "type": "string"
+        },
+        "truncated": {
+          "description": "True if the note is longer than `excerpt`.",
+          "type": "boolean"
+        },
+        "trust": {
+          "$ref": "#/$defs/TrustLabel",
+          "description": "Whether it may be treated as instructions."
+        }
+      },
+      "required": [
+        "id",
+        "title",
+        "excerpt",
+        "truncated",
+        "tags",
+        "stored_at",
+        "trust"
+      ],
+      "type": "object"
+    },
     "SkippedSource": {
       "additionalProperties": false,
       "description": "A source left out of the search, and why: it failed, ran out of time,\nor couldn't be searched by this query. One that found nothing isn't\nlisted.",
@@ -384,6 +445,55 @@
         "title",
         "text",
         "truncated"
+      ],
+      "type": "object"
+    },
+    {
+      "additionalProperties": false,
+      "description": "The notes stored in a window, the latest first.",
+      "properties": {
+        "has_more": {
+          "description": "True when more notes are in the window than are listed.",
+          "type": "boolean"
+        },
+        "notes": {
+          "description": "The notes, the latest stored first.",
+          "items": {
+            "$ref": "#/$defs/RecentNote"
+          },
+          "maxItems": 50,
+          "type": "array"
+        },
+        "result": {
+          "const": "recent",
+          "type": "string"
+        },
+        "since": {
+          "description": "The window's start.",
+          "format": "date-time",
+          "type": "string"
+        },
+        "total": {
+          "description": "How many notes the window holds, listed or not.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "until": {
+          "description": "Where it ends, not included; none is up to now.",
+          "format": "date-time",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "result",
+        "since",
+        "total",
+        "has_more",
+        "notes"
       ],
       "type": "object"
     },

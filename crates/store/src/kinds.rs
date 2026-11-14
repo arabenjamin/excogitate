@@ -73,6 +73,35 @@ pub struct ChunkHit {
     pub score: f32,
 }
 
+/// When notes were stored, for [`NoteReader::notes_stored`]: from `since`,
+/// up to but not including `until`, or with no end.
+///
+/// [`NoteReader::notes_stored`]: crate::NoteReader::notes_stored
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct StoredWindow {
+    /// The earliest `stored_at` kept.
+    pub since: DateTime<Utc>,
+    /// The first `stored_at` past the window, if it ends.
+    pub until: Option<DateTime<Utc>>,
+}
+
+impl StoredWindow {
+    /// Whether a note stored at `at` is in it.
+    #[must_use]
+    pub fn holds(&self, at: DateTime<Utc>) -> bool {
+        at >= self.since && self.until.is_none_or(|until| at < until)
+    }
+}
+
+/// A page of the notes a window holds, and how many it holds in all.
+#[derive(Debug, Clone, PartialEq)]
+pub struct NotesStored {
+    /// The notes, the latest stored first, then by id.
+    pub notes: crate::Page<Note>,
+    /// How many notes the window holds, of the classes asked for.
+    pub total: u64,
+}
+
 /// Which privacy classes a search may return.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ClassFilter {
