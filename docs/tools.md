@@ -7,15 +7,24 @@ adversary: its arguments say what it wants, and Excogitate decides where data
 may go, who may see it and how far it can be trusted.
 
 Each call's real effect goes on the receipt. `memory` counts as a read for
-`search` and `get`, and `http_request` for `GET` and `HEAD`. Anything else
+`search`, `recent`, `get` and `open`, and `http_request` for `GET` and `HEAD`. Anything else
 counts against the run's write budget.
 
 ## `memory`
 
-One flat argument object, with an `operation` of `store`, `search`, `get`,
-`update`, `delete` or `open`. The schema states which fields each one needs. A
-search can set `min_similarity` to keep only notes close in meaning, and each
-hit reports its `similarity`.
+One flat argument object, with an `operation` of `store`, `search`, `recent`,
+`get`, `update`, `delete` or `open`. The schema states which fields each one
+needs. A search can set `min_similarity` to keep only notes close in meaning,
+and each hit reports its `similarity`.
+
+`recent` lists the notes stored in a time window, the latest first, for a
+question with no query in it ("what did we keep today?"). The window is
+`days` (the last so many, up to now) or `since`, and `until` ends it, not
+included; `since` and `until` are RFC 3339 times or dates, a date meaning
+its start in UTC. The answer gives the window it used, `total` (how many
+notes it holds, listed or not) and `has_more`, and each note's start as
+`excerpt`, marked `truncated`; `get` reads one whole. It lists 20 unless
+`limit` says otherwise, at most 50.
 
 A search also reads the sources plugins offer. Their items come back under
 `sources`, ranked with the notes, so `score` compares across both; each says

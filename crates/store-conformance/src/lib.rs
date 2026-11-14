@@ -36,6 +36,7 @@ macro_rules! store_conformance {
             deleting_a_note_removes_its_chunks, chunks_list_in_order,
             text_search_keeps_digits, text_search_ignores_case, text_search_with_no_match_is_empty,
             hits_carry_provenance, search_follows_replaced_chunks, public_only_hides_private,
+            notes_list_by_when_they_were_stored,
             vector_search_orders_by_similarity, vector_search_skips_chunks_without_embeddings,
             vector_search_refuses_the_wrong_width, a_wrong_width_embedding_is_refused,
             search_pages_report_more, a_zero_vector_is_handled, an_empty_text_query_is_empty,

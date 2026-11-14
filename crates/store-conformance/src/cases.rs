@@ -304,6 +304,65 @@ pub async fn public_only_hides_private(store: &dyn Store) {
     );
 }
 
+/// The notes a window holds, the latest stored first, with how many in all.
+pub async fn notes_list_by_when_they_were_stored(store: &dyn Store) {
+    let stored = |n: i64, data_class: DataClass| {
+        let mut made = note(&format!("stored at {n} {data_class:?}"));
+        made.provenance = provenance(data_class, Trust::Trusted);
+        made.provenance.stored_at = at(n);
+        made
+    };
+    let early = stored(10, DataClass::Private);
+    let middle = stored(20, DataClass::Private);
+    let public = stored(20, DataClass::Public);
+    let late = stored(30, DataClass::Private);
+    for made in [&early, &middle, &public, &late] {
+        store
+            .apply(note_with_text(made, "some text", None))
+            .await
+            .unwrap();
+    }
+    let window = |since: i64, until: Option<i64>| store::StoredWindow {
+        since: at(since),
+        until: until.map(at),
+    };
+    let open = store
+        .notes_stored(window(20, None), ClassFilter::Any, page(2))
+        .await
+        .unwrap();
+    assert_eq!(open.total, 3);
+    assert!(open.notes.has_more);
+    assert_eq!(open.notes.items.len(), 2);
+    assert_eq!(open.notes.items[0].id, late.id);
+    // A tie on the time goes by id.
+    let tied = middle.id.min(public.id);
+    assert_eq!(open.notes.items[1].id, tied);
+
+    // `until` is left out of the window.
+    let closed = store
+        .notes_stored(window(10, Some(20)), ClassFilter::Any, page(5))
+        .await
+        .unwrap();
+    assert_eq!(closed.total, 1);
+    assert!(!closed.notes.has_more);
+    assert_eq!(closed.notes.items[0].id, early.id);
+    assert_eq!(closed.notes.items[0].provenance.stored_at, at(10));
+
+    let public_only = store
+        .notes_stored(window(0, None), ClassFilter::PublicOnly, page(5))
+        .await
+        .unwrap();
+    assert_eq!(public_only.total, 1);
+    assert_eq!(public_only.notes.items[0].id, public.id);
+
+    let none = store
+        .notes_stored(window(31, None), ClassFilter::Any, page(5))
+        .await
+        .unwrap();
+    assert_eq!(none.total, 0);
+    assert_eq!(none.notes.items.len(), 0);
+}
+
 /// Nearest first.
 pub async fn vector_search_orders_by_similarity(store: &dyn Store) {
     let (near, far) = (note("near"), note("far"));

@@ -4,6 +4,7 @@
       "enum": [
         "store",
         "search",
+        "recent",
         "get",
         "update",
         "delete",
@@ -168,6 +169,16 @@
   ],
   "description": "What the model asks memory to do.",
   "properties": {
+    "days": {
+      "description": "For `recent`: the last this many days, up to now.",
+      "format": "uint32",
+      "maximum": 366,
+      "minimum": 1,
+      "type": [
+        "integer",
+        "null"
+      ]
+    },
     "id": {
       "description": "The note to read, change or delete.",
       "format": "uuid",
@@ -186,7 +197,7 @@
       ]
     },
     "limit": {
-      "description": "How many notes a search returns. The default is 5.",
+      "description": "How many notes a search returns (the default is 5), or `recent`\nlists (the default is 20).",
       "format": "uint32",
       "maximum": 50,
       "minimum": 1,
@@ -213,6 +224,15 @@
       "description": "What to search for.",
       "maxLength": 1024,
       "minLength": 1,
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "since": {
+      "description": "For `recent`, in place of `days`: the window's start, an RFC 3339\ntime or a date (`2026-11-14`, its start in UTC).",
+      "maxLength": 40,
+      "minLength": 10,
       "type": [
         "string",
         "null"
@@ -259,6 +279,15 @@
     "title": {
       "description": "A short title. For `store` it defaults to the first line of the text.",
       "maxLength": 256,
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "until": {
+      "description": "For `recent`: where the window ends, not included, as `since`. No\nend unless given.",
+      "maxLength": 40,
+      "minLength": 10,
       "type": [
         "string",
         "null"

@@ -8,8 +8,8 @@ use protocol::{Actor, DataClass, Trust};
 use schema::bounded;
 use sha2::{Digest, Sha256};
 use store::{
-    Chunk, ChunkHit, ChunkId, ClassFilter, Note, NoteId, Page, PageRequest, Provenance, Store,
-    StoreError, UnitOfWork, WriteOp,
+    Chunk, ChunkHit, ChunkId, ClassFilter, Note, NoteId, NotesStored, Page, PageRequest,
+    Provenance, Store, StoreError, StoredWindow, UnitOfWork, WriteOp,
 };
 
 use crate::{ChunkConfig, EmbedError, EmbedScope, Embedder, Piece, chunk_text};
@@ -472,6 +472,35 @@ impl Memory {
             .get_note(id)
             .await?
             .filter(|note| visible_to(classes, note.provenance.data_class)))
+    }
+
+    /// The notes stored in `window` that `classes` admits, the latest
+    /// first: at most `limit` of them, and how many the window holds, so a
+    /// listing that's cut says by how much. No query: "what did we keep
+    /// today?" has none.
+    ///
+    /// # Errors
+    ///
+    /// [`MemoryError::Invalid`] if the limit is out of range or the window
+    /// ends before it starts; [`MemoryError::Store`] if the store fails.
+    pub async fn recent(
+        &self,
+        window: StoredWindow,
+        classes: ClassFilter,
+        limit: u32,
+    ) -> Result<NotesStored, MemoryError> {
+        if limit == 0 || limit > MAX_SEARCH_LIMIT {
+            return Err(MemoryError::Invalid(format!(
+                "limit must be 1 to {MAX_SEARCH_LIMIT}"
+            )));
+        }
+        if window.until.is_some_and(|until| until <= window.since) {
+            return Err(MemoryError::Invalid(
+                "the window ends before it starts".to_owned(),
+            ));
+        }
+        let page = PageRequest::new(limit, 0)?;
+        Ok(self.store.notes_stored(window, classes, page).await?)
     }
 
     async fn visible(&self, id: NoteId, classes: ClassFilter) -> Result<Note, MemoryError> {

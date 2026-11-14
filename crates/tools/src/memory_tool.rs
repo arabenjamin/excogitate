@@ -5,7 +5,7 @@
 //! fields each operation needs is stated with conditionals in that schema.
 
 use async_trait::async_trait;
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, Duration, NaiveDate, Utc};
 use memory::{
     EmbedScope, Found, ItemHit, LakeSearch, Memory, MemoryError, NewNote, NoteEdit, NoteHit,
     NoteOrigin, SearchMode, SourceChoices, StoredNote,
@@ -17,7 +17,7 @@ use protocol::{Actor, DataClass, Trust};
 use schemars::{JsonSchema, Schema};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
-use store::{ClassFilter, Note, NoteId};
+use store::{ClassFilter, Note, NoteId, StoredWindow};
 use uuid::Uuid;
 
 use crate::clamp::clamped;
@@ -30,10 +30,20 @@ const MAX_TAG: usize = plugin_api::MAX_NOTE_TAG;
 const MAX_URL: usize = plugin_api::MAX_NOTE_URL;
 const MAX_REASON: usize = 512;
 const DEFAULT_LIMIT: u32 = 5;
+/// How many notes `recent` lists unless asked.
+const DEFAULT_RECENT: u32 = 20;
+/// The most days `recent` looks back.
+const MAX_DAYS: u32 = 366;
+/// How much of each note `recent` shows: `get` reads it whole.
+const EXCERPT_CHARS: usize = 400;
+/// The longest `since` or `until`, an RFC 3339 time.
+const MAX_WHEN: usize = 40;
 
 const DESCRIPTION: &str = "Long-term memory. `store` keeps text (needs `text`). \
 `search` finds notes by meaning and keywords (needs `query`), and items in the sources plugins \
-offer, listed under `sources`. `get` reads one note (needs `id`). `open` reads one source item \
+offer, listed under `sources`. `recent` lists the notes stored in a time window, the latest first, \
+with how many there are (needs `days`, the last so many days, or `since`; `until` ends it). \
+`get` reads one note (needs `id`). `open` reads one source item \
 whole (needs `source` and `item`). \
 `update` changes one (needs `id` and at least one of `title`, `text`, `tags`). \
 `delete` forgets one (needs `id`). Notes written by the owner can't be changed or deleted here.";
@@ -43,6 +53,7 @@ whole (needs `source` and `item`). \
 enum Operation {
     Store,
     Search,
+    Recent,
     Get,
     Update,
     Delete,
@@ -114,9 +125,21 @@ struct MemoryArgs {
     /// What to search for.
     #[schemars(length(min = 1, max = 1024))]
     query: Option<String>,
-    /// How many notes a search returns. The default is 5.
+    /// How many notes a search returns (the default is 5), or `recent`
+    /// lists (the default is 20).
     #[schemars(range(min = 1, max = memory::MAX_SEARCH_LIMIT))]
     limit: Option<u32>,
+    /// For `recent`: the last this many days, up to now.
+    #[schemars(range(min = 1, max = MAX_DAYS))]
+    days: Option<u32>,
+    /// For `recent`, in place of `days`: the window's start, an RFC 3339
+    /// time or a date (`2026-11-14`, its start in UTC).
+    #[schemars(length(min = 10, max = MAX_WHEN))]
+    since: Option<String>,
+    /// For `recent`: where the window ends, not included, as `since`. No
+    /// end unless given.
+    #[schemars(length(min = 10, max = MAX_WHEN))]
+    until: Option<String>,
     /// Keep only notes at least this close in meaning, from 0 to 1. A note
     /// found by keyword alone has no similarity, so it's left out.
     #[schemars(range(min = 0.0, max = 1.0))]
@@ -170,6 +193,32 @@ struct Hit {
     score: f32,
     /// How close it is in meaning to the query, if vector search found it.
     similarity: Option<f32>,
+}
+
+/// One note `recent` lists.
+#[derive(Debug, Serialize, JsonSchema)]
+#[schemars(deny_unknown_fields)]
+struct RecentNote {
+    /// The note.
+    id: Uuid,
+    /// Its title.
+    #[schemars(length(max = MAX_TITLE))]
+    title: String,
+    /// Its start; `get` reads it whole.
+    #[schemars(length(max = EXCERPT_CHARS))]
+    excerpt: String,
+    /// True if the note is longer than `excerpt`.
+    truncated: bool,
+    /// Its tags.
+    #[schemars(length(max = MAX_TAGS), inner(length(max = MAX_TAG)))]
+    tags: Vec<String>,
+    /// The URL it came from.
+    #[schemars(length(max = MAX_URL))]
+    source_url: Option<String>,
+    /// When it was stored.
+    stored_at: DateTime<Utc>,
+    /// Whether it may be treated as instructions.
+    trust: TrustLabel,
 }
 
 /// An item a plugin's source holds. Always untrusted.
@@ -300,6 +349,20 @@ enum MemoryResult {
         /// When it last changed, if the source knows.
         updated_at: Option<DateTime<Utc>>,
     },
+    /// The notes stored in a window, the latest first.
+    Recent {
+        /// The window's start.
+        since: DateTime<Utc>,
+        /// Where it ends, not included; none is up to now.
+        until: Option<DateTime<Utc>>,
+        /// How many notes the window holds, listed or not.
+        total: u64,
+        /// True when more notes are in the window than are listed.
+        has_more: bool,
+        /// The notes, the latest stored first.
+        #[schemars(length(max = memory::MAX_SEARCH_LIMIT))]
+        notes: Vec<RecentNote>,
+    },
     /// The note is gone.
     Deleted {
         /// The note.
@@ -358,6 +421,56 @@ fn failure(error: &MemoryError) -> ToolFailure {
 /// What a search or an open answered, with the capability calls the
 /// sources' plugins made for it: they count as the run's tool calls.
 type Read = (MemoryResult, Trust, u64, Vec<CapabilityUse>);
+
+/// A time as `since` or `until` give it: RFC 3339, or a date, its start
+/// in UTC.
+fn when(field: &str, text: &str) -> Result<DateTime<Utc>, ToolFailure> {
+    let text = text.trim();
+    if let Ok(at) = DateTime::parse_from_rfc3339(text) {
+        return Ok(at.with_timezone(&Utc));
+    }
+    NaiveDate::parse_from_str(text, "%Y-%m-%d")
+        .ok()
+        .and_then(|day| day.and_hms_opt(0, 0, 0))
+        .map(|start| start.and_utc())
+        .ok_or_else(|| {
+            ToolFailure::new(format!(
+                "`{field}` must be an RFC 3339 time or a date like 2026-11-14"
+            ))
+        })
+}
+
+/// The window `recent` asks for, as of `now`.
+fn window_of(args: &MemoryArgs, now: DateTime<Utc>) -> Result<StoredWindow, ToolFailure> {
+    let until = args
+        .until
+        .as_deref()
+        .map(|text| when("until", text))
+        .transpose()?;
+    let since = match (args.days, args.since.as_deref()) {
+        (Some(_), Some(_)) => {
+            return Err(ToolFailure::new("give `days` or `since`, not both"));
+        }
+        (Some(days), None) => now - Duration::days(i64::from(days)),
+        (None, Some(text)) => when("since", text)?,
+        (None, None) => return Err(missing("days` or `since")),
+    };
+    Ok(StoredWindow { since, until })
+}
+
+fn recent_note(note: Note) -> RecentNote {
+    let truncated = note.body.chars().count() > EXCERPT_CHARS;
+    RecentNote {
+        id: note.id.as_uuid(),
+        title: clamped(note.title, MAX_TITLE),
+        excerpt: clamped(note.body, EXCERPT_CHARS),
+        truncated,
+        tags: tags_for_output(note.tags),
+        source_url: note.source_url.map(|url| clamped(url, MAX_URL)),
+        stored_at: note.provenance.stored_at,
+        trust: note.provenance.trust.into(),
+    }
+}
 
 fn missing(what: &str) -> ToolFailure {
     ToolFailure::new(format!("this operation needs `{what}`"))
@@ -615,6 +728,44 @@ impl MemoryTool {
         ))
     }
 
+    async fn recent(
+        &self,
+        args: &MemoryArgs,
+        context: ToolContext,
+    ) -> Result<(MemoryResult, Trust, u64), ToolFailure> {
+        let window = window_of(args, Utc::now())?;
+        let found = self
+            .memory
+            .recent(
+                window,
+                classes_for(context.data_class),
+                args.limit.unwrap_or(DEFAULT_RECENT),
+            )
+            .await
+            .map_err(|error| failure(&error))?;
+        let trust = if found
+            .notes
+            .items
+            .iter()
+            .all(|note| note.provenance.trust == Trust::Trusted)
+        {
+            Trust::Trusted
+        } else {
+            Trust::Untrusted
+        };
+        Ok((
+            MemoryResult::Recent {
+                since: window.since,
+                until: window.until,
+                total: found.total,
+                has_more: found.notes.has_more,
+                notes: found.notes.items.into_iter().map(recent_note).collect(),
+            },
+            trust,
+            0,
+        ))
+    }
+
     async fn delete(
         &self,
         id: NoteId,
@@ -641,7 +792,7 @@ impl Tool for MemoryTool {
 
     fn effect_of(&self, arguments: &Value) -> Effect {
         match arguments.get("operation").and_then(Value::as_str) {
-            Some("search" | "get" | "open") => Effect::Read,
+            Some("search" | "recent" | "get" | "open") => Effect::Read,
             _ => Effect::Write,
         }
     }
@@ -662,6 +813,7 @@ impl Tool for MemoryTool {
                 uses = called;
                 (result, trust, cost)
             }
+            Operation::Recent => self.recent(&args, context).await?,
             Operation::Get => self.get(id.ok_or_else(|| missing("id"))?, context).await?,
             Operation::Update => {
                 self.update(id.ok_or_else(|| missing("id"))?, args, context)

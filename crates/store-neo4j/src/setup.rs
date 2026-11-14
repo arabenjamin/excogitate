@@ -23,6 +23,7 @@ pub(crate) const JOBS_LOCK: &str = "jobs";
 const STATEMENTS: &[&str] = &[
     "CREATE CONSTRAINT note_id IF NOT EXISTS FOR (n:Note) REQUIRE n.id IS UNIQUE",
     "CREATE INDEX note_hash IF NOT EXISTS FOR (n:Note) ON (n.content_hash)",
+    "CREATE INDEX note_stored_at IF NOT EXISTS FOR (n:Note) ON (n.stored_at)",
     "CREATE CONSTRAINT chunk_id IF NOT EXISTS FOR (c:Chunk) REQUIRE c.id IS UNIQUE",
     "CREATE FULLTEXT INDEX chunk_terms IF NOT EXISTS FOR (c:Chunk) ON EACH [c.terms] \
      OPTIONS {indexConfig: {`fulltext.analyzer`: 'standard-no-stop-words'}}",

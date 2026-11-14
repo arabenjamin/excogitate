@@ -26,7 +26,7 @@ pub use error::StoreError;
 pub use ids::{ChunkId, JobId, NoteId, RecordId, TaskId};
 pub use kinds::{
     Chunk, ChunkHit, ClassFilter, Definition, DefinitionKey, DefinitionKind, Job, JobStatus, Lease,
-    Note, Provenance, Task, TaskQuery, TaskStatus, WorkingEntry,
+    Note, NotesStored, Provenance, StoredWindow, Task, TaskQuery, TaskStatus, WorkingEntry,
 };
 pub use page::{MAX_PAGE_LIMIT, Page, PageRequest};
 pub use port::{DefinitionReader, JobQueue, NoteReader, RecordReader, SpendLog, Store, TaskReader};
