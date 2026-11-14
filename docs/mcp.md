@@ -25,6 +25,7 @@ refuses the key, that message gets an error and the session carries on.
 | `chat` | Asks Excogitate. It reads URLs and uses its memory, and returns `answer`, `stopped_because` and the full `receipt`. |
 | `memory` | [The memory tool](tools.md), called directly. |
 | `http_request` | [The fetch tool](tools.md), called directly. |
+| `job_history` | [What the job queue ran](tools.md#job_history), the latest first. |
 
 Every call is its own run, with its own budget and receipt, and goes through
 the same [dispatch](dispatch.md) as a model's calls. A client is no more

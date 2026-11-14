@@ -258,7 +258,7 @@ async fn without_a_front_door_a_chat_has_every_tool_but_delegate() {
     let reply = chat(&runtime, "hi").await;
     assert_eq!(reply["answer"], "done", "{reply}");
     let seen = recorded.seen.lock().unwrap().clone();
-    assert_eq!(offered(&seen[0]), ["http_request", "memory"]);
+    assert_eq!(offered(&seen[0]), ["http_request", "job_history", "memory"]);
 }
 
 #[tokio::test(flavor = "multi_thread")]

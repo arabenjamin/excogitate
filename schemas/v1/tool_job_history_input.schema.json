@@ -1,0 +1,42 @@
+{
+  "$defs": {
+    "Status": {
+      "description": "A job's status, as the tool names it.",
+      "enum": [
+        "queued",
+        "running",
+        "succeeded",
+        "dead"
+      ],
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "What the model asks for.",
+  "properties": {
+    "limit": {
+      "description": "How many, the latest first. The default is 10.",
+      "format": "uint32",
+      "maximum": 50,
+      "minimum": 1,
+      "type": [
+        "integer",
+        "null"
+      ]
+    },
+    "status": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/Status"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "Only jobs with this status."
+    }
+  },
+  "title": "JobHistoryArgs",
+  "type": "object"
+}

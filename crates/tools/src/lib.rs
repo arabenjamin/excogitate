@@ -10,10 +10,12 @@
 
 mod clamp;
 mod http;
+mod job_history_tool;
 mod memory_tool;
 
 pub use http::{
     AddressGuard, Credential, HttpConfig, HttpConfigError, HttpRequestTool, MAX_BODY_CHARS, Method,
     readable_text,
 };
+pub use job_history_tool::JobHistoryTool;
 pub use memory_tool::MemoryTool;

@@ -1,0 +1,113 @@
+{
+  "$defs": {
+    "JobRow": {
+      "additionalProperties": false,
+      "description": "One job.",
+      "properties": {
+        "attempts": {
+          "description": "Tries so far.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "finished_at": {
+          "description": "When it finished, if it has.",
+          "format": "date-time",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "id": {
+          "description": "The job.",
+          "format": "uuid",
+          "type": "string"
+        },
+        "kind": {
+          "description": "What kind of job: `workflow`, or another a worker runs.",
+          "maxLength": 128,
+          "type": "string"
+        },
+        "last_error": {
+          "description": "Why it last failed. Never shown to a public run.",
+          "maxLength": 1000,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "max_attempts": {
+          "description": "Tries it may have.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "requested_by": {
+          "description": "Who asked for it: the owner, a schedule, a run.",
+          "maxLength": 128,
+          "type": "string"
+        },
+        "run_at": {
+          "description": "When it ran, or is due to.",
+          "format": "date-time",
+          "type": "string"
+        },
+        "status": {
+          "$ref": "#/$defs/Status",
+          "description": "Where it stands."
+        },
+        "workflow": {
+          "description": "For a workflow run, which workflow.",
+          "maxLength": 128,
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "kind",
+        "status",
+        "requested_by",
+        "run_at",
+        "attempts",
+        "max_attempts"
+      ],
+      "type": "object"
+    },
+    "Status": {
+      "description": "A job's status, as the tool names it.",
+      "enum": [
+        "queued",
+        "running",
+        "succeeded",
+        "dead"
+      ],
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "What the tool found.",
+  "properties": {
+    "has_more": {
+      "description": "True when there are more than are listed.",
+      "type": "boolean"
+    },
+    "jobs": {
+      "description": "The jobs, the latest `run_at` first.",
+      "items": {
+        "$ref": "#/$defs/JobRow"
+      },
+      "maxItems": 50,
+      "type": "array"
+    }
+  },
+  "required": [
+    "jobs",
+    "has_more"
+  ],
+  "title": "JobHistoryResult",
+  "type": "object"
+}

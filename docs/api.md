@@ -36,7 +36,7 @@ Requests are checked against [`schemas/v1`](../schemas/v1).
 ## MCP
 
 `POST /mcp`, one JSON-RPC message per request, answered with JSON. It offers the
-same tools as stdio: [`chat`, `http_request` and `memory`](mcp.md). It keeps no
+same tools as stdio: [`chat`, `http_request`, `memory` and `job_history`](mcp.md). It keeps no
 session and opens no event stream, so `GET` answers 405.
 
 ## The front door

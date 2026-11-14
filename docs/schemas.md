@@ -61,7 +61,7 @@ cargo run -p schema-gen -- --against /tmp/baseline/schemas/v1 --since v0.4.0
 - **The REST API's bodies,** such as `run_request`, `receipt` and
   `api_error`.
 - **Each bundled tool's arguments and result:** `tool_<name>_input` and
-  `tool_<name>_output`, for `http_request`, `memory`, `delegate` and `chat`.
+  `tool_<name>_output`, for `http_request`, `memory`, `job_history`, `delegate` and `chat`.
 - **An export's files:** `export_manifest`, and `export_<kind>` for each
   file's lines. An import accepts what an older export wrote, so they're
   held to the rules for what Excogitate accepts. See

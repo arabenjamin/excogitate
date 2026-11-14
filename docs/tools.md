@@ -1,13 +1,14 @@
 # The bundled tools
 
-Two tools come with Excogitate: `memory`, so a model can keep what it learns,
-and `http_request`, so it has something to learn from. Everything else comes
-from plugins. Both are in `crates/tools`, and both treat the model as an
+Three tools come with Excogitate: `memory`, so a model can keep what it learns,
+`http_request`, so it has something to learn from, and `job_history`, so it
+can say what it has done. Everything else comes from plugins. All three are in
+`crates/tools`, and all three treat the model as an
 adversary: its arguments say what it wants, and Excogitate decides where data
 may go, who may see it and how far it can be trusted.
 
 Each call's real effect goes on the receipt. `memory` counts as a read for
-`search`, `recent`, `get` and `open`, and `http_request` for `GET` and `HEAD`. Anything else
+`search`, `recent`, `get` and `open`, `job_history` always does, and `http_request` for `GET` and `HEAD`. Anything else
 counts against the run's write budget.
 
 ## `memory`
@@ -45,6 +46,17 @@ Items from a source are always untrusted, and a result holding one is too.
 A note the owner wrote can't be changed or deleted through this tool, so a
 prompt injection can't rewrite it. An `update` that changes nothing is a
 failure. How search works is in [memory.md](memory.md).
+
+## `job_history`
+
+What the job queue ran, the latest `run_at` first: each job's id, kind, its
+workflow if it's a workflow run, status (`queued`, `running`, `succeeded` or
+`dead`), who asked for it, when it ran and finished, its attempts, and
+`last_error`. `status` keeps one status, `limit` is how many (10 unless
+given, at most 50), and `has_more` says there are more. It never lists a
+job's inputs or result, which can hold private data; a public run gets no
+`last_error` either, as a plugin's own look at its jobs doesn't. Errors are
+text from tools and pages, so the result is untrusted.
 
 ## `http_request`
 
