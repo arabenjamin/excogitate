@@ -68,7 +68,7 @@ fn runtime(url: &str) -> Runtime {
         Arc::new(MemorySink::new()),
         Catalog::from_yaml(&yaml, |_| None).unwrap(),
         Config {
-            front_door: Some("door".to_owned()),
+            front_door: Some("door".into()),
             recall_limit: 0,
             ..Config::default()
         },

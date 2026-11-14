@@ -241,7 +241,7 @@ mod tests {
             Arc::new(events::MemorySink::new()),
             model::Catalog::from_yaml(&yaml, |_| None).unwrap(),
             crate::Config {
-                front_door: Some("door".to_owned()),
+                front_door: Some("door".into()),
                 ..crate::Config::default()
             },
             &|_| None,

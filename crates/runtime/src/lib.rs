@@ -19,6 +19,7 @@ mod ledger;
 mod mcp;
 mod metrics;
 mod retention;
+mod route;
 mod run;
 mod schemas;
 
@@ -28,7 +29,10 @@ pub use archive::{
 };
 pub use assemble::{Plugins, Runtime, RuntimeError};
 pub use cli::{Program, main};
-pub use config::{Config, ConfigError, HarnessConfig, RetentionConfig, ServerConfig};
+pub use config::{
+    Config, ConfigError, FrontDoor, HarnessConfig, OnlyWhenAsked, RetentionConfig, Route,
+    ServerConfig,
+};
 pub use connect::relay;
 pub use harness::{PickArgs, Picked};
 pub use http::{

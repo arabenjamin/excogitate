@@ -119,6 +119,35 @@ fn step_text(step: &Step) -> String {
             let went = if *ok { "worked" } else { "failed" };
             format!("  the tool's {capability} call {went}: {}", cut(what))
         }
+        Step::Choice {
+            stage,
+            picked,
+            of,
+            profile,
+        } => {
+            let under = profile
+                .as_deref()
+                .map(|profile| format!(" in {profile}"))
+                .unwrap_or_default();
+            format!(
+                "chose {picked} as the {stage}{under}, of: {}",
+                of.join(", ")
+            )
+        }
+        Step::Arguments {
+            tool,
+            kept,
+            dropped,
+            refilled,
+        } => {
+            let again = if *refilled { " again" } else { "" };
+            format!(
+                "filled {tool}'s arguments{again}: {}; dropped: {}",
+                cut(kept),
+                cut(dropped)
+            )
+        }
+        Step::Rule { rule, detail } => format!("rule {rule}: {}", cut(detail)),
         Step::Ended {
             outcome,
             budget_hit,
@@ -148,7 +177,12 @@ impl Rendered {
                 .map(|timed| {
                     matches!(
                         timed.step,
-                        Step::Model { .. } | Step::Tool { .. } | Step::Ended { .. }
+                        Step::Model { .. }
+                            | Step::Tool { .. }
+                            | Step::Choice { .. }
+                            | Step::Arguments { .. }
+                            | Step::Rule { .. }
+                            | Step::Ended { .. }
                     )
                 })
                 .collect(),

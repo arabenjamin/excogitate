@@ -36,7 +36,7 @@ const MAX_REASON: usize = 2048;
 const CHAT_DESCRIPTION: &str = "Ask the assistant something. It can read URLs and use its long-term \
 memory, and it returns its answer with a receipt of what actually ran.";
 
-fn setup_failed(error: &SessionError) -> ToolFailure {
+pub(crate) fn setup_failed(error: &SessionError) -> ToolFailure {
     ToolFailure::new(schema::bounded(&error.to_string()))
 }
 
@@ -73,7 +73,7 @@ fn session_for(
     )
 }
 
-fn session_with(
+pub(crate) fn session_with(
     runtime: &Runtime,
     offered: Vec<String>,
     budget: Budget,
@@ -259,6 +259,9 @@ impl Runtime {
         input: ChatInput,
         purpose: &str,
     ) -> Result<ChatResult, ToolFailure> {
+        if let Some(route) = self.config.route() {
+            return self.routed(route, input, purpose).await;
+        }
         let ChatInput {
             extra_system,
             history,
@@ -268,28 +271,29 @@ impl Runtime {
             time_cap_ms,
         } = input;
         // `_chosen` holds the front door's choice of sources for the chat.
-        let (mut session, instructions, _chosen) = if let Some(name) = &self.config.front_door {
-            self.front_door(name, purpose, time_cap_ms, &question)
-                .await?
-        } else {
-            // Without a front door there's no roster, so nothing to delegate to.
-            let offered: Vec<String> = self
-                .registry
-                .definitions()
-                .into_iter()
-                .map(|definition| definition.name)
-                .filter(|name| name != DELEGATE_TOOL)
-                .collect();
-            let subject = chat_subject(&self.config, &offered);
-            let session = session_for(
-                self,
-                offered,
-                purpose,
-                self.config.max_result_chars,
-                subject,
-            )?;
-            (session, self.config.system_prompt.clone(), None)
-        };
+        let (mut session, instructions, _chosen) =
+            if let Some(name) = self.config.front_door_agent() {
+                self.front_door(name, purpose, time_cap_ms, &question)
+                    .await?
+            } else {
+                // Without a front door there's no roster, so nothing to delegate to.
+                let offered: Vec<String> = self
+                    .registry
+                    .definitions()
+                    .into_iter()
+                    .map(|definition| definition.name)
+                    .filter(|name| name != DELEGATE_TOOL)
+                    .collect();
+                let subject = chat_subject(&self.config, &offered);
+                let session = session_for(
+                    self,
+                    offered,
+                    purpose,
+                    self.config.max_result_chars,
+                    subject,
+                )?;
+                (session, self.config.system_prompt.clone(), None)
+            };
         let system = match extra_system {
             Some(extra) => format!("{instructions}\n\n{extra}"),
             None => instructions,

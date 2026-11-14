@@ -90,7 +90,7 @@ async fn runtime(grant: &str, door_needs: &str) -> (Runtime, ChaosServer) {
     );
     let mut config = Config {
         recall_limit: 0,
-        front_door: Some("door".to_owned()),
+        front_door: Some("door".into()),
         ..Config::default()
     };
     config.budget.max_usd_micros = 100_000;

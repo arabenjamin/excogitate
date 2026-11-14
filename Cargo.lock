@@ -2780,6 +2780,7 @@ dependencies = [
  "prometheus-client",
  "proptest",
  "protocol",
+ "regex",
  "reqwest",
  "schema",
  "schemars",

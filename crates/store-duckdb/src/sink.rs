@@ -23,6 +23,7 @@ const fn kind_name(kind: EventKind) -> &'static str {
         EventKind::Message => "message",
         EventKind::ModelCall => "model_call",
         EventKind::ToolCall => "tool_call",
+        EventKind::Decision => "decision",
         EventKind::RunEnded => "run_ended",
     }
 }
@@ -33,6 +34,7 @@ fn kind_from(name: &str) -> Result<EventKind, EventError> {
         "message" => Ok(EventKind::Message),
         "model_call" => Ok(EventKind::ModelCall),
         "tool_call" => Ok(EventKind::ToolCall),
+        "decision" => Ok(EventKind::Decision),
         "run_ended" => Ok(EventKind::RunEnded),
         other => Err(EventError(format!("unknown event kind {other}"))),
     }

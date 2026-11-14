@@ -570,6 +570,113 @@
         },
         {
           "additionalProperties": false,
+          "description": "The routed front door chose a profile, a tool, or whether to make\nanother call.",
+          "properties": {
+            "of": {
+              "description": "The options it was offered.",
+              "items": {
+                "maxLength": 128,
+                "type": "string"
+              },
+              "maxItems": 64,
+              "type": "array"
+            },
+            "picked": {
+              "description": "What was chosen, or `invalid` when the reply named none of the\noptions.",
+              "maxLength": 128,
+              "type": "string"
+            },
+            "profile": {
+              "description": "The profile it chose under, once one is chosen.",
+              "maxLength": 128,
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "stage": {
+              "description": "What was chosen: `profile`, `tool` or `next`.",
+              "maxLength": 16,
+              "type": "string"
+            },
+            "type": {
+              "const": "choice",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "stage",
+            "picked",
+            "of"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "The routed front door filled a tool's arguments, and what code\ndropped from them.",
+          "properties": {
+            "dropped": {
+              "description": "What was dropped as said by nothing, as JSON; `{}` for nothing.",
+              "maxLength": 4000,
+              "type": "string"
+            },
+            "kept": {
+              "description": "The arguments kept, as JSON, cut if long.",
+              "maxLength": 4000,
+              "type": "string"
+            },
+            "refilled": {
+              "description": "True when they were filled again, after the first try repeated a\ncall already made.",
+              "type": "boolean"
+            },
+            "tool": {
+              "description": "The tool.",
+              "maxLength": 64,
+              "type": "string"
+            },
+            "type": {
+              "const": "arguments",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "tool",
+            "kept",
+            "dropped",
+            "refilled"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "A rule in code changed the routed front door's course.",
+          "properties": {
+            "detail": {
+              "description": "What it did.",
+              "maxLength": 500,
+              "type": "string"
+            },
+            "rule": {
+              "description": "Which: `stored_first`, `no_repeat`, `max_calls`, `invalid_choice`.",
+              "maxLength": 32,
+              "type": "string"
+            },
+            "type": {
+              "const": "rule",
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "rule",
+            "detail"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
           "description": "The run ended.",
           "properties": {
             "budget_hit": {

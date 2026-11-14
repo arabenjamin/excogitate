@@ -1399,6 +1399,9 @@ async fn a_harness_search_before_the_first_round_comes_after_the_task() {
             crate::Step::Model { .. } => "model".to_owned(),
             crate::Step::Ended { .. } => "ended".to_owned(),
             crate::Step::Capability { .. } => "capability".to_owned(),
+            crate::Step::Choice { .. }
+            | crate::Step::Arguments { .. }
+            | crate::Step::Rule { .. } => "decision".to_owned(),
         })
         .collect();
     // Each message once, and the search after the task it was for.

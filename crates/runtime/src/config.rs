@@ -27,13 +27,15 @@ pub struct Config {
     /// an agent.
     #[schemars(length(min = 1, max = 16_000))]
     pub system_prompt: String,
-    /// The agent that answers chats. Its instructions and its tools replace
-    /// `system_prompt` and the full tool list, and if it has `delegate`, the
-    /// agents it can hand work to are listed in its instructions. Without
-    /// it, a chat is offered every tool.
+    /// What answers chats. A route ([`Route`]): each turn goes to one
+    /// profile, one tool at a time, and a writer answers from what was
+    /// found. Or, until the route replaces it, an agent's name: its
+    /// instructions and tools replace `system_prompt` and the full tool
+    /// list, and if it has `delegate`, the agents it can hand work to are
+    /// listed in its instructions. Without either, a chat is offered every
+    /// tool.
     #[serde(skip_serializing_if = "Option::is_none")]
-    #[schemars(length(min = 1, max = 64))]
-    pub front_door: Option<String>,
+    pub front_door: Option<FrontDoor>,
     /// The longest each of the model's replies may be.
     #[schemars(range(min = 1, max = 1_000_000))]
     pub max_output_tokens: u32,
@@ -195,6 +197,107 @@ impl Default for Config {
     }
 }
 
+/// What answers chats.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(untagged)]
+pub enum FrontDoor {
+    /// An agent, by name.
+    Agent(#[schemars(length(min = 1, max = 64))] String),
+    /// A route among profiles.
+    Route(Route),
+}
+
+impl From<&str> for FrontDoor {
+    fn from(agent: &str) -> Self {
+        Self::Agent(agent.to_owned())
+    }
+}
+
+impl Config {
+    /// The agent that answers chats, when one does.
+    #[must_use]
+    pub fn front_door_agent(&self) -> Option<&str> {
+        match &self.front_door {
+            Some(FrontDoor::Agent(name)) => Some(name),
+            _ => None,
+        }
+    }
+
+    /// The route that answers chats, when one does.
+    #[must_use]
+    pub const fn route(&self) -> Option<&Route> {
+        match &self.front_door {
+            Some(FrontDoor::Route(route)) => Some(route),
+            _ => None,
+        }
+    }
+}
+
+/// The routed front door: a line of workers. A turn goes to one profile,
+/// chosen among `profiles` by their descriptions; within it, to one tool at
+/// a time, its arguments filled to the tool's schema and checked in code;
+/// then `writer` answers from what the tools found
+/// (docs/workflows.md#the-routed-front-door).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct Route {
+    /// The profiles, agents by name: each one's `description` is what the
+    /// choice reads, its tools (one to six) are what it may call, and its
+    /// instructions and skills are what filling the arguments is told.
+    #[schemars(length(min = 1, max = 24), inner(length(min = 1, max = 64)))]
+    pub profiles: Vec<String>,
+    /// The agent that writes the answer, from the results alone. It has no
+    /// tools; its `role` picks its models.
+    #[schemars(length(min = 1, max = 64))]
+    pub writer: String,
+    /// Whether a turn may be answered without looking anything up, such as
+    /// a greeting.
+    #[serde(default = "small_talk_default")]
+    pub small_talk: bool,
+    /// The most tool calls one turn makes.
+    #[serde(default = "max_calls_default")]
+    #[schemars(range(min = 1, max = 6))]
+    pub max_calls: u32,
+    /// The role in `models.yaml` that makes the choices. Left out, the
+    /// cheapest model that can chat.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(length(min = 1, max = 32))]
+    pub choice_role: Option<String>,
+    /// The role that fills a tool's arguments. Left out, as `choice_role`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(length(min = 1, max = 32))]
+    pub arguments_role: Option<String>,
+    /// Profiles taken only when the turn asks for what they do, such as the
+    /// web: a turn that doesn't goes to `otherwise`, so what's stored is
+    /// read first.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[schemars(length(max = 8))]
+    pub only_when_asked: Vec<OnlyWhenAsked>,
+}
+
+const fn small_talk_default() -> bool {
+    true
+}
+
+const fn max_calls_default() -> u32 {
+    3
+}
+
+/// A profile taken only when the turn asks for it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct OnlyWhenAsked {
+    /// The profile.
+    #[schemars(length(min = 1, max = 64))]
+    pub profile: String,
+    /// What asking for it looks like: a pattern on the turn, case ignored.
+    #[schemars(length(min = 1, max = 1000))]
+    pub asked: String,
+    /// Where a turn that doesn't ask goes instead.
+    #[schemars(length(min = 1, max = 64))]
+    pub otherwise: String,
+}
+
 /// The configuration can't be used.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 #[non_exhaustive]
@@ -239,6 +342,21 @@ mod tests {
             .unwrap()
             .check(&raw)
             .unwrap();
+    }
+
+    #[test]
+    fn front_door_names_an_agent_or_gives_a_route() {
+        let agent = Config::from_yaml("front_door: door\n").unwrap();
+        assert_eq!(agent.front_door_agent(), Some("door"));
+        assert_eq!(agent.route(), None);
+        let routed =
+            Config::from_yaml("front_door:\n  profiles: [notes]\n  writer: writer\n").unwrap();
+        let route = routed.route().unwrap();
+        assert_eq!(route.profiles, ["notes"]);
+        assert_eq!((route.max_calls, route.small_talk), (3, true));
+        assert_eq!(routed.front_door_agent(), None);
+        let error = Config::from_yaml("front_door:\n  profiles: [notes]\n").unwrap_err();
+        assert!(matches!(error, ConfigError::Invalid(_)), "{error}");
     }
 
     #[test]

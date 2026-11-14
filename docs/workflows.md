@@ -279,6 +279,64 @@ The front door's runs are the agent's, so Harness² improves it like any other
 agent. `definitions/agents/front-door.yaml.example` and
 `researcher.yaml.example` are a pair to start from.
 
+## The routed front door
+
+`front_door` can instead give a route: a line of workers, where each step is
+one small choice held to a closed set or to a schema and checked in code,
+rather than one model holding every tool.
+
+```yaml
+front_door:
+  profiles: [notes, jobs, web]   # agents; one to 24
+  writer: writer                 # an agent with no tools
+  max_calls: 3                   # tool calls per turn, 1 to 6
+  choice_role: choice            # roles in models.yaml; optional
+  arguments_role: arguments
+  only_when_asked:
+    - {profile: web, asked: '\b(web|online|latest)\b', otherwise: notes}
+```
+
+A turn goes:
+
+1. **Profile.** A model picks one of the profiles by their `description`, or
+   `small_talk` (unless `small_talk: false`), from a closed list. A reply
+   that names none of them is recorded as `invalid` and the turn looks
+   nothing up.
+2. **Stored first.** A profile in `only_when_asked` is taken only when the
+   turn matches its pattern (case ignored); otherwise the turn goes to
+   `otherwise`, so what's stored is read before the web.
+3. **Tool.** A profile with one tool skips this. Otherwise a model picks one
+   of its tools by their descriptions.
+4. **Arguments.** A model fills the tool's input schema, told the profile's
+   instructions and skills, the question and the results so far. Then code
+   grounds them: an optional string that isn't an enum value and appears in
+   neither the question nor an earlier result is dropped, and so is any
+   such item of a list of strings. A required field stays; the tool says if
+   it's wrong. Arguments the same as a call already made are asked for once
+   more, told what already ran; the same again ends the profile.
+5. **Dispatch.** The call goes through dispatch like any other: the same
+   checks, budget, trust labels and receipt.
+6. **Next.** A model sees each result, cut to 1,500 characters, and picks
+   `done` or another of the profile's tools, until `max_calls`.
+7. **Writer.** The writer agent answers from the question, the earlier turns
+   and the results alone, with no tools, on its own `role` and `needs`. A
+   turn that looked nothing up says so.
+
+No step is offered tools. Each choice uses the same pinned decision prompt,
+and its reply must be one of the names. The turn is one run, `chat`, and its
+trajectory records every choice (`choice`, with what was offered),
+arguments kept and dropped (`arguments`), and each rule that fired
+(`rule`: `invalid_choice`, `stored_first`, `no_repeat`, `max_calls`), so a
+review sees why it went where it went. Its harness id covers the route,
+each profile's agent and the writer, so changing any of them is a new
+harness.
+
+The route is checked when definitions load, and the server doesn't start
+if it's wrong: each profile is an agent with a description and one to six
+tools, none of them `delegate` and no guardrails, which a routed turn
+doesn't run yet; the writer has no tools; `only_when_asked` names only its
+profiles and its patterns compile; and the roles are defined.
+
 ## A run
 
 Steps run in order. Each is its own dispatch session, so it has its own budget

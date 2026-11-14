@@ -179,7 +179,10 @@ impl Metrics {
         };
         match step {
             Step::Started { agent, .. } => self.started(event.run, &agent),
-            Step::Message { .. } => {}
+            Step::Message { .. }
+            | Step::Choice { .. }
+            | Step::Arguments { .. }
+            | Step::Rule { .. } => {}
             Step::Model {
                 model,
                 error,

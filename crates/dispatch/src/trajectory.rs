@@ -199,6 +199,49 @@ pub enum Step {
         /// How long it took.
         duration_ms: u64,
     },
+    /// The routed front door chose a profile, a tool, or whether to make
+    /// another call.
+    Choice {
+        /// What was chosen: `profile`, `tool` or `next`.
+        #[schemars(length(max = 16))]
+        stage: String,
+        /// What was chosen, or `invalid` when the reply named none of the
+        /// options.
+        #[schemars(length(max = 128))]
+        picked: String,
+        /// The options it was offered.
+        #[schemars(length(max = 64), inner(length(max = 128)))]
+        of: Vec<String>,
+        /// The profile it chose under, once one is chosen.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[schemars(length(max = 128))]
+        profile: Option<String>,
+    },
+    /// The routed front door filled a tool's arguments, and what code
+    /// dropped from them.
+    Arguments {
+        /// The tool.
+        #[schemars(length(max = 64))]
+        tool: String,
+        /// The arguments kept, as JSON, cut if long.
+        #[schemars(length(max = 4000))]
+        kept: String,
+        /// What was dropped as said by nothing, as JSON; `{}` for nothing.
+        #[schemars(length(max = 4000))]
+        dropped: String,
+        /// True when they were filled again, after the first try repeated a
+        /// call already made.
+        refilled: bool,
+    },
+    /// A rule in code changed the routed front door's course.
+    Rule {
+        /// Which: `stored_first`, `no_repeat`, `max_calls`, `invalid_choice`.
+        #[schemars(length(max = 32))]
+        rule: String,
+        /// What it did.
+        #[schemars(length(max = 500))]
+        detail: String,
+    },
     /// The run ended.
     Ended {
         /// How.
@@ -236,6 +279,7 @@ impl Step {
             Self::Message { .. } => EventKind::Message,
             Self::Model { .. } => EventKind::ModelCall,
             Self::Tool { .. } | Self::Capability { .. } => EventKind::ToolCall,
+            Self::Choice { .. } | Self::Arguments { .. } | Self::Rule { .. } => EventKind::Decision,
             Self::Ended { .. } => EventKind::RunEnded,
         }
     }
@@ -304,6 +348,12 @@ fn calls_line(steps: &[TimedStep], complete: bool) -> String {
                 let by = if *by_harness { " (harness)" } else { "" };
                 parts.push(format!("{tool} {}{by}", status_word(*status)));
             }
+            Step::Choice { stage, picked, .. } => match stage.as_str() {
+                "profile" => parts.push(format!("chose {picked}")),
+                "next" if picked == "done" => parts.push("done".to_owned()),
+                _ => {}
+            },
+            Step::Rule { rule, .. } => parts.push(format!("rule {rule}")),
             Step::Ended { outcome, .. } => {
                 let word = serde_json::to_value(outcome)
                     .ok()

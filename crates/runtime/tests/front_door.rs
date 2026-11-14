@@ -89,7 +89,7 @@ fn runtime_recalling(url: &str, front_door: Option<&str>, recall_limit: u32) -> 
         Arc::new(MemorySink::new()),
         Catalog::from_yaml(&yaml, |_| None).unwrap(),
         Config {
-            front_door: front_door.map(str::to_owned),
+            front_door: front_door.map(Into::into),
             recall_limit,
             ..Config::default()
         },

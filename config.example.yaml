@@ -8,6 +8,19 @@ max_result_chars: 12000
 # rest. See docs/workflows.md#the-front-door and
 # definitions/agents/front-door.yaml.example.
 # front_door: front-door
+#
+# Or a route, a line of workers: a choice of profile (an agent, by its
+# description), its tools one at a time with their arguments checked in
+# code, then a writer that answers from the results. See
+# docs/workflows.md#the-routed-front-door.
+# front_door:
+#   profiles: [notes, jobs, web]
+#   writer: writer
+#   max_calls: 3
+#   choice_role: choice
+#   arguments_role: arguments
+#   only_when_asked:
+#     - {profile: web, asked: '\b(web|online|latest|search)\b', otherwise: notes}
 
 # How many notes to search for before a chat's first round. 0 turns it off.
 recall_limit: 3

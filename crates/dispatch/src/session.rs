@@ -301,6 +301,34 @@ impl Session {
         self
     }
 
+    /// Routes the next model calls by `role`'s models, until it's set
+    /// again: a routed turn's choices, arguments and answer each have
+    /// their own.
+    pub fn set_model_role(&mut self, role: Option<String>) {
+        self.model_role = role;
+    }
+
+    /// Takes `answer` as the run's answer, from a run that writes it
+    /// itself rather than by [`Session::converse`]: the receipt says if the
+    /// model was cut off, and a guardrail's claim made without its call is
+    /// held against it.
+    pub fn answer_written(&mut self, answer: &str, cut_off: bool) {
+        self.answer_cut_off = cut_off;
+        self.answered(answer);
+    }
+
+    /// Records a routed turn's decision on the trajectory: a
+    /// [`Step::Choice`], [`Step::Arguments`] or [`Step::Rule`]. Any other
+    /// step isn't the caller's to record, and is ignored.
+    pub async fn record_decision(&mut self, step: Step) {
+        if matches!(
+            step,
+            Step::Choice { .. } | Step::Arguments { .. } | Step::Rule { .. }
+        ) {
+            self.emit(step).await;
+        }
+    }
+
     /// What every model this session calls must be able to do.
     #[must_use]
     pub fn model_needs(&self) -> &[Capability] {
@@ -501,6 +529,7 @@ impl Session {
         &mut self,
         capabilities: &[Capability],
         mut request: ChatRequest,
+        with_tools: bool,
     ) -> Result<(ChatRequest, RoutePolicy, u64), ModelStop> {
         if let Some(kind) = self.stopped() {
             return Err(ModelStop::Budget(kind));
@@ -509,7 +538,11 @@ impl Session {
         if self.totals.rounds >= budget.max_rounds {
             return Err(ModelStop::Budget(self.mark_hit(BudgetKind::Rounds)));
         }
-        request.tools = self.tool_specs();
+        request.tools = if with_tools {
+            self.tool_specs()
+        } else {
+            Vec::new()
+        };
         let request_bytes: usize = request
             .messages
             .iter()
@@ -559,7 +592,35 @@ impl Session {
         capabilities: &[Capability],
         request: ChatRequest,
     ) -> Result<Completion, ModelStop> {
-        let (request, policy, estimate) = self.ready_call(capabilities, request)?;
+        self.call_model_offering(gateway, capabilities, request, true)
+            .await
+    }
+
+    /// Calls a model offering it no tools, as a choice, a reply to a
+    /// schema, or an answer written from results already in hand needs,
+    /// with every limit and record [`Session::call_model`] has.
+    ///
+    /// # Errors
+    ///
+    /// As [`Session::call_model`].
+    pub async fn call_model_without_tools(
+        &mut self,
+        gateway: &Gateway,
+        capabilities: &[Capability],
+        request: ChatRequest,
+    ) -> Result<Completion, ModelStop> {
+        self.call_model_offering(gateway, capabilities, request, false)
+            .await
+    }
+
+    async fn call_model_offering(
+        &mut self,
+        gateway: &Gateway,
+        capabilities: &[Capability],
+        request: ChatRequest,
+        with_tools: bool,
+    ) -> Result<Completion, ModelStop> {
+        let (request, policy, estimate) = self.ready_call(capabilities, request, with_tools)?;
         self.totals.rounds += 1;
         let abandoned = Abandoned::default();
         let begun = Instant::now();

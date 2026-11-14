@@ -121,6 +121,21 @@
       ],
       "type": "object"
     },
+    "FrontDoor": {
+      "anyOf": [
+        {
+          "description": "An agent, by name.",
+          "maxLength": 64,
+          "minLength": 1,
+          "type": "string"
+        },
+        {
+          "$ref": "#/$defs/Route",
+          "description": "A route among profiles."
+        }
+      ],
+      "description": "What answers chats."
+    },
     "HarnessConfig": {
       "additionalProperties": false,
       "description": "How Harness² improves agents.",
@@ -419,6 +434,36 @@
         }
       ]
     },
+    "OnlyWhenAsked": {
+      "additionalProperties": false,
+      "description": "A profile taken only when the turn asks for it.",
+      "properties": {
+        "asked": {
+          "description": "What asking for it looks like: a pattern on the turn, case ignored.",
+          "maxLength": 1000,
+          "minLength": 1,
+          "type": "string"
+        },
+        "otherwise": {
+          "description": "Where a turn that doesn't ask goes instead.",
+          "maxLength": 64,
+          "minLength": 1,
+          "type": "string"
+        },
+        "profile": {
+          "description": "The profile.",
+          "maxLength": 64,
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "profile",
+        "asked",
+        "otherwise"
+      ],
+      "type": "object"
+    },
     "RetentionConfig": {
       "additionalProperties": false,
       "description": "How long what the runtime records is kept. The server prunes once an\nhour; `null` keeps that kind forever.",
@@ -446,6 +491,73 @@
           ]
         }
       },
+      "type": "object"
+    },
+    "Route": {
+      "additionalProperties": false,
+      "description": "The routed front door: a line of workers. A turn goes to one profile,\nchosen among `profiles` by their descriptions; within it, to one tool at\na time, its arguments filled to the tool's schema and checked in code;\nthen `writer` answers from what the tools found\n(docs/workflows.md#the-routed-front-door).",
+      "properties": {
+        "arguments_role": {
+          "description": "The role that fills a tool's arguments. Left out, as `choice_role`.",
+          "maxLength": 32,
+          "minLength": 1,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "choice_role": {
+          "description": "The role in `models.yaml` that makes the choices. Left out, the\ncheapest model that can chat.",
+          "maxLength": 32,
+          "minLength": 1,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "max_calls": {
+          "default": 3,
+          "description": "The most tool calls one turn makes.",
+          "format": "uint32",
+          "maximum": 6,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "only_when_asked": {
+          "description": "Profiles taken only when the turn asks for what they do, such as the\nweb: a turn that doesn't goes to `otherwise`, so what's stored is\nread first.",
+          "items": {
+            "$ref": "#/$defs/OnlyWhenAsked"
+          },
+          "maxItems": 8,
+          "type": "array"
+        },
+        "profiles": {
+          "description": "The profiles, agents by name: each one's `description` is what the\nchoice reads, its tools (one to six) are what it may call, and its\ninstructions and skills are what filling the arguments is told.",
+          "items": {
+            "maxLength": 64,
+            "minLength": 1,
+            "type": "string"
+          },
+          "maxItems": 24,
+          "minItems": 1,
+          "type": "array"
+        },
+        "small_talk": {
+          "default": true,
+          "description": "Whether a turn may be answered without looking anything up, such as\na greeting.",
+          "type": "boolean"
+        },
+        "writer": {
+          "description": "The agent that writes the answer, from the results alone. It has no\ntools; its `role` picks its models.",
+          "maxLength": 64,
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "profiles",
+        "writer"
+      ],
       "type": "object"
     },
     "ServerConfig": {
@@ -497,13 +609,15 @@
       "description": "The limits on each run. Spending defaults to zero, so a priced model\nis only used if this allows it."
     },
     "front_door": {
-      "description": "The agent that answers chats. Its instructions and its tools replace\n`system_prompt` and the full tool list, and if it has `delegate`, the\nagents it can hand work to are listed in its instructions. Without\nit, a chat is offered every tool.",
-      "maxLength": 64,
-      "minLength": 1,
-      "type": [
-        "string",
-        "null"
-      ]
+      "anyOf": [
+        {
+          "$ref": "#/$defs/FrontDoor"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "What answers chats. A route ([`Route`]): each turn goes to one\nprofile, one tool at a time, and a writer answers from what was\nfound. Or, until the route replaces it, an agent's name: its\ninstructions and tools replace `system_prompt` and the full tool\nlist, and if it has `delegate`, the agents it can hand work to are\nlisted in its instructions. Without either, a chat is offered every\ntool."
     },
     "harness": {
       "$ref": "#/$defs/HarnessConfig",

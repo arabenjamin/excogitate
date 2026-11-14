@@ -11,7 +11,7 @@ use schemars::JsonSchema;
 use serde::de::DeserializeOwned;
 use store::DefinitionKind;
 use work::{DefinitionError, DefinitionFile, Schedule, read_definition_files, save_definitions};
-use workflow::{Agent, Workflow, check_agent, check_agent_sources, check_workflow};
+use workflow::{Agent, DELEGATE_TOOL, Workflow, check_agent, check_agent_sources, check_workflow};
 
 use crate::Runtime;
 use crate::jobs::{WORKFLOW_KIND, WorkflowArgs};
@@ -74,6 +74,95 @@ fn check_agent_role(agent: &Agent, catalog: &model::Catalog) -> Result<(), Strin
     }
 }
 
+/// The most tools a route's profile may have: the choice among them is one
+/// small model's.
+const MAX_PROFILE_TOOLS: usize = 6;
+
+fn check_role(
+    role: Option<&String>,
+    setting: &str,
+    catalog: &model::Catalog,
+) -> Result<(), String> {
+    match role {
+        Some(role) if catalog.role(role).is_none() => Err(format!(
+            "{setting} names the role {role}, and models.yaml doesn't define it"
+        )),
+        _ => Ok(()),
+    }
+}
+
+/// A route's profiles and writer must be agents it can use: a profile has
+/// one to six tools and no delegation or guardrails, which a routed turn
+/// doesn't run; the writer has no tools.
+fn check_route(
+    route: &crate::Route,
+    agents: &BTreeMap<String, Agent>,
+    catalog: &model::Catalog,
+) -> Result<(), String> {
+    let named = |name: &str| {
+        agents
+            .get(name)
+            .ok_or_else(|| format!("it names the agent {name}, and there's no such file"))
+    };
+    if route.profiles.is_empty() || route.profiles.len() > 24 {
+        return Err("it needs one to 24 profiles".to_owned());
+    }
+    if !(1..=6).contains(&route.max_calls) {
+        return Err("its max_calls must be 1 to 6".to_owned());
+    }
+    for name in &route.profiles {
+        if name == crate::route::SMALL_TALK {
+            return Err(format!(
+                "{name} is the route's own choice, not a profile's name"
+            ));
+        }
+        let profile = named(name)?;
+        if profile.tools.is_empty() || profile.tools.len() > MAX_PROFILE_TOOLS {
+            return Err(format!(
+                "the profile {name} has {} tools; a profile has one to {MAX_PROFILE_TOOLS}",
+                profile.tools.len()
+            ));
+        }
+        if profile.tools.iter().any(|tool| tool == DELEGATE_TOOL) {
+            return Err(format!(
+                "the profile {name} delegates; a profile calls its tools itself"
+            ));
+        }
+        if !profile.guardrails.is_empty() {
+            return Err(format!(
+                "the profile {name} has guardrails, which a routed turn doesn't run yet"
+            ));
+        }
+        if profile.description.trim().is_empty() {
+            return Err(format!(
+                "the profile {name} has no description, and the choice reads only that"
+            ));
+        }
+    }
+    let writer = named(&route.writer)?;
+    if !writer.tools.is_empty() {
+        return Err(format!(
+            "the writer {} has tools; it answers from the results alone",
+            route.writer
+        ));
+    }
+    for rule in &route.only_when_asked {
+        for profile in [&rule.profile, &rule.otherwise] {
+            if !route.profiles.contains(profile) {
+                return Err(format!(
+                    "only_when_asked names {profile}, which isn't one of its profiles"
+                ));
+            }
+        }
+        regex::RegexBuilder::new(&rule.asked)
+            .size_limit(1 << 20)
+            .build()
+            .map_err(|error| format!("only_when_asked's pattern for {}: {error}", rule.profile))?;
+    }
+    check_role(route.choice_role.as_ref(), "choice_role", catalog)?;
+    check_role(route.arguments_role.as_ref(), "arguments_role", catalog)
+}
+
 fn check_files(files: &[DefinitionFile], runtime: &Runtime) -> Result<(), DefinitionError> {
     let of_kind = |kind| files.iter().filter(move |file| file.kind == kind);
     let tools: BTreeMap<_, _> = runtime
@@ -83,6 +172,7 @@ fn check_files(files: &[DefinitionFile], runtime: &Runtime) -> Result<(), Defini
         .map(|definition| (definition.name.clone(), definition))
         .collect();
     let mut agents = BTreeSet::new();
+    let mut parsed = BTreeMap::new();
     for file in of_kind(DefinitionKind::Agent) {
         let agent = parse::<Agent>(file)?;
         check_agent(&agent, &tools)
@@ -90,8 +180,17 @@ fn check_files(files: &[DefinitionFile], runtime: &Runtime) -> Result<(), Defini
             .and_then(|()| check_agent_role(&agent, runtime.gateway.catalog()))
             .map_err(|problem| invalid(file, problem))?;
         agents.insert(file.name.clone());
+        parsed.insert(file.name.clone(), agent);
     }
-    if let Some(front_door) = &runtime.config.front_door
+    if let Some(route) = runtime.config.route() {
+        check_route(route, &parsed, runtime.gateway.catalog()).map_err(|problem| {
+            DefinitionError::Invalid {
+                name: "front_door".to_owned(),
+                problem,
+            }
+        })?;
+    }
+    if let Some(front_door) = runtime.config.front_door_agent()
         && !agents.contains(front_door)
     {
         return Err(DefinitionError::Invalid {

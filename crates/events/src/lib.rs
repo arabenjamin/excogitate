@@ -28,6 +28,9 @@ pub enum EventKind {
     ModelCall,
     /// A call to a tool, whether it ran or was refused.
     ToolCall,
+    /// A choice the routed front door made, the arguments it filled, or a
+    /// rule in code that changed its course.
+    Decision,
     /// How the run ended.
     RunEnded,
 }
