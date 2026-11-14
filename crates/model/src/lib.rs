@@ -17,7 +17,7 @@ mod wire;
 
 pub use catalog::{
     ApiKey, Capability, Catalog, ConfigError, Model, ModelConfig, ModelsConfig, Price, Provider,
-    ProviderConfig,
+    ProviderConfig, RoleConfig,
 };
 pub use chat::{
     ChatRequest, ChatResponse, FinishReason, Message, ResponseSchema, Role, ToolCall, ToolSpec,

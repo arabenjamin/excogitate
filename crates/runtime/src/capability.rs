@@ -170,6 +170,7 @@ impl ModelCapability for PluginModel {
             budget_usd_micros: Some(budget),
             embedding_dimension: None,
             only_model: None,
+            role: None,
         };
         let request = ChatRequest {
             messages: vec![Message::user(prompt)],

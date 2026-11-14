@@ -308,6 +308,16 @@
       "maxItems": 4,
       "type": "array"
     },
+    "role": {
+      "description": "The role in `models.yaml` whose models it runs on, in the role's\norder, such as `writer`. Its `needs` still apply to each. Left out,\nit's routed by `needs` alone, cheapest first.",
+      "maxLength": 32,
+      "minLength": 1,
+      "pattern": "^[a-z][a-z0-9_-]*$",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
     "skills": {
       "description": "Instructions for some tasks, added when the task matches.",
       "items": {

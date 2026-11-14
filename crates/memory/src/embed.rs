@@ -105,6 +105,7 @@ impl Embedder for GatewayEmbedder {
             budget_usd_micros: scope.budget_usd_micros,
             embedding_dimension: Some(self.dimension),
             only_model: None,
+            role: None,
         };
         self.gateway
             .embed(&policy, inputs)

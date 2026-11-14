@@ -193,6 +193,35 @@
         "timeout_secs"
       ],
       "type": "object"
+    },
+    "RoleConfig": {
+      "additionalProperties": false,
+      "description": "One role: a job, and the models that do it, best first.",
+      "properties": {
+        "models": {
+          "description": "The models, in the order to try them. Each must be defined above.",
+          "items": {
+            "maxLength": 64,
+            "minLength": 1,
+            "type": "string"
+          },
+          "maxItems": 16,
+          "minItems": 1,
+          "type": "array"
+        },
+        "name": {
+          "description": "Its name, such as `writer`. Agents and the runtime ask for it.",
+          "maxLength": 32,
+          "minLength": 1,
+          "pattern": "^[a-z][a-z0-9_-]*$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "models"
+      ],
+      "type": "object"
     }
   },
   "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -211,6 +240,15 @@
       "description": "The endpoints.",
       "items": {
         "$ref": "#/$defs/ProviderConfig"
+      },
+      "maxItems": 32,
+      "type": "array"
+    },
+    "roles": {
+      "default": [],
+      "description": "Named lists of models, each in the order to try them. A call that\nasks for a role tries its models in that order instead of cheapest\nfirst: what's measured best for a job need not be what's cheapest.",
+      "items": {
+        "$ref": "#/$defs/RoleConfig"
       },
       "maxItems": 32,
       "type": "array"
