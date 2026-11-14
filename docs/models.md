@@ -40,6 +40,37 @@ If a call fails, the next model is tried, up to three, unless the server
 said the request itself was bad. When no model can take a call, the error
 names every model and why.
 
+### A failing model is left alone while it cools
+
+A model that failed in a way the next call would too is left alone for a
+while, so a rate limit is waited out by using another model, never by
+asking again in a loop:
+
+- **A 429** cools it for as long as its `retry-after` says (seconds), or a
+  minute if it doesn't say, and never more than 15 minutes.
+- **A timeout, a 5xx, or a server that can't be reached** cools it for a
+  minute.
+- **A refusal of the request** (a 4xx), or a reply it got wrong, doesn't:
+  that says nothing about the next call.
+
+A cooling model is passed over: the call goes straight to the next model
+that can take it. When no model that could take it is free:
+
+- **one that only failed or was slow is asked again,** so one timeout
+  doesn't stop a one-model setup for a minute;
+- **one that said to wait isn't,** until its time is up. When every model
+  that could take the call said to wait, the call fails at once with each
+  model and the time it's free again.
+
+An answer ends a model's cooling. The cooling is kept in memory, per
+server: a restart forgets it.
+
+The trajectory's model step lists each model a call passed over, under
+`fell_back`, with why (`rate_limited`, `timeout`, `unreachable`,
+`server_error`, `refused`, `bad_reply`, or `cooling`), and
+`model_failures_total` counts them ([metrics](metrics.md)). A model that's
+failing all day shows there.
+
 Excogitate keeps this ledger in the store (`SpendLog`), so a restart can't reset
 a cap. `MemoryLedger` forgets on a restart, and is only for tests.
 

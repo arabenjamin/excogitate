@@ -24,7 +24,7 @@ use plugin_api::CapabilityUse;
 use crate::StopSignal;
 use crate::guardrail::{Enforced, Guardrail};
 use crate::tool::Registered;
-use crate::trajectory::{RunSubject, Step};
+use crate::trajectory::{FellBack, RunSubject, Step};
 use crate::{
     Budget, BudgetKind, CallStatus, ModelEntry, Outcome, Receipt, RefusalKind, ToolContext,
     ToolEntry, ToolRegistry, Totals,
@@ -585,6 +585,7 @@ impl Session {
                     input_tokens,
                     output_tokens,
                     duration_ms,
+                    fell_back: fell_back(&completion.failed_attempts, &completion.cooling),
                 })
                 .await;
                 Ok(completion)
@@ -606,6 +607,7 @@ impl Session {
                     input_tokens: 0,
                     output_tokens: 0,
                     duration_ms,
+                    fell_back: fell_back_of(&error),
                 })
                 .await;
                 if let GatewayError::NoRoute(no_route) = &error
@@ -1138,6 +1140,39 @@ impl Finished {
             uses: Vec::new(),
             detail: None,
         }
+    }
+}
+
+/// The models a call passed over, as the trajectory lists them.
+fn fell_back(failed: &[model::FailedAttempt], cooling: &[String]) -> Vec<FellBack> {
+    cooling
+        .iter()
+        .map(|name| FellBack {
+            model: bounded(name),
+            reason: "cooling".to_owned(),
+        })
+        .chain(failed.iter().map(|attempt| FellBack {
+            model: bounded(&attempt.model),
+            reason: attempt.error.kind().to_owned(),
+        }))
+        .take(32)
+        .collect()
+}
+
+/// Likewise for a call no model answered.
+fn fell_back_of(error: &GatewayError) -> Vec<FellBack> {
+    match error {
+        GatewayError::Failed(attempts) => fell_back(attempts, &[]),
+        GatewayError::NoRoute(no_route) => {
+            let cooling: Vec<String> = no_route
+                .rejected
+                .iter()
+                .filter(|(_, why)| matches!(why, Rejection::Cooling { .. }))
+                .map(|(name, _)| name.clone())
+                .collect();
+            fell_back(&[], &cooling)
+        }
+        _ => Vec::new(),
     }
 }
 

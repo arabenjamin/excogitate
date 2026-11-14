@@ -73,6 +73,19 @@ impl From<Role> for Speaker {
 /// The longest description of a capability call kept.
 const MAX_WHAT: usize = 512;
 
+/// A model a call passed over: it failed, or it was cooling.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct FellBack {
+    /// The model.
+    #[schemars(length(max = 256))]
+    pub model: String,
+    /// `rate_limited`, `timeout`, `unreachable`, `server_error`, `refused`,
+    /// `bad_reply`, or `cooling` for one left alone after failing lately.
+    #[schemars(length(max = 32))]
+    pub reason: String,
+}
+
 /// One thing in a trajectory.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
@@ -137,6 +150,12 @@ pub enum Step {
         /// How long the call took, retries and fallbacks included.
         #[serde(default)]
         duration_ms: u64,
+        /// Each model that failed this call, or was passed over while it
+        /// cooled, before the one that answered. Empty in events written
+        /// before 0.12.0.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        #[schemars(length(max = 32))]
+        fell_back: Vec<FellBack>,
     },
     /// A call to a tool, whether it ran or was refused.
     Tool {

@@ -93,6 +93,9 @@ trajectories, and a person can read one over [REST](api.md#runs).
 - **The calls line** sums a run up in one line, such as
   `memory ran (harness) → http_request refused → answered`. Read it first: it
   keeps runs from being confused with each other.
+- **A model step names what it passed over:** each model that failed the
+  call first, or was left alone while it cooled, and why, under
+  `fell_back` ([models](models.md#a-failing-model-is-left-alone-while-it-cools)).
 - **Long text is cut** at 16,000 characters and says so.
 - **A lost event doesn't stop the run.** The receipt counts it in
   `events_lost`.

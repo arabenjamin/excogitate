@@ -1661,3 +1661,95 @@ async fn an_answer_that_claims_nothing_needs_no_call() {
     assert_eq!(result.receipt.guardrails_unmet, Vec::<String>::new());
     assert_eq!(client.seen.lock().unwrap().len(), 1);
 }
+
+/// `m1` is always rate-limited; any other model answers.
+#[derive(Debug, Default)]
+struct LimitsFirst {
+    asked: Mutex<Vec<String>>,
+}
+
+#[async_trait]
+impl ModelClient for LimitsFirst {
+    async fn chat(
+        &self,
+        model: &Model,
+        _request: &ChatRequest,
+        _output_tokens: u32,
+    ) -> Result<ChatResponse, ModelError> {
+        self.asked.lock().unwrap().push(model.name.clone());
+        if model.name == "m1" {
+            return Err(ModelError::RateLimited {
+                retry_after_secs: Some(60),
+            });
+        }
+        Ok(says("ok", FinishReason::Stop))
+    }
+
+    async fn embed(&self, _: &Model, _: &[String]) -> Result<Vec<Vec<f32>>, ModelError> {
+        Err(ModelError::Timeout)
+    }
+}
+
+#[tokio::test]
+async fn a_model_passed_over_is_on_the_trajectory_failed_then_cooling() {
+    const TWO: &str = "
+version: 1
+providers:
+  - {name: p, base_url: 'http://a/v1', no_log: true, timeout_secs: 5}
+models:
+  - {name: m1, provider: p, wire_model: a, capabilities: [chat, tools],
+     context_tokens: 100000, max_output_tokens: 500}
+  - {name: m2, provider: p, wire_model: b, capabilities: [chat, tools],
+     context_tokens: 100000, max_output_tokens: 500}
+";
+    let client = Arc::new(LimitsFirst::default());
+    let catalog = Catalog::from_yaml(TWO, |_| None).unwrap();
+    let gateway = Gateway::new(
+        catalog,
+        Arc::clone(&client) as Arc<dyn ModelClient>,
+        Arc::new(MemoryLedger::new()),
+    );
+    let mut seen = Vec::new();
+    for _ in 0..2 {
+        let sink = Arc::new(MemorySink::new());
+        let run_config = config(&[], budget());
+        let run = run_config.run;
+        let session = Session::new(
+            Arc::new(ToolRegistry::new()),
+            Arc::clone(&sink) as Arc<dyn EventSink>,
+            run_config,
+        )
+        .unwrap();
+        let ended = session
+            .converse(
+                &gateway,
+                Conversation {
+                    messages: vec![Message::user("hello")],
+                    max_output_tokens: 400,
+                    temperature: None,
+                },
+            )
+            .await;
+        assert_eq!(ended.answer.as_deref(), Some("ok"));
+        let trajectory = crate::read_trajectory(sink.as_ref(), run, 100)
+            .await
+            .unwrap()
+            .unwrap();
+        let passed: Vec<(String, String)> = trajectory
+            .steps
+            .iter()
+            .filter_map(|timed| match &timed.step {
+                crate::Step::Model { fell_back, .. } => Some(fell_back.clone()),
+                _ => None,
+            })
+            .flatten()
+            .map(|passed| (passed.model, passed.reason))
+            .collect();
+        seen.push(passed);
+    }
+    let pair = |model: &str, reason: &str| (model.to_owned(), reason.to_owned());
+    assert_eq!(seen[0], [pair("m1", "rate_limited")]);
+    // The second run doesn't ask m1 at all: it's cooling.
+    assert_eq!(seen[1], [pair("m1", "cooling")]);
+    assert_eq!(*client.asked.lock().unwrap(), ["m1", "m2", "m2"]);
+}

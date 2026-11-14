@@ -151,6 +151,27 @@
         }
       ]
     },
+    "FellBack": {
+      "additionalProperties": false,
+      "description": "A model a call passed over: it failed, or it was cooling.",
+      "properties": {
+        "model": {
+          "description": "The model.",
+          "maxLength": 256,
+          "type": "string"
+        },
+        "reason": {
+          "description": "`rate_limited`, `timeout`, `unreachable`, `server_error`, `refused`,\n`bad_reply`, or `cooling` for one left alone after failing lately.",
+          "maxLength": 32,
+          "type": "string"
+        }
+      },
+      "required": [
+        "model",
+        "reason"
+      ],
+      "type": "object"
+    },
     "Outcome": {
       "description": "How a run ended. A closed list; every run ends in exactly one.",
       "oneOf": [
@@ -358,6 +379,14 @@
                 "string",
                 "null"
               ]
+            },
+            "fell_back": {
+              "description": "Each model that failed this call, or was passed over while it\ncooled, before the one that answered. Empty in events written\nbefore 0.12.0.",
+              "items": {
+                "$ref": "#/$defs/FellBack"
+              },
+              "maxItems": 32,
+              "type": "array"
             },
             "input_tokens": {
               "default": 0,

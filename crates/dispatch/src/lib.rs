@@ -26,5 +26,5 @@ pub use session::{
 pub use stop::StopSignal;
 pub use tool::{RegistryError, ToolRegistry};
 pub use trajectory::{
-    RunSubject, Speaker, Step, TimedStep, Trajectory, harness_id, read_trajectory,
+    FellBack, RunSubject, Speaker, Step, TimedStep, Trajectory, harness_id, read_trajectory,
 };
