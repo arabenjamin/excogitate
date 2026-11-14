@@ -261,6 +261,12 @@ impl Gateway {
         }
     }
 
+    /// The models it routes among, and their roles.
+    #[must_use]
+    pub const fn catalog(&self) -> &Catalog {
+        &self.catalog
+    }
+
     /// The candidates to try, in order, and the names of those passed over
     /// while they cool. Those not cooling go first, and only they when
     /// there are any. With none, the ones that only failed are tried again;
@@ -651,6 +657,7 @@ models:
             budget_usd_micros: None,
             embedding_dimension: None,
             only_model: None,
+            role: None,
         }
     }
 

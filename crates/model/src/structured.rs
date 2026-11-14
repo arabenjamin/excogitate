@@ -241,6 +241,7 @@ models:
             budget_usd_micros: None,
             embedding_dimension: None,
             only_model: None,
+            role: None,
         }
     }
 

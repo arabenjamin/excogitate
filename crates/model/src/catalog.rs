@@ -25,6 +25,24 @@ pub struct ModelsConfig {
     /// The models they serve. Among equal prices, earlier ones are preferred.
     #[schemars(length(max = 128))]
     pub models: Vec<ModelConfig>,
+    /// Named lists of models, each in the order to try them. A call that
+    /// asks for a role tries its models in that order instead of cheapest
+    /// first: what's measured best for a job need not be what's cheapest.
+    #[serde(default)]
+    #[schemars(length(max = 32))]
+    pub roles: Vec<RoleConfig>,
+}
+
+/// One role: a job, and the models that do it, best first.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct RoleConfig {
+    /// Its name, such as `writer`. Agents and the runtime ask for it.
+    #[schemars(length(min = 1, max = 32), regex(pattern = r"^[a-z][a-z0-9_-]*$"))]
+    pub name: String,
+    /// The models, in the order to try them. Each must be defined above.
+    #[schemars(length(min = 1, max = 16), inner(length(min = 1, max = 64)))]
+    pub models: Vec<String>,
 }
 
 /// One endpoint.
@@ -218,6 +236,7 @@ impl Model {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Catalog {
     models: Vec<Arc<Model>>,
+    roles: Vec<(String, Vec<Arc<Model>>)>,
 }
 
 impl Catalog {
@@ -263,7 +282,41 @@ impl Catalog {
             }
             models.push(Arc::new(resolve_model(model, &providers)?));
         }
-        Ok(Self { models })
+        let mut roles: Vec<(String, Vec<Arc<Model>>)> = Vec::new();
+        for role in config.roles {
+            if roles.iter().any(|(name, _)| *name == role.name) {
+                return Err(invalid(format!("role {} repeats", role.name)));
+            }
+            let mut listed: Vec<Arc<Model>> = Vec::new();
+            for wanted in &role.models {
+                let model = models
+                    .iter()
+                    .find(|model| model.name == *wanted)
+                    .ok_or_else(|| {
+                        invalid(format!("role {}: no model named {wanted}", role.name))
+                    })?;
+                if listed.iter().any(|known| known.name == *wanted) {
+                    return Err(invalid(format!("role {}: {wanted} repeats", role.name)));
+                }
+                listed.push(Arc::clone(model));
+            }
+            roles.push((role.name, listed));
+        }
+        Ok(Self { models, roles })
+    }
+
+    /// A role's models, best first, if the role is defined.
+    #[must_use]
+    pub fn role(&self, name: &str) -> Option<&[Arc<Model>]> {
+        self.roles
+            .iter()
+            .find(|(role, _)| role == name)
+            .map(|(_, models)| models.as_slice())
+    }
+
+    /// The roles' names, in configured order.
+    pub fn role_names(&self) -> impl Iterator<Item = &str> {
+        self.roles.iter().map(|(name, _)| name.as_str())
     }
 
     /// The models, in configured order.
@@ -381,6 +434,31 @@ mod tests {
             "version: 1\nproviders:\n  - {{name: p, base_url: 'http://h/v1', no_log: true, timeout_secs: 5{provider}}}\n\
              models:\n  - {{name: m, provider: p, wire_model: w, capabilities: [chat], context_tokens: 9, max_output_tokens: 1{model}}}\n"
         )
+    }
+
+    #[test]
+    fn a_role_must_name_defined_models_once_each() {
+        let with = |roles: &str| format!("{}roles:\n{roles}", base("", ""));
+        let good = load(&with("  - {name: writer, models: [m]}\n")).unwrap();
+        assert_eq!(good.role("writer").unwrap()[0].name, "m");
+        assert!(good.role("judge").is_none());
+        for (roles, problem) in [
+            (
+                "  - {name: writer, models: [nope]}\n",
+                "no model named nope",
+            ),
+            ("  - {name: writer, models: [m, m]}\n", "m repeats"),
+            (
+                "  - {name: writer, models: [m]}\n  - {name: writer, models: [m]}\n",
+                "role writer repeats",
+            ),
+        ] {
+            let error = load(&with(roles)).unwrap_err();
+            assert!(error.to_string().contains(problem), "{error}");
+        }
+        // A role's name is a plain word, and it lists at least one model.
+        assert!(load(&with("  - {name: Writer, models: [m]}\n")).is_err());
+        assert!(load(&with("  - {name: writer, models: []}\n")).is_err());
     }
 
     #[test]

@@ -140,6 +140,11 @@ model, and the text inside it can't end that label. A `message` can use `inputs`
 `models.yaml` ([models](models.md#asking-for-a-capable-model)). Left out,
 it gets the cheapest that can chat.
 
+**An agent can ask for a role.** `role: writer` runs its calls on the
+models `models.yaml`'s `writer` role lists, in that order
+([roles](models.md#roles)), with its `needs` still applying to each. Left
+out, it's routed by `needs`, cheapest first.
+
 **An agent chooses what its memory reads.** `memory: {sources: [lake.notes]}`
 limits the `memory` tool, in that agent's runs, to the sources named; an empty
 list reads none, and left out, it reads every source the plugins offer, so a

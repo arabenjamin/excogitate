@@ -56,6 +56,24 @@ fn check_scheduled_workflow(
         .map_err(|refusal| invalid(file, format!("its inputs: {refusal}")))
 }
 
+/// An agent's `role` must be one `models.yaml` defines.
+fn check_agent_role(agent: &Agent, catalog: &model::Catalog) -> Result<(), String> {
+    match &agent.role {
+        Some(role) if catalog.role(role).is_none() => {
+            let known: Vec<&str> = catalog.role_names().collect();
+            Err(if known.is_empty() {
+                format!("its role {role} isn't defined: models.yaml has no roles")
+            } else {
+                format!(
+                    "its role {role} isn't defined; models.yaml's roles are {}",
+                    known.join(", ")
+                )
+            })
+        }
+        _ => Ok(()),
+    }
+}
+
 fn check_files(files: &[DefinitionFile], runtime: &Runtime) -> Result<(), DefinitionError> {
     let of_kind = |kind| files.iter().filter(move |file| file.kind == kind);
     let tools: BTreeMap<_, _> = runtime
@@ -69,6 +87,7 @@ fn check_files(files: &[DefinitionFile], runtime: &Runtime) -> Result<(), Defini
         let agent = parse::<Agent>(file)?;
         check_agent(&agent, &tools)
             .and_then(|()| check_agent_sources(&agent, &runtime.sources))
+            .and_then(|()| check_agent_role(&agent, runtime.gateway.catalog()))
             .map_err(|problem| invalid(file, problem))?;
         agents.insert(file.name.clone());
     }

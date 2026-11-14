@@ -24,6 +24,9 @@ pub struct RoutePolicy {
     /// The one model this call may use, by name, when it must be that one:
     /// a test of a model has to reach the model it tests.
     pub only_model: Option<String>,
+    /// The role whose models this call tries, in the role's order instead
+    /// of cheapest first. A model outside it isn't used.
+    pub role: Option<String>,
 }
 
 /// How many tokens a call could use, at most.
@@ -63,6 +66,8 @@ pub enum Rejection {
     OverDailyCap,
     /// The call is pinned to another model.
     NotPinned,
+    /// The call asks for a role this model isn't in, or that isn't defined.
+    NotInRole(String),
     /// It failed or was rate-limited lately, and is left alone until then.
     Cooling {
         /// When it may be tried again.
@@ -83,6 +88,7 @@ impl fmt::Display for Rejection {
             Self::OverRunBudget => f.write_str("could cost more than the run has left"),
             Self::OverDailyCap => f.write_str("the provider's daily cap can't cover it"),
             Self::NotPinned => f.write_str("the call is pinned to another model"),
+            Self::NotInRole(role) => write!(f, "not in the role {role}"),
             Self::Cooling { until } => write!(
                 f,
                 "failed or rate-limited lately, left alone until {}",
@@ -181,7 +187,8 @@ fn check(
 }
 
 /// The models that can take a call, cheapest first; among equal costs, in
-/// configured order.
+/// configured order. A call that asks for a role takes only that role's
+/// models, in the role's order.
 ///
 /// # Errors
 ///
@@ -194,7 +201,23 @@ pub fn plan(
 ) -> Result<Vec<Candidate>, NoRoute> {
     let mut candidates = Vec::new();
     let mut rejected = Vec::new();
-    for model in catalog.models() {
+    let in_role = policy
+        .role
+        .as_deref()
+        .map(|role| (role, catalog.role(role)));
+    let ordered: Vec<&Arc<Model>> = match in_role {
+        Some((_, Some(models))) => models.iter().collect(),
+        Some((role, None)) => {
+            let rejected = catalog
+                .models()
+                .iter()
+                .map(|model| (model.name.clone(), Rejection::NotInRole(role.to_owned())))
+                .collect();
+            return Err(NoRoute { rejected });
+        }
+        None => catalog.models().iter().collect(),
+    };
+    for model in ordered {
         match check(model, required, policy, estimate) {
             Ok(candidate) => candidates.push(candidate),
             Err(why) => rejected.push((model.name.clone(), why)),
@@ -203,7 +226,9 @@ pub fn plan(
     if candidates.is_empty() {
         return Err(NoRoute { rejected });
     }
-    candidates.sort_by_key(|candidate| candidate.worst_case_usd_micros);
+    if in_role.is_none() {
+        candidates.sort_by_key(|candidate| candidate.worst_case_usd_micros);
+    }
     Ok(candidates)
 }
 
@@ -240,6 +265,7 @@ models:
             budget_usd_micros: None,
             embedding_dimension: None,
             only_model: None,
+            role: None,
         }
     }
 
@@ -262,6 +288,43 @@ models:
         let no_route = result.unwrap_err();
         let found = no_route.rejected.iter().find(|(name, _)| name == model);
         found.unwrap().1.clone()
+    }
+
+    #[test]
+    fn a_role_goes_in_its_own_order_not_cheapest_first() {
+        let yaml = format!("{YAML}roles:\n  - {{name: writer, models: [paid, small]}}\n");
+        let c = catalog(&yaml);
+        let mut asked = policy(DataClass::Public);
+        assert_eq!(
+            names(&plan(&c, &[Capability::Chat], &asked, SMALL_CALL)),
+            ["free-cloud", "small", "paid"],
+            "without a role, cheapest first"
+        );
+        asked.role = Some("writer".to_owned());
+        // The priced model first, as the role says; free-cloud isn't in it.
+        assert_eq!(
+            names(&plan(&c, &[Capability::Chat], &asked, SMALL_CALL)),
+            ["paid", "small"]
+        );
+        // Every other check still holds: private work skips the one that
+        // keeps logs, and the role's next model takes it.
+        asked.data_class = DataClass::Private;
+        assert_eq!(
+            names(&plan(&c, &[Capability::Chat], &asked, SMALL_CALL)),
+            ["small"]
+        );
+    }
+
+    #[test]
+    fn a_role_thats_not_defined_routes_nowhere_and_says_so() {
+        let c = catalog(YAML);
+        let mut asked = policy(DataClass::Public);
+        asked.role = Some("judge".to_owned());
+        let result = plan(&c, &[Capability::Chat], &asked, SMALL_CALL);
+        assert_eq!(
+            why(result, "small"),
+            Rejection::NotInRole("judge".to_owned())
+        );
     }
 
     #[test]

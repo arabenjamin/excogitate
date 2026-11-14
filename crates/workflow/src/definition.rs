@@ -53,6 +53,12 @@ pub struct Agent {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     #[schemars(length(max = 4))]
     pub needs: Vec<Capability>,
+    /// The role in `models.yaml` whose models it runs on, in the role's
+    /// order, such as `writer`. Its `needs` still apply to each. Left out,
+    /// it's routed by `needs` alone, cheapest first.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(length(min = 1, max = 32), regex(pattern = r"^[a-z][a-z0-9_-]*$"))]
+    pub role: Option<String>,
 }
 
 /// What an agent's memory reads, beside the store.

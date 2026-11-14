@@ -182,6 +182,7 @@ pub struct Session {
     claims_unmet: Vec<String>,
     /// What every model it calls must be able to do, beyond chat.
     model_needs: Vec<Capability>,
+    model_role: Option<String>,
 }
 
 /// A refusal on its way back to the model.
@@ -247,6 +248,7 @@ impl Session {
             about: Vec::new(),
             claims_unmet: Vec::new(),
             model_needs: Vec::new(),
+            model_role: None,
         })
     }
 
@@ -289,6 +291,13 @@ impl Session {
     #[must_use]
     pub fn with_model_needs(mut self, needs: Vec<Capability>) -> Self {
         self.model_needs = needs;
+        self
+    }
+
+    /// Routes every model call by `role`'s models, in its order.
+    #[must_use]
+    pub fn with_model_role(mut self, role: Option<String>) -> Self {
+        self.model_role = role;
         self
     }
 
@@ -533,6 +542,7 @@ impl Session {
             ),
             embedding_dimension: None,
             only_model: None,
+            role: self.model_role.clone(),
         };
         Ok((request, policy, estimate))
     }

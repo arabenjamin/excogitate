@@ -74,6 +74,29 @@ failing all day shows there.
 Excogitate keeps this ledger in the store (`SpendLog`), so a restart can't reset
 a cap. `MemoryLedger` forgets on a restart, and is only for tests.
 
+## Roles
+
+A role is a job and the models that do it, in the order to try them, in
+`models.yaml`:
+
+```yaml
+roles:
+  - name: writer
+    models: [glm-flash, deepseek-flash, small-chat]
+```
+
+An agent asks for one with `role: writer`, and its calls go to those models
+in that order instead of cheapest first: the model measured best for a job
+isn't always the cheapest, and the cheapest-first rule would always pick a
+free local model over it. A role changes only the order and which models
+are considered. Privacy, `paid_for`, size, the run's budget and the
+provider's cap still apply to each model, and a model that's cooling is
+passed over. A model outside the role is never used for the call.
+
+A role that names a model not defined above, or names one twice, stops the
+server, and so does an agent asking for a role that isn't defined. Agents
+name roles, never models: changing the writer is an edit to `models.yaml`.
+
 ## Asking for a capable model
 
 The cheapest model that passes the checks answers, so a free local model

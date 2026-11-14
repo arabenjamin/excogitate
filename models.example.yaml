@@ -55,3 +55,12 @@ models:
   #   price:
   #     input_usd_micros_per_mtok: 500000 # $0.50 per million tokens
   #     output_usd_micros_per_mtok: 1500000 # $1.50 per million tokens
+
+# Roles: a job and the models that do it, in the order to try them. An agent
+# asks for one with `role:`, and its calls go to these models in this order
+# instead of cheapest first: what's measured best for a job isn't always
+# what's cheapest. Every other check (privacy, paid_for, size, budget) still
+# applies to each, and a model that's cooling is passed over.
+# roles:
+#   - name: writer
+#     models: [large-chat, small-chat]

@@ -286,6 +286,7 @@ impl Judges<'_> {
             budget_usd_micros: Some(budget_usd_micros),
             embedding_dimension: None,
             only_model: only_model.map(str::to_owned),
+            role: None,
         };
         let request = ChatRequest {
             messages: vec![Message::system(system), Message::user(user)],
