@@ -6,13 +6,14 @@
 //! call or done; a writer answers from what the tools found. Every tool
 //! call goes through dispatch like any other, and the whole turn is one run,
 //! `chat`, whose trajectory records each choice
-//! (docs/workflows.md#the-routed-front-door).
+//! (docs/workflows.md#the-routed-front-door). A turn only reads: a call
+//! that would write isn't run.
 
 use std::fmt::Write as _;
 
 use dispatch::{ChatResult, ModelStop, Outcome, Session, Step, harness_id};
 use model::{ChatRequest, FinishReason, Message, ResponseSchema, ToolCall, first_json_object};
-use plugin_api::{ToolDefinition, ToolFailure};
+use plugin_api::{Effect, ToolDefinition, ToolFailure};
 use regex::RegexBuilder;
 use serde_json::{Map, Value, json};
 use workflow::Agent;
@@ -366,16 +367,11 @@ impl Turn<'_> {
             else {
                 break;
             };
-            let call = ToolCall {
-                id: format!("route-{}", found.len()),
-                name: tool.clone(),
-                arguments: arguments.to_string(),
-            };
-            let reply = session.dispatch(&call).await;
+            let reply = self.call(session, &tool, &arguments, found.len()).await;
             found.push(Found {
                 tool,
                 arguments,
-                reply: reply.content,
+                reply,
             });
             if found.len() >= max_calls {
                 break;
@@ -406,6 +402,31 @@ impl Turn<'_> {
             next = chosen.filter(|tool| tool != DONE);
         }
         Ok(found)
+    }
+
+    /// Runs one call, if it only reads. What a call does depends on its
+    /// arguments (memory's `search` reads, its `delete` doesn't), so it's
+    /// asked of the tool for this call; one that would write isn't run.
+    async fn call(&self, session: &mut Session, tool: &str, arguments: &Value, n: usize) -> String {
+        if self.runtime.registry.effect_of(tool, arguments) == Some(Effect::Read) {
+            let call = ToolCall {
+                id: format!("route-{n}"),
+                name: tool.to_owned(),
+                arguments: arguments.to_string(),
+            };
+            return session.dispatch(&call).await.content;
+        }
+        session
+            .record_decision(Step::Rule {
+                rule: "reads_only".to_owned(),
+                detail: format!("{tool} with these arguments would write; not run"),
+            })
+            .await;
+        json!({
+            "status": "refused",
+            "detail": "a chat turn only reads: this call would change something, so it wasn't run",
+        })
+        .to_string()
     }
 
     /// A tool's arguments, filled to its schema, grounded, and never the

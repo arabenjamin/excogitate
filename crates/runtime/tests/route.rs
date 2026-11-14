@@ -396,3 +396,36 @@ async fn a_route_its_agents_cant_serve_is_refused_when_loaded() {
     calls.max_calls = 9;
     refused("calls", calls, &base, "max_calls").await;
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_call_that_would_write_isnt_run() {
+    let mut once = route(&["notes"]);
+    once.max_calls = 1;
+    let fixture = fixture(
+        "reads-only",
+        once,
+        vec![
+            choice("notes"),
+            // An id the question gave, so grounding keeps it.
+            json_reply(
+                &json!({ "operation": "delete", "id": "0192f0d0-0000-7000-8000-000000000001" }),
+            ),
+            text("I can't change notes from here."),
+        ],
+    )
+    .await;
+    let reply = fixture
+        .chat("Delete note 0192f0d0-0000-7000-8000-000000000001")
+        .await;
+    assert_eq!(
+        reply["answer"], "I can't change notes from here.",
+        "{reply}"
+    );
+    assert!(tool_calls(&reply).is_empty(), "{reply}");
+    assert!(user_text(&fixture.seen()[2]).contains("only reads"));
+    let decisions = fixture.decisions(&reply).await;
+    assert!(
+        decisions.iter().any(|step| step["rule"] == "reads_only"),
+        "{decisions:?}"
+    );
+}

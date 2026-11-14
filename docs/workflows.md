@@ -315,7 +315,10 @@ A turn goes:
    it's wrong. Arguments the same as a call already made are asked for once
    more, told what already ran; the same again ends the profile.
 5. **Dispatch.** The call goes through dispatch like any other: the same
-   checks, budget, trust labels and receipt.
+   checks, budget, trust labels and receipt. A turn only reads: a call
+   that would change something, by what the tool says of these arguments
+   (memory's `search` reads, its `delete` doesn't), isn't run, and the
+   next choice sees that it was refused.
 6. **Next.** A model sees each result, cut to 1,500 characters, and picks
    `done` or another of the profile's tools, until `max_calls`.
 7. **Writer.** The writer agent answers from the question, the earlier turns
@@ -326,7 +329,8 @@ No step is offered tools. Each choice uses the same pinned decision prompt,
 and its reply must be one of the names. The turn is one run, `chat`, and its
 trajectory records every choice (`choice`, with what was offered),
 arguments kept and dropped (`arguments`), and each rule that fired
-(`rule`: `invalid_choice`, `stored_first`, `no_repeat`, `max_calls`), so a
+(`rule`: `invalid_choice`, `stored_first`, `reads_only`, `no_repeat`,
+`max_calls`), so a
 review sees why it went where it went. Its harness id covers the route,
 each profile's agent and the writer, so changing any of them is a new
 harness.
