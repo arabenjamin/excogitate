@@ -3,6 +3,14 @@
 All notable changes are listed here. The file is generated from the
 Conventional Commits by [git-cliff](https://git-cliff.org) (`cliff.toml`).
 
+## [0.12.0] - 2026-11-14
+
+### Added
+
+- A failing model is left alone while it cools
+- Roles, the models for a job in the order to try them
+- The routed front door, a line of workers (breaking)
+
 ## [0.11.0] - 2026-11-14
 
 ### Added
