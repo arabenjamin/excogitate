@@ -429,3 +429,31 @@ async fn a_call_that_would_write_isnt_run() {
         "{decisions:?}"
     );
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_search_query_in_other_words_is_kept_since_a_search_needs_one() {
+    let mut once = route(&["notes"]);
+    once.max_calls = 1;
+    let fixture = fixture(
+        "rephrased",
+        once,
+        vec![
+            choice("notes"),
+            // Not words of the question: memory requires a query only for a
+            // search, through its schema's allOf, which the model isn't shown.
+            json_reply(&json!({ "operation": "search", "query": "otter behaviour" })),
+            text("Nothing on otters."),
+        ],
+    )
+    .await;
+    let reply = fixture.chat("What do otters do?").await;
+    let call = &reply["receipt"]["tool_calls"][0];
+    assert_eq!(call["tool"], "memory", "{reply}");
+    assert_eq!(call["status"], "ran", "{reply}");
+    let decisions = fixture.decisions(&reply).await;
+    assert_eq!(
+        decisions[1]["kept"],
+        json!({ "operation": "search", "query": "otter behaviour" }).to_string(),
+        "{decisions:?}"
+    );
+}

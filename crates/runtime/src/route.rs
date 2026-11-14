@@ -78,6 +78,41 @@ fn today() -> String {
     chrono::Utc::now().format("%Y-%m-%d").to_string()
 }
 
+fn names(list: Option<&Value>) -> Vec<&str> {
+    list.and_then(Value::as_array)
+        .map(|names| names.iter().filter_map(Value::as_str).collect())
+        .unwrap_or_default()
+}
+
+/// The fields `schema` requires of `arguments`: its own `required`, and
+/// those of each `allOf` branch whose `if` these arguments meet, as a
+/// tool's schema says "a search needs a query" (memory's does).
+fn required_for<'a>(schema: &'a Value, arguments: &Value) -> Vec<&'a str> {
+    let mut required = names(schema.get("required"));
+    let branches = schema.get("allOf").and_then(Value::as_array);
+    for branch in branches.into_iter().flatten() {
+        let (Some(condition), Some(then)) = (branch.get("if"), branch.get("then")) else {
+            continue;
+        };
+        let present = names(condition.get("required"))
+            .iter()
+            .all(|name| arguments.get(name).is_some_and(|value| !value.is_null()));
+        let consts = condition
+            .get("properties")
+            .and_then(Value::as_object)
+            .into_iter()
+            .flatten()
+            .all(|(name, spec)| {
+                spec.get("const")
+                    .is_none_or(|wanted| arguments.get(name) == Some(wanted))
+            });
+        if present && consts {
+            required.extend(names(then.get("required")));
+        }
+    }
+    required
+}
+
 /// Drops an optional free-text argument nothing said: a string in neither
 /// the turn nor an earlier result is the model's invention (a list filter
 /// given `kind: "all"` comes back empty). A value from an enum stays, and a
@@ -85,11 +120,7 @@ fn today() -> String {
 /// only those said stay. Returns what's kept and what's dropped.
 pub(crate) fn grounded(arguments: &Value, schema: &Value, said: &str) -> (Value, Value) {
     let said = said.to_lowercase();
-    let required: Vec<&str> = schema
-        .get("required")
-        .and_then(Value::as_array)
-        .map(|names| names.iter().filter_map(Value::as_str).collect())
-        .unwrap_or_default();
+    let required = required_for(schema, arguments);
     let mut kept = Map::new();
     let mut dropped = Map::new();
     let Some(given) = arguments.as_object() else {
@@ -468,7 +499,9 @@ impl Turn<'_> {
             let filled = self
                 .fill(session, instructions, &definition, &schema, found, &tried)
                 .await?;
-            let (kept, dropped) = grounded(&filled, &schema, &said);
+            // The full schema: what the model is shown drops `allOf`, where a
+            // field is required only for some calls.
+            let (kept, dropped) = grounded(&filled, &definition.input_schema, &said);
             session
                 .record_decision(Step::Arguments {
                     tool: tool.to_owned(),
@@ -696,7 +729,16 @@ impl Turn<'_> {
             .await?;
         let answer = completion.response.content.trim().to_owned();
         if answer.is_empty() {
-            return Err(Stop::Setup("the writer's reply was empty".to_owned()));
+            // A reasoning model can spend the whole limit before it writes.
+            return Err(Stop::Setup(
+                if completion.response.finish == FinishReason::Length {
+                    "the writer's reply was empty: it used its whole output limit \
+                     (the writer agent's max_output_tokens) before writing"
+                } else {
+                    "the writer's reply was empty"
+                }
+                .to_owned(),
+            ));
         }
         session.answer_written(&answer, completion.response.finish == FinishReason::Length);
         Ok(answer)
@@ -706,6 +748,35 @@ impl Turn<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_field_a_matching_branch_requires_stays() {
+        // Memory's shape: `query` is required only for a search.
+        let schema = json!({
+            "required": ["operation"],
+            "properties": {
+                "operation": {"type": "string", "enum": ["search", "get"]},
+                "query": {"type": "string"},
+                "id": {"type": "string"},
+            },
+            "allOf": [
+                {"if": {"required": ["operation"], "properties": {"operation": {"const": "search"}}},
+                 "then": {"required": ["query"]}},
+                {"if": {"required": ["operation"], "properties": {"operation": {"const": "get"}}},
+                 "then": {"required": ["id"]}},
+            ]
+        });
+        let (kept, dropped) = grounded(
+            &json!({"operation": "search", "query": "Musk and Putin relationship", "id": "made-up"}),
+            &schema,
+            "What do we know about Elon Musk and Vladimir Putin?",
+        );
+        assert_eq!(
+            kept,
+            json!({"operation": "search", "query": "Musk and Putin relationship"})
+        );
+        assert_eq!(dropped, json!({"id": "made-up"}));
+    }
 
     #[test]
     fn an_optional_string_nothing_said_is_dropped_and_a_required_one_stays() {
