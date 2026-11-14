@@ -3,6 +3,12 @@
 All notable changes are listed here. The file is generated from the
 Conventional Commits by [git-cliff](https://git-cliff.org) (`cliff.toml`).
 
+## [0.13.0] - 2026-11-14
+
+### Added
+
+- A routed turn only reads
+
 ## [0.12.0] - 2026-11-14
 
 ### Added
