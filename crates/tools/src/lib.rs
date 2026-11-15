@@ -8,11 +8,13 @@
 
 #![deny(clippy::string_slice, clippy::indexing_slicing)]
 
+mod calculate_tool;
 mod clamp;
 mod http;
 mod job_history_tool;
 mod memory_tool;
 
+pub use calculate_tool::CalculateTool;
 pub use http::{
     AddressGuard, Credential, HttpConfig, HttpConfigError, HttpRequestTool, MAX_BODY_CHARS, Method,
     readable_text,

@@ -301,7 +301,10 @@ async fn mcp_works_over_http() {
         .iter()
         .map(|tool| tool["name"].as_str().unwrap())
         .collect();
-    assert_eq!(names, ["chat", "http_request", "job_history", "memory"]);
+    assert_eq!(
+        names,
+        ["calculate", "chat", "http_request", "job_history", "memory"]
+    );
 
     let call = json!({ "name": "chat", "arguments": { "message": "hi" } });
     let reply = body_of(running.post("/mcp", &rpc(3, "tools/call", &call)).await).await;

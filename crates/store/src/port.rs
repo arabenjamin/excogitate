@@ -60,6 +60,22 @@ pub trait NoteReader {
         page: PageRequest,
     ) -> Result<NotesStored, StoreError>;
 
+    /// The notes whose title or body contains `term`, case ignored, in
+    /// `window` if one is given: the latest stored first and then by id,
+    /// with how many there are in all. A search ranks and stops; this
+    /// counts, so "how many notes mention X" has an answer.
+    ///
+    /// # Errors
+    ///
+    /// [`StoreError::Backend`] if the store fails.
+    async fn notes_containing(
+        &self,
+        term: &str,
+        window: Option<StoredWindow>,
+        classes: ClassFilter,
+        page: PageRequest,
+    ) -> Result<NotesStored, StoreError>;
+
     /// Full-text search, best first. Case doesn't matter, and digits count
     /// (`2026` and `v3` must be findable).
     ///

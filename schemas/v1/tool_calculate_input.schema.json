@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "What the model asks.",
+  "properties": {
+    "expression": {
+      "description": "The expression, such as `(1074 - 207) / 1074 * 100`.",
+      "maxLength": 500,
+      "minLength": 1,
+      "type": "string"
+    }
+  },
+  "required": [
+    "expression"
+  ],
+  "title": "CalculateArgs",
+  "type": "object"
+}

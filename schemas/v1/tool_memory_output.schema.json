@@ -450,6 +450,63 @@
     },
     {
       "additionalProperties": false,
+      "description": "How many notes mention a term, and the latest of them.",
+      "properties": {
+        "has_more": {
+          "description": "True when more notes mention it than are listed.",
+          "type": "boolean"
+        },
+        "notes": {
+          "description": "The latest of them.",
+          "items": {
+            "$ref": "#/$defs/RecentNote"
+          },
+          "maxItems": 50,
+          "type": "array"
+        },
+        "result": {
+          "const": "count",
+          "type": "string"
+        },
+        "since": {
+          "description": "The window's start, if one was kept.",
+          "format": "date-time",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "term": {
+          "description": "The term counted.",
+          "maxLength": 200,
+          "type": "string"
+        },
+        "total": {
+          "description": "How many notes mention it, listed or not.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "until": {
+          "description": "Where it ends, not included.",
+          "format": "date-time",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "result",
+        "term",
+        "total",
+        "has_more",
+        "notes"
+      ],
+      "type": "object"
+    },
+    {
+      "additionalProperties": false,
       "description": "The notes stored in a window, the latest first.",
       "properties": {
         "has_more": {

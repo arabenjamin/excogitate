@@ -363,6 +363,80 @@ pub async fn notes_list_by_when_they_were_stored(store: &dyn Store) {
     assert_eq!(none.notes.items.len(), 0);
 }
 
+/// The notes that mention a term, counted, case ignored, in a window or
+/// not: a count that a search can't give.
+pub async fn notes_that_mention_a_term_are_counted(store: &dyn Store) {
+    let stored = |body: &str, title: &str, n: i64, data_class: DataClass| {
+        let mut made = note(body);
+        made.title = title.to_owned();
+        made.provenance = provenance(data_class, Trust::Trusted);
+        made.provenance.stored_at = at(n);
+        made
+    };
+    let body = stored(
+        "Notes on Otter.cam footage",
+        "Footage",
+        10,
+        DataClass::Private,
+    );
+    let title = stored(
+        "about inference",
+        "otter.cam vs the zoo",
+        20,
+        DataClass::Private,
+    );
+    let public = stored("otter.cam at dusk", "Dusk", 30, DataClass::Public);
+    let other = stored(
+        "Nothing about it 100% here",
+        "Other",
+        40,
+        DataClass::Private,
+    );
+    for made in [&body, &title, &public, &other] {
+        store
+            .apply(note_with_text(made, "chunk text", None))
+            .await
+            .unwrap();
+    }
+    let all = store
+        .notes_containing("OTTER.CAM", None, ClassFilter::Any, page(2))
+        .await
+        .unwrap();
+    assert_eq!(all.total, 3, "in a body or a title, case ignored");
+    assert!(all.notes.has_more);
+    assert_eq!(all.notes.items[0].id, public.id, "the latest first");
+
+    let window = store::StoredWindow {
+        since: at(15),
+        until: Some(at(30)),
+    };
+    let windowed = store
+        .notes_containing("otter.cam", Some(window), ClassFilter::Any, page(5))
+        .await
+        .unwrap();
+    assert_eq!(windowed.total, 1);
+    assert_eq!(windowed.notes.items[0].id, title.id);
+
+    let public_only = store
+        .notes_containing("otter.cam", None, ClassFilter::PublicOnly, page(5))
+        .await
+        .unwrap();
+    assert_eq!(public_only.total, 1);
+    assert_eq!(public_only.notes.items[0].id, public.id);
+
+    // `%` and `_` are only characters, not patterns.
+    let percent = store
+        .notes_containing("100%", None, ClassFilter::Any, page(5))
+        .await
+        .unwrap();
+    assert_eq!(percent.total, 1);
+    let underscore = store
+        .notes_containing("otter_cam", None, ClassFilter::Any, page(5))
+        .await
+        .unwrap();
+    assert_eq!(underscore.total, 0);
+}
+
 /// Nearest first.
 pub async fn vector_search_orders_by_similarity(store: &dyn Store) {
     let (near, far) = (note("near"), note("far"));

@@ -5,6 +5,7 @@
         "store",
         "search",
         "recent",
+        "count",
         "get",
         "update",
         "delete",
@@ -45,6 +46,30 @@
         "properties": {
           "operation": {
             "const": "search"
+          }
+        },
+        "required": [
+          "operation"
+        ]
+      },
+      "then": {
+        "properties": {
+          "query": {
+            "not": {
+              "type": "null"
+            }
+          }
+        },
+        "required": [
+          "query"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "operation": {
+            "const": "count"
           }
         },
         "required": [

@@ -32,6 +32,8 @@ const MAX_REASON: usize = 512;
 const DEFAULT_LIMIT: u32 = 5;
 /// How many notes `recent` lists unless asked.
 const DEFAULT_RECENT: u32 = 20;
+/// How many of the notes `count` counts it lists unless asked.
+const DEFAULT_COUNTED: u32 = 10;
 /// The most days `recent` looks back.
 const MAX_DAYS: u32 = 366;
 /// How much of each note `recent` shows: `get` reads it whole.
@@ -43,6 +45,8 @@ const DESCRIPTION: &str = "Long-term memory. `store` keeps text (needs `text`). 
 `search` finds notes by meaning and keywords (needs `query`), and items in the sources plugins \
 offer, listed under `sources`. `recent` lists the notes stored in a time window, the latest first, \
 with how many there are (needs `days`, the last so many days, or `since`; `until` ends it). \
+`count` counts the notes whose title or text contains a word or phrase, case ignored (needs \
+`query`, the term; `days` or `since` and `until` keep a window), and lists the latest of them. \
 `get` reads one note (needs `id`). `open` reads one source item \
 whole (needs `source` and `item`). \
 `update` changes one (needs `id` and at least one of `title`, `text`, `tags`). \
@@ -54,6 +58,7 @@ enum Operation {
     Store,
     Search,
     Recent,
+    Count,
     Get,
     Update,
     Delete,
@@ -68,9 +73,10 @@ const MAX_SOURCE: usize = 65;
 const MAX_LISTED: usize = 50;
 
 /// The fields each operation can't do without.
-const REQUIRED: [(&str, &[&str]); 5] = [
+const REQUIRED: [(&str, &[&str]); 6] = [
     ("store", &["text"]),
     ("search", &["query"]),
+    ("count", &["query"]),
     ("get", &["id"]),
     ("delete", &["id"]),
     ("open", &["source", "item"]),
@@ -349,6 +355,23 @@ enum MemoryResult {
         /// When it last changed, if the source knows.
         updated_at: Option<DateTime<Utc>>,
     },
+    /// How many notes mention a term, and the latest of them.
+    Count {
+        /// The term counted.
+        #[schemars(length(max = memory::MAX_COUNT_TERM))]
+        term: String,
+        /// The window's start, if one was kept.
+        since: Option<DateTime<Utc>>,
+        /// Where it ends, not included.
+        until: Option<DateTime<Utc>>,
+        /// How many notes mention it, listed or not.
+        total: u64,
+        /// True when more notes mention it than are listed.
+        has_more: bool,
+        /// The latest of them.
+        #[schemars(length(max = memory::MAX_SEARCH_LIMIT))]
+        notes: Vec<RecentNote>,
+    },
     /// The notes stored in a window, the latest first.
     Recent {
         /// The window's start.
@@ -456,6 +479,21 @@ fn window_of(args: &MemoryArgs, now: DateTime<Utc>) -> Result<StoredWindow, Tool
         (None, None) => return Err(missing("days` or `since")),
     };
     Ok(StoredWindow { since, until })
+}
+
+/// The window `count` keeps, if any: the same fields as `recent`'s, all
+/// optional.
+fn optional_window(
+    args: &MemoryArgs,
+    now: DateTime<Utc>,
+) -> Result<Option<StoredWindow>, ToolFailure> {
+    if args.days.is_none() && args.since.is_none() && args.until.is_none() {
+        return Ok(None);
+    }
+    if args.days.is_none() && args.since.is_none() {
+        return Err(ToolFailure::new("`until` needs `days` or `since`"));
+    }
+    window_of(args, now).map(Some)
 }
 
 fn recent_note(note: Note) -> RecentNote {
@@ -766,6 +804,46 @@ impl MemoryTool {
         ))
     }
 
+    async fn count(
+        &self,
+        args: &MemoryArgs,
+        context: ToolContext,
+    ) -> Result<(MemoryResult, Trust, u64), ToolFailure> {
+        let term = args.query.clone().ok_or_else(|| missing("query"))?;
+        let window = optional_window(args, Utc::now())?;
+        let found = self
+            .memory
+            .count(
+                &term,
+                window,
+                classes_for(context.data_class),
+                args.limit.unwrap_or(DEFAULT_COUNTED),
+            )
+            .await
+            .map_err(|error| failure(&error))?;
+        let trusted = found
+            .notes
+            .items
+            .iter()
+            .all(|note| note.provenance.trust == Trust::Trusted);
+        Ok((
+            MemoryResult::Count {
+                term: clamped(term.trim().to_owned(), memory::MAX_COUNT_TERM),
+                since: window.map(|window| window.since),
+                until: window.and_then(|window| window.until),
+                total: found.total,
+                has_more: found.notes.has_more,
+                notes: found.notes.items.into_iter().map(recent_note).collect(),
+            },
+            if trusted {
+                Trust::Trusted
+            } else {
+                Trust::Untrusted
+            },
+            0,
+        ))
+    }
+
     async fn delete(
         &self,
         id: NoteId,
@@ -792,7 +870,7 @@ impl Tool for MemoryTool {
 
     fn effect_of(&self, arguments: &Value) -> Effect {
         match arguments.get("operation").and_then(Value::as_str) {
-            Some("search" | "recent" | "get" | "open") => Effect::Read,
+            Some("search" | "recent" | "count" | "get" | "open") => Effect::Read,
             _ => Effect::Write,
         }
     }
@@ -814,6 +892,7 @@ impl Tool for MemoryTool {
                 (result, trust, cost)
             }
             Operation::Recent => self.recent(&args, context).await?,
+            Operation::Count => self.count(&args, context).await?,
             Operation::Get => self.get(id.ok_or_else(|| missing("id"))?, context).await?,
             Operation::Update => {
                 self.update(id.ok_or_else(|| missing("id"))?, args, context)

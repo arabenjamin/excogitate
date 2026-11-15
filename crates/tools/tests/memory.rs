@@ -535,3 +535,68 @@ async fn recent_needs_one_window_that_makes_sense() {
         assert!(refused.is_err(), "{args}");
     }
 }
+
+#[tokio::test]
+async fn count_says_how_many_notes_mention_a_term_and_lists_the_latest() {
+    let memory = memory();
+    kept(&memory, "otter.cam, an hour ago", 1, DataClass::Private).await;
+    kept(
+        &memory,
+        "Otter.CAM footage, five hours ago",
+        5,
+        DataClass::Private,
+    )
+    .await;
+    kept(
+        &memory,
+        "otter.cam in public, three days ago",
+        72,
+        DataClass::Public,
+    )
+    .await;
+    kept(&memory, "badgers, an hour ago", 1, DataClass::Private).await;
+    let tool = MemoryTool::new(memory);
+    assert_eq!(
+        tool.effect_of(&json!({ "operation": "count", "query": "x" })),
+        Effect::Read
+    );
+
+    let all = call(
+        &tool,
+        json!({ "operation": "count", "query": "otter.cam", "limit": 2 }),
+        private(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(all.value["result"], "count");
+    assert_eq!(all.value["total"], 3, "{}", all.value);
+    assert_eq!(all.value["has_more"], true);
+    assert_eq!(all.value["notes"][0]["title"], "otter.cam, an hour ago");
+
+    let day = call(
+        &tool,
+        json!({ "operation": "count", "query": "otter.cam", "days": 1 }),
+        private(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(day.value["total"], 2, "{}", day.value);
+    assert_eq!(day.value["has_more"], false);
+
+    let public_only = call(
+        &tool,
+        json!({ "operation": "count", "query": "otter.cam" }),
+        public(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(public_only.value["total"], 1);
+
+    for args in [
+        json!({ "operation": "count" }),
+        json!({ "operation": "count", "query": "  " }),
+        json!({ "operation": "count", "query": "x", "until": "2026-11-13" }),
+    ] {
+        assert!(tool.run(args.clone(), private()).await.is_err(), "{args}");
+    }
+}

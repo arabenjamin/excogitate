@@ -286,6 +286,44 @@ impl NoteReader for DuckDbStore {
         .await
     }
 
+    async fn notes_containing(
+        &self,
+        term: &str,
+        window: Option<StoredWindow>,
+        classes: ClassFilter,
+        page: PageRequest,
+    ) -> Result<NotesStored, StoreError> {
+        let public_only = matches!(classes, ClassFilter::PublicOnly);
+        let term = term.to_lowercase();
+        let (since, until) = (window.map(|w| w.since), window.and_then(|w| w.until));
+        self.read(move |connection| {
+            // strpos, not LIKE: a term's `%` and `_` are only characters.
+            let filter = "WHERE (strpos(lower(body), ?) > 0 OR strpos(lower(title), ?) > 0) \
+                          AND (?::TIMESTAMP IS NULL OR stored_at >= ?) \
+                          AND (?::TIMESTAMP IS NULL OR stored_at < ?) \
+                          AND (NOT ? OR data_class = 'public')";
+            let total: i64 = connection
+                .query_row(
+                    &format!("SELECT count(*) FROM notes {filter}"),
+                    params![term, term, since, since, until, until, public_only],
+                    |row| row.get(0),
+                )
+                .map_err(backend)?;
+            let notes = paged(
+                connection,
+                &format!("SELECT {NOTE_COLUMNS} FROM notes {filter} ORDER BY stored_at DESC, id"),
+                params![term, term, since, since, until, until, public_only],
+                page,
+                note_at,
+            )?;
+            Ok(NotesStored {
+                notes,
+                total: u64::try_from(total).unwrap_or_default(),
+            })
+        })
+        .await
+    }
+
     async fn search_text(
         &self,
         query: &str,

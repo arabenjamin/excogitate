@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "What it worked out.",
+  "properties": {
+    "expression": {
+      "description": "The expression, as given.",
+      "maxLength": 500,
+      "type": "string"
+    },
+    "text": {
+      "description": "The value written out, to 12 significant digits.",
+      "maxLength": 64,
+      "type": "string"
+    },
+    "value": {
+      "description": "Its value.",
+      "format": "double",
+      "type": "number"
+    }
+  },
+  "required": [
+    "expression",
+    "value",
+    "text"
+  ],
+  "title": "CalculateResult",
+  "type": "object"
+}

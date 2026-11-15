@@ -43,7 +43,7 @@ schemas, budgets, and memory. Excogitate is that harness.
   build feature.
 - **It takes no side on models.** It works with any endpoint that speaks the
   OpenAI wire format, local or cloud.
-- **It ships three tools,** `http_request`, `memory` and `job_history`.
+- **It ships four tools,** `http_request`, `memory`, `job_history` and `calculate`.
   Everything else comes from plugins. Excogitate has opinions on how a plugin is built, and none
   on what it does.
 

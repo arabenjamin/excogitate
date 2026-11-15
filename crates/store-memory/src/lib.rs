@@ -353,6 +353,39 @@ impl NoteReader for MemoryStore {
         })
     }
 
+    async fn notes_containing(
+        &self,
+        term: &str,
+        window: Option<StoredWindow>,
+        classes: ClassFilter,
+        page: PageRequest,
+    ) -> Result<NotesStored, StoreError> {
+        let term = term.to_lowercase();
+        let mut held: Vec<Note> = self
+            .state()
+            .notes
+            .values()
+            .filter(|note| {
+                admits(classes, note)
+                    && window.is_none_or(|window| window.holds(note.provenance.stored_at))
+                    && (note.body.to_lowercase().contains(&term)
+                        || note.title.to_lowercase().contains(&term))
+            })
+            .cloned()
+            .collect();
+        held.sort_by(|a, b| {
+            b.provenance
+                .stored_at
+                .cmp(&a.provenance.stored_at)
+                .then_with(|| a.id.cmp(&b.id))
+        });
+        let total = held.len() as u64;
+        Ok(NotesStored {
+            notes: Page::from_sorted(held, page),
+            total,
+        })
+    }
+
     async fn search_text(
         &self,
         query: &str,

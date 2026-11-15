@@ -1,20 +1,22 @@
 # The bundled tools
 
-Three tools come with Excogitate: `memory`, so a model can keep what it learns,
-`http_request`, so it has something to learn from, and `job_history`, so it
-can say what it has done. Everything else comes from plugins. All three are in
-`crates/tools`, and all three treat the model as an
+Four tools come with Excogitate: `memory`, so a model can keep what it learns,
+`http_request`, so it has something to learn from, `job_history`, so it can
+say what it has done, and `calculate`, so it doesn't do arithmetic in its
+head. Everything else comes from plugins. All four are in `crates/tools`, and
+they treat the model as an
 adversary: its arguments say what it wants, and Excogitate decides where data
 may go, who may see it and how far it can be trusted.
 
 Each call's real effect goes on the receipt. `memory` counts as a read for
-`search`, `recent`, `get` and `open`, `job_history` always does, and `http_request` for `GET` and `HEAD`. Anything else
+`search`, `recent`, `count`, `get` and `open`, `job_history` and `calculate`
+always do, and `http_request` for `GET` and `HEAD`. Anything else
 counts against the run's write budget.
 
 ## `memory`
 
 One flat argument object, with an `operation` of `store`, `search`, `recent`,
-`get`, `update`, `delete` or `open`. The schema states which fields each one
+`count`, `get`, `update`, `delete` or `open`. The schema states which fields each one
 needs. A search can set `min_similarity` to keep only notes close in meaning,
 and each hit reports its `similarity`.
 
@@ -26,6 +28,14 @@ its start in UTC. The answer gives the window it used, `total` (how many
 notes it holds, listed or not) and `has_more`, and each note's start as
 `excerpt`, marked `truncated`; `get` reads one whole. It lists 20 unless
 `limit` says otherwise, at most 50.
+
+`count` says how many notes mention a word or phrase (`query`) in their
+title or text, case ignored, which a search can't: a search ranks and
+stops. `days`, or `since` and `until`, keep a window, as for `recent`;
+without one it counts every note. The answer gives `total`, `has_more`
+and the latest of the notes, as `recent` lists them (10 unless `limit`
+says otherwise), so a count can be drilled into. It matches the letters
+as written: `e-mail` doesn't count `email`.
 
 A search also reads the sources plugins offer. Their items come back under
 `sources`, ranked with the notes, so `score` compares across both; each says
@@ -57,6 +67,19 @@ given, at most 50), and `has_more` says there are more. It never lists a
 job's inputs or result, which can hold private data; a public run gets no
 `last_error` either, as a plugin's own look at its jobs doesn't. Errors are
 text from tools and pages, so the result is untrusted.
+
+## `calculate`
+
+Works out an arithmetic `expression` and answers its `value`, with `text`,
+the value to 12 significant digits. It knows `+ - * /`, `^` for a power,
+`%` after a number for a percent (`18% * 2.40`), parentheses, and
+`round(x)` or `round(x, digits)`, `floor`, `ceil`, `abs`, `sqrt`, `min`,
+`max`, `pi` and `e`. There are no other names, so an expression can't run
+or read anything. It refuses what isn't arithmetic, division by zero and
+a result that isn't a finite number, and says why. It takes numbers
+only: it can't count a list or read a result, so each number is written
+out, from the question or a result such as a `total`. The numbers come from
+the run, so the result is trusted: nothing in it can instruct.
 
 ## `http_request`
 

@@ -107,7 +107,10 @@ async fn it_lists_a_chat_and_the_two_tools_in_forms_clients_accept() {
     .await;
     let tools = replies[0]["result"]["tools"].as_array().unwrap();
     let names: Vec<&str> = tools.iter().map(|t| t["name"].as_str().unwrap()).collect();
-    assert_eq!(names, ["chat", "http_request", "job_history", "memory"]);
+    assert_eq!(
+        names,
+        ["calculate", "chat", "http_request", "job_history", "memory"]
+    );
     for tool in tools {
         assert_eq!(tool["inputSchema"]["type"], "object", "{}", tool["name"]);
         assert_eq!(
@@ -207,8 +210,13 @@ async fn chat_replies_meet_their_schema() {
         &[json!({ "jsonrpc": "2.0", "id": 1, "method": "tools/list" })],
     )
     .await;
-    let validator =
-        Validator::from_schema(&listed[0]["result"]["tools"][0]["outputSchema"]).unwrap();
+    let chat = listed[0]["result"]["tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|tool| tool["name"] == "chat")
+        .unwrap();
+    let validator = Validator::from_schema(&chat["outputSchema"]).unwrap();
     let result = call_one(&runtime, "chat", &json!({ "message": "hi" })).await;
     validator.check(&result["structuredContent"]).unwrap();
 }
@@ -368,7 +376,10 @@ async fn the_model_gets_the_owners_prompt_and_only_the_tools() {
         .iter()
         .map(|tool| tool["function"]["name"].as_str().unwrap())
         .collect();
-    assert_eq!(names, ["http_request", "job_history", "memory"]);
+    assert_eq!(
+        names,
+        ["calculate", "http_request", "job_history", "memory"]
+    );
     for tool in tools {
         assert_eq!(tool["function"]["parameters"]["allOf"], Value::Null);
     }

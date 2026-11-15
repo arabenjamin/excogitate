@@ -23,6 +23,8 @@ pub use lake::{
 
 /// The most notes one search may return.
 pub const MAX_SEARCH_LIMIT: u32 = 50;
+/// The longest term `count` takes.
+pub const MAX_COUNT_TERM: usize = 200;
 
 /// How many times an input is halved after the embedder refuses it.
 const MAX_HALVINGS: u32 = 2;
@@ -501,6 +503,45 @@ impl Memory {
         }
         let page = PageRequest::new(limit, 0)?;
         Ok(self.store.notes_stored(window, classes, page).await?)
+    }
+
+    /// The notes that mention `term` (in a title or body, case ignored),
+    /// in `window` if given, that `classes` admits: how many in all, and
+    /// the latest `limit` of them, so a count can be drilled into.
+    ///
+    /// # Errors
+    ///
+    /// [`MemoryError::Invalid`] if the term is empty or too long, the limit
+    /// is out of range or the window ends before it starts;
+    /// [`MemoryError::Store`] if the store fails.
+    pub async fn count(
+        &self,
+        term: &str,
+        window: Option<StoredWindow>,
+        classes: ClassFilter,
+        limit: u32,
+    ) -> Result<NotesStored, MemoryError> {
+        let term = term.trim();
+        if term.is_empty() || term.chars().count() > MAX_COUNT_TERM {
+            return Err(MemoryError::Invalid(format!(
+                "the term to count must be 1 to {MAX_COUNT_TERM} characters"
+            )));
+        }
+        if limit == 0 || limit > MAX_SEARCH_LIMIT {
+            return Err(MemoryError::Invalid(format!(
+                "limit must be 1 to {MAX_SEARCH_LIMIT}"
+            )));
+        }
+        if window.is_some_and(|window| window.until.is_some_and(|until| until <= window.since)) {
+            return Err(MemoryError::Invalid(
+                "the window ends before it starts".to_owned(),
+            ));
+        }
+        let page = PageRequest::new(limit, 0)?;
+        Ok(self
+            .store
+            .notes_containing(term, window, classes, page)
+            .await?)
     }
 
     async fn visible(&self, id: NoteId, classes: ClassFilter) -> Result<Note, MemoryError> {

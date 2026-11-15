@@ -142,6 +142,47 @@ impl NoteReader for Neo4jStore {
         })
     }
 
+    async fn notes_containing(
+        &self,
+        term: &str,
+        window: Option<StoredWindow>,
+        classes: ClassFilter,
+        page: PageRequest,
+    ) -> Result<NotesStored, StoreError> {
+        let filter = format!(
+            "MATCH (n:Note) WHERE (toLower(n.body) CONTAINS $term \
+             OR toLower(n.title) CONTAINS $term) \
+             AND ($since IS NULL OR n.stored_at >= $since) \
+             AND ($until IS NULL OR n.stored_at < $until) AND {}",
+            class_condition(classes)
+        );
+        let term = term.to_lowercase();
+        let (since, until) = (window.map(|w| w.since), window.and_then(|w| w.until));
+        let bound = |text: &str| {
+            query(text)
+                .param("term", term.clone())
+                .param("since", codec::maybe_at(since))
+                .param("until", codec::maybe_at(until))
+        };
+        let total = self
+            .rows(bound(&format!("{filter} RETURN count(n) AS total")))
+            .await?;
+        let total: i64 = total
+            .first()
+            .map_or(Ok(0), |row| codec::get(row, "total"))?;
+        let rows = self
+            .rows(bound(&format!(
+                "{filter} RETURN {} ORDER BY n.stored_at DESC, n.id {}",
+                codec::note_columns(),
+                page_clause(page)
+            )))
+            .await?;
+        Ok(NotesStored {
+            notes: page_of(&rows, page, codec::note)?,
+            total: u64::try_from(total).unwrap_or_default(),
+        })
+    }
+
     async fn search_text(
         &self,
         text: &str,
