@@ -3,6 +3,13 @@
 All notable changes are listed here. The file is generated from the
 Conventional Commits by [git-cliff](https://git-cliff.org) (`cliff.toml`).
 
+## [0.15.0] - 2026-11-14
+
+### Added
+
+- Memory counts notes, and calculate works out arithmetic (breaking)
+- A routed turn about several subjects is split first
+
 ## [0.14.0] - 2026-11-14
 
 ### Added
