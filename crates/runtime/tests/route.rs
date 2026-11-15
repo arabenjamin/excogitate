@@ -83,6 +83,7 @@ fn route(profiles: &[&str]) -> Route {
         small_talk: true,
         max_calls: 3,
         max_parts: 1,
+        relevance: false,
         choice_role: None,
         arguments_role: None,
         only_when_asked: Vec::new(),
@@ -577,4 +578,84 @@ async fn calculate_isnt_a_first_call_but_is_offered_once_a_result_is_in() {
     assert!(user_text(&seen[1]).contains("Fill in the arguments for one call to memory"));
     let next = user_text(&seen[2]);
     assert!(next.contains("calculate"), "offered after a result: {next}");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_search_that_misses_is_made_once_more_in_other_words() {
+    let mut checked = route(&["notes"]);
+    checked.relevance = true;
+    let fixture = fixture(
+        "relevance-retry",
+        checked,
+        vec![
+            choice("notes"),
+            json_reply(&json!({ "operation": "search", "query": "otters" })),
+            choice("none"),
+            json_reply(&json!({ "operation": "search", "query": "otters sleeping" })),
+            choice("answers"),
+            choice("done"),
+            text("They hold hands."),
+        ],
+    )
+    .await;
+    let reply = fixture.chat("What do otters do when they sleep?").await;
+    assert_eq!(reply["answer"], "They hold hands.", "{reply}");
+    assert_eq!(tool_calls(&reply), ["memory", "memory"], "{reply}");
+    let seen = fixture.seen();
+    // The retry was asked for other words, told what already ran.
+    assert!(
+        user_text(&seen[3]).contains("already ran with"),
+        "{:?}",
+        seen[3]
+    );
+    // The writer sees which search missed.
+    let written = user_text(&seen[6]);
+    assert_eq!(
+        written
+            .matches("(judged not to answer the question)")
+            .count(),
+        1,
+        "{written}"
+    );
+    let decisions = fixture.decisions(&reply).await;
+    assert!(
+        decisions.iter().any(|step| step["rule"] == "retry"),
+        "{decisions:?}"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn two_searches_that_miss_stop_the_profile() {
+    let mut checked = route(&["notes"]);
+    checked.relevance = true;
+    let fixture = fixture(
+        "relevance-stop",
+        checked,
+        vec![
+            choice("notes"),
+            json_reply(&json!({ "operation": "search", "query": "otters" })),
+            choice("none"),
+            json_reply(&json!({ "operation": "search", "query": "otters sleeping" })),
+            choice("none"),
+            text("Nothing stored says."),
+        ],
+    )
+    .await;
+    let reply = fixture.chat("What do otters do when they sleep?").await;
+    assert_eq!(reply["answer"], "Nothing stored says.", "{reply}");
+    // No next choice after the second miss: the writer comes straight on.
+    assert_eq!(fixture.seen().len(), 6);
+    let written = user_text(&fixture.seen()[5]);
+    assert_eq!(
+        written
+            .matches("(judged not to answer the question)")
+            .count(),
+        2,
+        "{written}"
+    );
+    let decisions = fixture.decisions(&reply).await;
+    assert!(
+        decisions.iter().any(|step| step["rule"] == "not_found"),
+        "{decisions:?}"
+    );
 }

@@ -264,6 +264,12 @@ pub struct Route {
     #[serde(default = "max_parts_default")]
     #[schemars(range(min = 1, max = 4))]
     pub max_parts: u32,
+    /// After a memory search, whether a choice says if what it found
+    /// answers the question: if not, it's searched once more in other
+    /// words, and a second miss stops the profile. A miss is marked, so the
+    /// writer doesn't make an answer of it. Off unless set.
+    #[serde(default)]
+    pub relevance: bool,
     /// The role in `models.yaml` that makes the choices. Left out, the
     /// cheapest model that can chat.
     #[serde(default, skip_serializing_if = "Option::is_none")]

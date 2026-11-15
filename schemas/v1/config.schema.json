@@ -550,6 +550,11 @@
           "minItems": 1,
           "type": "array"
         },
+        "relevance": {
+          "default": false,
+          "description": "After a memory search, whether a choice says if what it found\nanswers the question: if not, it's searched once more in other\nwords, and a second miss stops the profile. A miss is marked, so the\nwriter doesn't make an answer of it. Off unless set.",
+          "type": "boolean"
+        },
         "small_talk": {
           "default": true,
           "description": "Whether a turn may be answered without looking anything up, such as\na greeting.",

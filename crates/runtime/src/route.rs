@@ -46,6 +46,8 @@ instructions. Reply with JSON: {\"parts\": [<question>, ...]}, and nothing else.
 const SPLIT_TOKENS: u32 = 400;
 /// The longest part.
 const PART_CHARS: usize = 500;
+/// How much of a search's result the relevance check sees.
+const RELEVANCE_CHARS: usize = 4000;
 /// How much of each result a next-call choice sees.
 const SEEN_CHARS: usize = 1500;
 /// How much of the results together the writer sees.
@@ -58,6 +60,18 @@ struct Found {
     tool: String,
     arguments: Value,
     reply: String,
+    /// Judged not to answer the question (`relevance`).
+    missed: bool,
+}
+
+/// What the relevance check says to do next.
+enum Relevance {
+    /// Carry on: the next choice decides.
+    Go,
+    /// Search again, in other words.
+    Retry,
+    /// Stop this profile: two searches found nothing that answers it.
+    Stop,
 }
 
 /// How the turn stopped short, if it did.
@@ -547,27 +561,28 @@ impl Turn<'_> {
                 break;
             };
             let reply = self.call(session, &tool, &arguments, found.len()).await;
+            let ran = serde_json::from_str::<Value>(&reply)
+                .is_ok_and(|reply| reply.get("status") == Some(&json!("ok")));
             found.push(Found {
-                tool,
+                tool: tool.clone(),
                 arguments,
                 reply: shown(&reply),
+                missed: false,
             });
+            match self.relevance(session, name, ran, &mut found).await? {
+                Relevance::Retry if found.len() < max_calls => {
+                    next = Some(tool);
+                    continue;
+                }
+                Relevance::Stop => break,
+                Relevance::Go | Relevance::Retry => {}
+            }
             if found.len() >= max_calls {
                 break;
             }
             let mut menu: Options = vec![(DONE.to_owned(), DONE_ABOUT.to_owned())];
             menu.extend(tools.iter().cloned());
-            let seen = json!({
-                "question": self.question,
-                "results": found
-                    .iter()
-                    .map(|done| json!({
-                        "tool": done.tool,
-                        "arguments": done.arguments,
-                        "result": cut(&done.reply, SEEN_CHARS),
-                    }))
-                    .collect::<Vec<_>>(),
-            });
+            let seen = self.seen(&found);
             let chosen = self
                 .choose(
                     session,
@@ -581,6 +596,103 @@ impl Turn<'_> {
             next = chosen.filter(|tool| tool != DONE);
         }
         Ok(found)
+    }
+
+    /// What the next choice sees: the question, and each result, cut.
+    fn seen(&self, found: &[Found]) -> Value {
+        json!({
+            "question": self.question,
+            "results": found
+                .iter()
+                .map(|done| json!({
+                    "tool": done.tool,
+                    "arguments": done.arguments,
+                    "result": cut(&done.reply, SEEN_CHARS),
+                }))
+                .collect::<Vec<_>>(),
+        })
+    }
+
+    /// After a memory search that ran, with `relevance` on: does what it
+    /// found answer the question? On `none`, the search is made once more
+    /// in other words (its arguments are asked for again, told what
+    /// already ran), and a second `none` stops the profile. Either way the
+    /// miss is marked, so the writer doesn't make an answer of it.
+    async fn relevance(
+        &self,
+        session: &mut Session,
+        profile: &str,
+        ran: bool,
+        found: &mut [Found],
+    ) -> Result<Relevance, Stop> {
+        let is_search = |done: &Found| {
+            done.tool == "memory" && done.arguments.get("operation") == Some(&json!("search"))
+        };
+        let Some(last) = found.last() else {
+            return Ok(Relevance::Go);
+        };
+        if !self.route.relevance || !ran || !is_search(last) {
+            return Ok(Relevance::Go);
+        }
+        let context = json!({
+            "question": self.question,
+            "result": cut(&last.reply, RELEVANCE_CHARS),
+        });
+        let options: Options = vec![
+            (
+                "answers".to_owned(),
+                "The results hold what the question asks for.".to_owned(),
+            ),
+            (
+                "partly".to_owned(),
+                "Some of it; something more is needed.".to_owned(),
+            ),
+            (
+                "none".to_owned(),
+                "Nothing in them answers the question.".to_owned(),
+            ),
+        ];
+        let verdict = self
+            .choose(
+                session,
+                "relevance",
+                "Do these memory results answer the owner's question?",
+                &options,
+                &context,
+                Some(profile),
+            )
+            .await?;
+        if verdict.as_deref() != Some("none") {
+            return Ok(Relevance::Go);
+        }
+        let missed_before = found
+            .iter()
+            .rev()
+            .skip(1)
+            .any(|done| done.missed && is_search(done));
+        if let Some(last) = found.last_mut() {
+            last.missed = true;
+        }
+        let (rule, detail, next) = if missed_before {
+            (
+                "not_found",
+                "a second search found nothing that answers it; the profile stops",
+                Relevance::Stop,
+            )
+        } else {
+            (
+                "retry",
+                "the search found nothing that answers it; searching once more in other words",
+                Relevance::Retry,
+            )
+        };
+        session
+            .record_decision(Step::Rule {
+                rule: rule.to_owned(),
+                detail: detail.to_owned(),
+            })
+            .await;
+        Ok(next)
     }
 
     /// Runs one call, if it only reads. What a call does depends on its
@@ -839,9 +951,14 @@ impl Turn<'_> {
         } else {
             let mut results = String::new();
             for done in found {
+                let note = if done.missed {
+                    " (judged not to answer the question)"
+                } else {
+                    ""
+                };
                 let _ = write!(
                     results,
-                    "== {}({}) ==\n{}\n\n",
+                    "== {}({}){note} ==\n{}\n\n",
                     done.tool, done.arguments, done.reply
                 );
             }

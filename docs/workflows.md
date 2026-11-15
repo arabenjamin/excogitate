@@ -291,6 +291,7 @@ front_door:
   writer: writer                 # an agent with no tools
   max_calls: 3                   # tool calls per part, 1 to 6
   max_parts: 2                   # split a turn about several subjects; 1 to 4
+  relevance: true                # check a memory search's results; retry once
   choice_role: choice            # roles in models.yaml; optional
   arguments_role: arguments
   only_when_asked:
@@ -329,9 +330,15 @@ A turn goes:
    that would change something, by what the tool says of these arguments
    (memory's `search` reads, its `delete` doesn't), isn't run, and the
    next choice sees that it was refused.
-6. **Next.** A model sees each result, cut to 1,500 characters, and picks
+6. **Relevance.** With `relevance: true`, after a memory search that ran,
+   a model says whether what it found answers the question: `answers`,
+   `partly` or `none`. On `none` the search is made once more, its
+   arguments asked for again with what already ran, so in other words; a
+   second `none` stops the profile. A search judged `none` is marked so
+   to the writer, which then doesn't make an answer of it.
+7. **Next.** A model sees each result, cut to 1,500 characters, and picks
    `done` or another of the profile's tools, until `max_calls`.
-7. **Writer.** The writer agent answers from the question, the earlier turns
+8. **Writer.** The writer agent answers from the question, the earlier turns
    and the results alone, with no tools, on its own `role` and `needs`. A
    turn that looked nothing up says so.
 
@@ -346,7 +353,7 @@ and its reply must be one of the names. The turn is one run, `chat`, and its
 trajectory records every choice (`choice`, with what was offered),
 arguments kept and dropped (`arguments`), and each rule that fired
 (`rule`: `split`, `invalid_choice`, `stored_first`, `reads_only`,
-`no_repeat`, `max_calls`), so a
+`retry`, `not_found`, `no_repeat`, `max_calls`), so a
 review sees why it went where it went. Its harness id covers the route,
 each profile's agent and the writer, so changing any of them is a new
 harness.
