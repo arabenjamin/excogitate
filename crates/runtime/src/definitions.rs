@@ -110,6 +110,9 @@ fn check_route(
     if !(1..=6).contains(&route.max_calls) {
         return Err("its max_calls must be 1 to 6".to_owned());
     }
+    if !(1..=4).contains(&route.max_parts) {
+        return Err("its max_parts must be 1 to 4".to_owned());
+    }
     for name in &route.profiles {
         if name == crate::route::SMALL_TALK {
             return Err(format!(

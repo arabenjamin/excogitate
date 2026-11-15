@@ -289,7 +289,8 @@ rather than one model holding every tool.
 front_door:
   profiles: [notes, jobs, web]   # agents; one to 24
   writer: writer                 # an agent with no tools
-  max_calls: 3                   # tool calls per turn, 1 to 6
+  max_calls: 3                   # tool calls per part, 1 to 6
+  max_parts: 2                   # split a turn about several subjects; 1 to 4
   choice_role: choice            # roles in models.yaml; optional
   arguments_role: arguments
   only_when_asked:
@@ -298,6 +299,13 @@ front_door:
 
 A turn goes:
 
+0. **Split.** With `max_parts` over 1 (it's 1 unless set), a model first
+   says whether the turn asks about more than one subject, and if so
+   writes each as a question that stands on its own, at most `max_parts`.
+   Each part goes down the line below on its own, and the writer answers
+   the whole turn from all their results. A turn about one subject runs on
+   the owner's own words, not the model's rewording, and grounding always
+   checks arguments against the owner's words, never a part's.
 1. **Profile.** A model picks one of the profiles by their `description`, or
    `small_talk` (unless `small_talk: false`), from a closed list. A reply
    that names none of them is recorded as `invalid` and the turn looks
@@ -335,8 +343,8 @@ No step is offered tools. Each choice uses the same pinned decision prompt,
 and its reply must be one of the names. The turn is one run, `chat`, and its
 trajectory records every choice (`choice`, with what was offered),
 arguments kept and dropped (`arguments`), and each rule that fired
-(`rule`: `invalid_choice`, `stored_first`, `reads_only`, `no_repeat`,
-`max_calls`), so a
+(`rule`: `split`, `invalid_choice`, `stored_first`, `reads_only`,
+`no_repeat`, `max_calls`), so a
 review sees why it went where it went. Its harness id covers the route,
 each profile's agent and the writer, so changing any of them is a new
 harness.

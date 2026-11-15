@@ -523,6 +523,14 @@
           "minimum": 1,
           "type": "integer"
         },
+        "max_parts": {
+          "default": 1,
+          "description": "The most parts a turn is split into, when it asks about more than\none subject: each part is routed on its own, and the writer answers\nthe whole turn from all of them. 1, the default, doesn't split.",
+          "format": "uint32",
+          "maximum": 4,
+          "minimum": 1,
+          "type": "integer"
+        },
         "only_when_asked": {
           "description": "Profiles taken only when the turn asks for what they do, such as the\nweb: a turn that doesn't goes to `otherwise`, so what's stored is\nread first.",
           "items": {

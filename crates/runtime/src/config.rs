@@ -258,6 +258,12 @@ pub struct Route {
     #[serde(default = "max_calls_default")]
     #[schemars(range(min = 1, max = 6))]
     pub max_calls: u32,
+    /// The most parts a turn is split into, when it asks about more than
+    /// one subject: each part is routed on its own, and the writer answers
+    /// the whole turn from all of them. 1, the default, doesn't split.
+    #[serde(default = "max_parts_default")]
+    #[schemars(range(min = 1, max = 4))]
+    pub max_parts: u32,
     /// The role in `models.yaml` that makes the choices. Left out, the
     /// cheapest model that can chat.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -281,6 +287,10 @@ const fn small_talk_default() -> bool {
 
 const fn max_calls_default() -> u32 {
     3
+}
+
+const fn max_parts_default() -> u32 {
+    1
 }
 
 /// A profile taken only when the turn asks for it.

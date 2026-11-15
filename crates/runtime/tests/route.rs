@@ -82,6 +82,7 @@ fn route(profiles: &[&str]) -> Route {
         writer: "writer".to_owned(),
         small_talk: true,
         max_calls: 3,
+        max_parts: 1,
         choice_role: None,
         arguments_role: None,
         only_when_asked: Vec::new(),
@@ -395,6 +396,9 @@ async fn a_route_its_agents_cant_serve_is_refused_when_loaded() {
     let mut calls = route(&["notes"]);
     calls.max_calls = 9;
     refused("calls", calls, &base, "max_calls").await;
+    let mut parts = route(&["notes"]);
+    parts.max_parts = 5;
+    refused("parts", parts, &base, "max_parts").await;
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -454,6 +458,81 @@ async fn a_search_query_in_other_words_is_kept_since_a_search_needs_one() {
     assert_eq!(
         decisions[1]["kept"],
         json!({ "operation": "search", "query": "otter behaviour" }).to_string(),
+        "{decisions:?}"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_turn_about_two_subjects_is_split_and_the_writer_answers_both() {
+    let mut split = route(&["notes", "jobs"]);
+    split.max_parts = 2;
+    split.small_talk = false;
+    let fixture = fixture(
+        "split",
+        split,
+        vec![
+            json_reply(&json!({ "parts": ["What do otters do?", "What jobs ran lately?"] })),
+            // The first part: notes, a search, then done.
+            choice("notes"),
+            json_reply(&json!({ "operation": "search", "query": "otters" })),
+            choice("done"),
+            // The second: jobs, its one tool, then done.
+            choice("jobs"),
+            json_reply(&json!({})),
+            choice("done"),
+            text("Otters hold hands; nothing ran."),
+        ],
+    )
+    .await;
+    let asked = "What do otters do, and what jobs ran lately?";
+    let reply = fixture.chat(asked).await;
+    assert_eq!(
+        reply["answer"], "Otters hold hands; nothing ran.",
+        "{reply}"
+    );
+    assert_eq!(tool_calls(&reply), ["memory", "job_history"], "{reply}");
+    let seen = fixture.seen();
+    // Each part's choice sees that part, not the whole turn.
+    assert!(user_text(&seen[1]).contains("User: What do otters do?"));
+    assert!(user_text(&seen[4]).contains("User: What jobs ran lately?"));
+    // The writer answers the owner's words, from both parts' results.
+    let written = user_text(&seen[7]);
+    assert!(written.contains(&format!("Question: {asked}")), "{written}");
+    assert!(written.contains("== memory(") && written.contains("== job_history("));
+    let decisions = fixture.decisions(&reply).await;
+    let rule = decisions
+        .iter()
+        .find(|step| step["rule"] == "split")
+        .unwrap();
+    assert!(
+        rule["detail"].as_str().unwrap().starts_with("2 parts:"),
+        "{rule}"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_turn_about_one_subject_runs_on_the_owners_own_words() {
+    let mut split = route(&["notes"]);
+    split.max_parts = 2;
+    split.max_calls = 1;
+    let fixture = fixture(
+        "one-part",
+        split,
+        vec![
+            // A rewording, which the line doesn't use for one part.
+            json_reply(&json!({ "parts": ["Tell me about otter behaviour"] })),
+            choice("notes"),
+            json_reply(&json!({ "operation": "search", "query": "otters" })),
+            text("They hold hands."),
+        ],
+    )
+    .await;
+    let reply = fixture.chat("What do otters do?").await;
+    assert_eq!(reply["answer"], "They hold hands.", "{reply}");
+    assert!(user_text(&fixture.seen()[1]).contains("User: What do otters do?"));
+    let decisions = fixture.decisions(&reply).await;
+    assert!(
+        decisions.iter().all(|step| step["rule"] != "split"),
         "{decisions:?}"
     );
 }

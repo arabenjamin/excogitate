@@ -17,6 +17,7 @@ max_result_chars: 12000
 #   profiles: [notes, jobs, web]
 #   writer: writer
 #   max_calls: 3
+#   max_parts: 2
 #   choice_role: choice
 #   arguments_role: arguments
 #   only_when_asked:
