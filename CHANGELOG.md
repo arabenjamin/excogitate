@@ -3,6 +3,12 @@
 All notable changes are listed here. The file is generated from the
 Conventional Commits by [git-cliff](https://git-cliff.org) (`cliff.toml`).
 
+## [0.15.1] - 2026-11-15
+
+### Fixed
+
+- Calculate isn't a routed profile's first call
+
 ## [0.15.0] - 2026-11-14
 
 ### Added
