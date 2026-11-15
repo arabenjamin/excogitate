@@ -325,6 +325,12 @@ A turn goes:
    and the results alone, with no tools, on its own `role` and `needs`. A
    turn that looked nothing up says so.
 
+Each step sees a result as the tool returned it, not dispatch's envelope:
+the labels (`untrusted`, `truncated`) stay on the receipt and the
+trajectory, a cut result ends with how much of it is shown, and a refusal
+or a failure is shown as it is. Shown the labels, a writer wrote about
+them in place of the content.
+
 No step is offered tools. Each choice uses the same pinned decision prompt,
 and its reply must be one of the names. The turn is one run, `chat`, and its
 trajectory records every choice (`choice`, with what was offered),

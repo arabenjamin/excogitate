@@ -70,6 +70,38 @@ fn cut(text: &str, chars: usize) -> String {
     kept
 }
 
+/// A result as a model in the line sees it: what the tool returned, without
+/// dispatch's envelope. Its labels (`untrusted`, `truncated`) are for the
+/// receipt; shown to the writer, it wrote about them in place of the
+/// content (bench 2026-11-14). The results block already says they're
+/// data, and a cut result still says it was cut, and by how much. A
+/// refusal or a failure is shown as it is.
+pub(crate) fn shown(reply: &str) -> String {
+    let Ok(Value::Object(envelope)) = serde_json::from_str::<Value>(reply) else {
+        return reply.to_owned();
+    };
+    if envelope.get("status") != Some(&json!("ok")) {
+        return reply.to_owned();
+    }
+    if let Some(result) = envelope.get("result") {
+        return match result {
+            Value::String(text) => text.clone(),
+            other => other.to_string(),
+        };
+    }
+    match envelope.get("partial_result").and_then(Value::as_str) {
+        Some(partial) => {
+            let of = |key: &str| envelope.get(key).and_then(Value::as_u64).unwrap_or(0);
+            format!(
+                "{partial}\n(cut: the first {} of {} characters)",
+                of("shown_chars"),
+                of("total_chars")
+            )
+        }
+        None => reply.to_owned(),
+    }
+}
+
 fn one_line(text: &str) -> String {
     text.split_whitespace().collect::<Vec<_>>().join(" ")
 }
@@ -402,7 +434,7 @@ impl Turn<'_> {
             found.push(Found {
                 tool,
                 arguments,
-                reply,
+                reply: shown(&reply),
             });
             if found.len() >= max_calls {
                 break;
@@ -748,6 +780,24 @@ impl Turn<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_result_is_shown_without_its_envelope_and_a_cut_one_says_so() {
+        let ran = json!({"status": "ok", "untrusted": true, "result": {"hits": [1]}}).to_string();
+        assert_eq!(shown(&ran), r#"{"hits":[1]}"#);
+        let text = json!({"status": "ok", "untrusted": false, "result": "plain"}).to_string();
+        assert_eq!(shown(&text), "plain");
+        let cut = json!({
+            "status": "ok", "untrusted": true, "truncated": true,
+            "shown_chars": 4, "total_chars": 10, "partial_result": "abcd",
+        })
+        .to_string();
+        assert_eq!(shown(&cut), "abcd\n(cut: the first 4 of 10 characters)");
+        // A refusal is shown as it is, so the writer can say why.
+        let refused = json!({"status": "refused", "detail": "no"}).to_string();
+        assert_eq!(shown(&refused), refused);
+        assert_eq!(shown("not json"), "not json");
+    }
 
     #[test]
     fn a_field_a_matching_branch_requires_stays() {
