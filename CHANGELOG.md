@@ -3,6 +3,12 @@
 All notable changes are listed here. The file is generated from the
 Conventional Commits by [git-cliff](https://git-cliff.org) (`cliff.toml`).
 
+## [0.14.0] - 2026-11-14
+
+### Added
+
+- A routed turn shows each result, not dispatch's envelope
+
 ## [0.13.1] - 2026-11-14
 
 ### Fixed
