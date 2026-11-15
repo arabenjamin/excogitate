@@ -314,7 +314,9 @@ A turn goes:
    turn matches its pattern (case ignored); otherwise the turn goes to
    `otherwise`, so what's stored is read before the web.
 3. **Tool.** A profile with one tool skips this. Otherwise a model picks one
-   of its tools by their descriptions.
+   of its tools by their descriptions. `calculate` isn't offered as a first
+   call when the profile has other tools: before anything has run there
+   are no numbers for it.
 4. **Arguments.** A model fills the tool's input schema, told the profile's
    instructions and skills, the question and the results so far. Then code
    grounds them: an optional string that isn't an enum value and appears in

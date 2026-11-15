@@ -97,6 +97,17 @@ struct Fixture {
 
 async fn fixture(name: &str, route: Route, replies: Vec<Value>) -> Fixture {
     let (url, recorded) = model(replies).await;
+    fixture_with(name, route, url, recorded, &[]).await
+}
+
+/// A fixture whose definitions add `extra` agents to the usual ones.
+async fn fixture_with(
+    name: &str,
+    route: Route,
+    url: String,
+    recorded: Recorded,
+    extra: &[(&str, &str)],
+) -> Fixture {
     let yaml = format!(
         "version: 1\nproviders:\n  - {{name: c, base_url: '{url}', no_log: true, timeout_secs: 10}}\n\
          models:\n  - {{name: c, provider: c, wire_model: x, capabilities: [chat, tools], context_tokens: 100000, max_output_tokens: 100}}\n\
@@ -114,10 +125,9 @@ async fn fixture(name: &str, route: Route, replies: Vec<Value>) -> Fixture {
         &|_| None,
     )
     .unwrap();
-    let root = definitions(
-        name,
-        &[("notes", NOTES), ("jobs", JOBS), ("writer", WRITER)],
-    );
+    let mut agents = vec![("notes", NOTES), ("jobs", JOBS), ("writer", WRITER)];
+    agents.extend_from_slice(extra);
+    let root = definitions(name, &agents);
     runtime
         .load_definitions(&root, chrono::Utc::now())
         .await
@@ -535,4 +545,36 @@ async fn a_turn_about_one_subject_runs_on_the_owners_own_words() {
         decisions.iter().all(|step| step["rule"] != "split"),
         "{decisions:?}"
     );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn calculate_isnt_a_first_call_but_is_offered_once_a_result_is_in() {
+    let mut counted = route(&["sums"]);
+    counted.max_calls = 2;
+    let (url, recorded) = model(vec![
+        choice("sums"),
+        // No tool choice: with calculate set aside, memory is the only one.
+        json_reply(&json!({ "operation": "search", "query": "otters" })),
+        choice("calculate"),
+        json_reply(&json!({ "expression": "2 + 2" })),
+        text("Four."),
+    ])
+    .await;
+    let fixture = fixture_with(
+        "calc-first",
+        counted,
+        url,
+        recorded,
+        &[(
+            "sums",
+            "description: Sums of what's stored.\nsystem_prompt: You add.\ntools: [memory, calculate]\n",
+        )],
+    )
+    .await;
+    let reply = fixture.chat("What do otters do, in sums?").await;
+    assert_eq!(tool_calls(&reply), ["memory", "calculate"], "{reply}");
+    let seen = fixture.seen();
+    assert!(user_text(&seen[1]).contains("Fill in the arguments for one call to memory"));
+    let next = user_text(&seen[2]);
+    assert!(next.contains("calculate"), "offered after a result: {next}");
 }

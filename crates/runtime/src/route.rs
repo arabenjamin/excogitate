@@ -21,6 +21,8 @@ use workflow::Agent;
 use crate::mcp::{ChatInput, session_with};
 use crate::{Route, Runtime};
 
+/// The bundled arithmetic tool, which needs numbers a result gives.
+const CALCULATE: &str = "calculate";
 /// The choice that answers without looking anything up.
 pub(crate) const SMALL_TALK: &str = "small_talk";
 const SMALL_TALK_ABOUT: &str =
@@ -501,15 +503,27 @@ impl Turn<'_> {
             .map(|definition| (definition.name.clone(), one_line(&definition.description)))
             .collect();
         let mut found: Vec<Found> = Vec::new();
-        let mut next = if tools.len() == 1 {
-            tools.first().map(|(tool, _)| tool.clone())
+        // Before anything has run there are no numbers, so `calculate`
+        // can't be the first call: it's offered once a result is in
+        // (bench, 2026-11-14: a lab question started with it, and failed).
+        let first: Options = match tools
+            .iter()
+            .filter(|(tool, _)| tool != CALCULATE)
+            .cloned()
+            .collect::<Options>()
+        {
+            others if others.is_empty() => tools.clone(),
+            others => others,
+        };
+        let mut next = if first.len() == 1 {
+            first.first().map(|(tool, _)| tool.clone())
         } else {
             let seen = json!({ "question": self.question, "results": [] });
             self.choose(
                 session,
                 "tool",
                 &format!("Which one of the {name} tools should run first?"),
-                &tools,
+                &first,
                 &seen,
                 Some(name),
             )
