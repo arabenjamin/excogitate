@@ -3,6 +3,12 @@
 All notable changes are listed here. The file is generated from the
 Conventional Commits by [git-cliff](https://git-cliff.org) (`cliff.toml`).
 
+## [0.16.0] - 2026-11-15
+
+### Added
+
+- A routed memory search is checked against the question
+
 ## [0.15.1] - 2026-11-15
 
 ### Fixed
