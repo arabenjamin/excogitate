@@ -112,6 +112,17 @@
       ],
       "description": "The agent picked, if one was."
     },
+    "routed": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/Pick"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "The profile or writer that routed chats point to, found as an agent\nis but not attempted: an attempt probes an agent as a conversation,\nwhich isn't how the route runs it."
+    },
     "skipped": {
       "description": "Agents left alone, and why.",
       "items": {

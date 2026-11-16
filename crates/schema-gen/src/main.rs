@@ -62,6 +62,8 @@ fn fixed() -> BTreeMap<&'static str, Value> {
         ("hold_list", schema_of::<runtime::HoldList>()),
         ("lesson_list", schema_of::<runtime::LessonList>()),
         ("hold_request", schema_of::<runtime::HoldRequest>()),
+        ("feedback_request", schema_of::<harness::FeedbackRequest>()),
+        ("feedback", schema_of::<harness::Feedback>()),
         ("http_config", schema_of::<tools::HttpConfig>()),
         ("models_config", schema_of::<model::ModelsConfig>()),
         ("plugin_manifest", schema_of::<plugin_api::PluginManifest>()),
@@ -117,6 +119,7 @@ fn role(stem: &str) -> Option<Role> {
         | "budget"
         | "capability_request"
         | "config"
+        | "feedback_request"
         | "hold_request"
         | "http_config"
         | "improve_request"
@@ -143,6 +146,7 @@ fn role(stem: &str) -> Option<Role> {
         | "change_list"
         | "change_view"
         | "definition_list"
+        | "feedback"
         | "hold_list"
         | "job_list"
         | "job_view"

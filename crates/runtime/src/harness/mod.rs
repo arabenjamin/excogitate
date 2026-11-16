@@ -14,6 +14,7 @@ use work::{JobFailure, JobHandler};
 use crate::Runtime;
 
 mod adopt;
+mod feedback;
 mod pick;
 
 pub(crate) use adopt::ChangeError;

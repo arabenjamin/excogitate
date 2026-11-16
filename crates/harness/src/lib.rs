@@ -12,6 +12,7 @@ mod attempt;
 mod calibrate;
 mod change;
 mod cite;
+mod feedback;
 mod flow;
 mod guard;
 mod lesson;
@@ -29,6 +30,7 @@ pub use change::{
     check_adoption,
 };
 pub use cite::Cite;
+pub use feedback::{FEEDBACK_TYPE, Feedback, FeedbackRequest, Mark, feedback_id};
 pub use flow::{
     StepEdit, Target, apply_edits, check_edited_reads, check_workflow_edit, merge_edits, read_tools,
 };
@@ -36,7 +38,10 @@ pub use guard::{MAX_GROWTH_CHARS, MAX_SKILL_GROWTH_CHARS, check_harness, check_i
 pub use lesson::{
     LESSON_TYPE, Lesson, LessonStatus, MAX_SHOWN, lesson_id, lessons_for, situation, status_filter,
 };
-pub use pick::{MIN_REPEATS, Pick, Recent, failure, pick, task};
+pub use pick::{
+    Evidence, Finding, MARKED_BAD, MIN_REPEATS, Marked, Pick, Recent, best, chat_evidence,
+    chat_failures, evidence, failure, pick, task,
+};
 pub use records::{
     ATTEMPT_TYPE, CALIBRATION_TYPE, CHANGE_TYPE, HOLD_TYPE, declarations, hold_id, record,
     record_of,

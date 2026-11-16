@@ -1465,6 +1465,103 @@ async fn runs_that_went_well_give_nothing_to_pick() {
     assert_eq!(picked["result"]["job_id"], Value::Null);
 }
 
+#[tokio::test]
+async fn a_run_the_owner_marks_bad_is_picked_with_the_owners_words() {
+    let running = with_workflow("feedback", vec![ChaosStep::Text("Otters!".to_owned())]).await;
+    let started = body_of(running.post("/api/v1/workflows/flow/runs", &inputs()).await).await;
+    running.work_off(started["job_id"].as_str().unwrap()).await;
+    let listed = body_of(running.get("/api/v1/runs?agent=agent:helper").await).await;
+    let run = listed["items"][0]["run"].as_str().unwrap().to_owned();
+    let put = |path: String, body: Value| {
+        let running = &running;
+        async move {
+            running
+                .client
+                .put(format!("{}{path}", running.url))
+                .bearer_auth(KEY)
+                .header("content-type", "application/json")
+                .body(body.to_string())
+                .send()
+                .await
+                .unwrap()
+        }
+    };
+    let path = format!("/api/v1/runs/{run}/feedback");
+    let marked = put(
+        path.clone(),
+        json!({ "mark": "bad", "note": "It never said what otters eat." }),
+    )
+    .await;
+    assert_eq!(marked.status(), StatusCode::OK);
+    let marked = body_of(marked).await;
+    assert_eq!(marked["agent"], "agent:helper");
+    Validator::from_schema(&schema::schema_of::<harness::Feedback>())
+        .unwrap()
+        .check(&marked)
+        .unwrap();
+    assert_eq!(
+        put(path, json!({ "mark": "meh" })).await.status(),
+        StatusCode::BAD_REQUEST
+    );
+    let nowhere = "/api/v1/runs/01a1e55f-f544-744a-8cae-13d03ea1fa3a/feedback".to_owned();
+    assert_eq!(
+        put(nowhere, json!({ "mark": "bad" })).await.status(),
+        StatusCode::NOT_FOUND
+    );
+
+    // One bad mark is enough: the owner's word isn't noise.
+    let picked = running.run_job("harness_pick", json!({})).await;
+    let result = &picked["result"];
+    assert_eq!(result["pick"]["request"]["agent"], "helper", "{result}");
+    assert_eq!(result["pick"]["failure"], harness::MARKED_BAD);
+    assert!(
+        result["pick"]["request"]["why"]
+            .as_str()
+            .unwrap()
+            .contains("The owner said: It never said what otters eat."),
+        "{result}"
+    );
+}
+
+#[tokio::test]
+async fn chats_that_end_the_same_way_twice_point_at_the_writer_but_queue_nothing() {
+    let running = quiet(
+        "pick-chat",
+        vec![ChaosStep::Status(500), ChaosStep::Status(500)],
+    )
+    .await;
+    running
+        .define(
+            "agents/writer.yaml",
+            "system_prompt: You write the answer.\ntools: []\n",
+        )
+        .await;
+    for _ in 0..2 {
+        running.post("/v1/chat/completions", &ask(&json!({}))).await;
+    }
+    let listed = body_of(running.get("/api/v1/runs?agent=chat").await).await;
+    assert_eq!(listed["items"].as_array().unwrap().len(), 2, "{listed}");
+    let picked = running.run_job("harness_pick", json!({})).await;
+    assert_eq!(picked["status"], "succeeded", "{picked}");
+    let result = &picked["result"];
+    assert_eq!(result["pick"], Value::Null, "{result}");
+    assert_eq!(result["job_id"], Value::Null);
+    assert_eq!(result["routed"]["request"]["agent"], "writer", "{result}");
+    assert_eq!(result["routed"]["failure"], "ended model_failed");
+    assert_eq!(result["routed"]["repeats"], 2);
+    assert!(
+        result["skipped"].as_array().unwrap().iter().any(|why| why
+            .as_str()
+            .unwrap()
+            .contains("writer is picked from routed chats")),
+        "{result}"
+    );
+    Validator::from_schema(&schema::schema_of::<runtime::Picked>())
+        .unwrap()
+        .check(result)
+        .unwrap();
+}
+
 // A workflow as Harness²'s target.
 
 const ASK_FILE: &str = "# Kept by hand.\ninputs:\n  type: object\n  additionalProperties: false\n  \

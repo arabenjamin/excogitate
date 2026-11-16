@@ -1,7 +1,9 @@
 //! Runs and their trajectories, as Harness² and a person read them.
 
+use axum::body::Bytes;
 use axum::extract::{Path, Query, State};
-use axum::routing::get;
+use axum::http::HeaderMap;
+use axum::routing::{get, put};
 use axum::{Json, Router};
 use chrono::{DateTime, Utc};
 use dispatch::{Trajectory, read_trajectory};
@@ -11,7 +13,7 @@ use schemars::JsonSchema;
 use serde::Serialize;
 
 use super::rest::{DEFAULT_LIMIT, MAX_LIMIT, Params, number, only};
-use super::{ApiError, App};
+use super::{ApiError, App, json_body};
 
 /// The most steps of one trajectory served. A run's budget caps its calls at
 /// 512 each, so a whole run fits.
@@ -123,8 +125,37 @@ async fn get_run(
         .ok_or_else(|| ApiError::not_found("there's no run with that id"))
 }
 
+/// Keeps the owner's feedback on a run, replacing any it had. A run marked
+/// bad is evidence for Harness²'s picker on its own.
+async fn put_feedback(
+    State(app): State<App>,
+    Path(id): Path<String>,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Result<Json<harness::Feedback>, ApiError> {
+    let run: RunId = id
+        .parse()
+        .map_err(|error: protocol::NotARunId| ApiError::invalid(&error.to_string()))?;
+    let raw = json_body(&headers, &body)?;
+    let request: harness::FeedbackRequest = app
+        .feedback_request
+        .parse(raw)
+        .map_err(|refusal| ApiError::refused(&refusal))?;
+    let found = read_trajectory(app.runtime.sink.as_ref(), run, 1)
+        .await
+        .map_err(|error| ApiError::internal(&error))?
+        .ok_or_else(|| ApiError::not_found("there's no run with that id"))?;
+    let agent = found.agent.unwrap_or_default();
+    Ok(Json(
+        app.runtime
+            .set_feedback(&run.to_string(), &agent, request)
+            .await?,
+    ))
+}
+
 pub(super) fn routes() -> Router<App> {
     Router::new()
         .route("/api/v1/runs", get(list_runs))
         .route("/api/v1/runs/{id}", get(get_run))
+        .route("/api/v1/runs/{id}/feedback", put(put_feedback))
 }

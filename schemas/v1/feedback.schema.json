@@ -1,0 +1,60 @@
+{
+  "$defs": {
+    "Mark": {
+      "description": "What the owner thought of a run.",
+      "oneOf": [
+        {
+          "const": "bad",
+          "description": "It went wrong. Harness² treats the run as evidence for an attempt.",
+          "type": "string"
+        },
+        {
+          "const": "good",
+          "description": "It went right. Kept, and not yet used.",
+          "type": "string"
+        }
+      ]
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "The owner's feedback on one run, as it's kept. One per run: marking a run\nagain replaces it.",
+  "properties": {
+    "agent": {
+      "description": "What ran: `chat`, `agent:<name>` or `tool:<name>`.",
+      "maxLength": 128,
+      "type": "string"
+    },
+    "at": {
+      "description": "When it was given.",
+      "format": "date-time",
+      "type": "string"
+    },
+    "mark": {
+      "$ref": "#/$defs/Mark",
+      "description": "Bad or good."
+    },
+    "note": {
+      "default": null,
+      "description": "The owner's words, if any.",
+      "maxLength": 2048,
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "run": {
+      "description": "The run.",
+      "maxLength": 36,
+      "type": "string"
+    }
+  },
+  "required": [
+    "run",
+    "agent",
+    "mark",
+    "at"
+  ],
+  "title": "Feedback",
+  "type": "object"
+}

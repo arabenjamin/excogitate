@@ -10,7 +10,7 @@ use async_trait::async_trait;
 use chrono::{Duration as Span, Utc};
 use dispatch::read_trajectory;
 use events::RunQuery;
-use harness::{Attempt, Pick, Recent, pick};
+use harness::{Attempt, Evidence, Marked, Pick, Recent, best, chat_evidence, evidence};
 use protocol::Actor;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -26,6 +26,8 @@ use crate::Runtime;
 pub(crate) const PICK_KIND: &str = "harness_pick";
 /// How many of an agent's runs are looked at.
 const RECENT_RUNS: usize = 20;
+/// How many routed chats are looked at.
+const RECENT_CHATS: usize = 50;
 /// How far back a run counts as recent.
 const RECENT_DAYS: i64 = 7;
 /// How long after an attempt or a change an agent is left alone.
@@ -54,6 +56,11 @@ pub struct Picked {
     /// Agents left alone, and why.
     #[schemars(length(max = 200), inner(length(max = 2048)))]
     pub skipped: Vec<String>,
+    /// The profile or writer that routed chats point to, found as an agent
+    /// is but not attempted: an attempt probes an agent as a conversation,
+    /// which isn't how the route runs it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub routed: Option<Pick>,
 }
 
 /// One attempt per agent per day, so a schedule that fires twice queues it
@@ -147,6 +154,74 @@ impl Runtime {
         })
     }
 
+    /// The recent routed chats, newest first, and the writer they're
+    /// charged to: the route's writer now.
+    async fn recent_chats(&self) -> Result<(Vec<dispatch::Trajectory>, String), String> {
+        let line = match self.config.route() {
+            Some(route) => self.line_of(route).await,
+            None => self.default_line().await,
+        }
+        .map_err(|failure| failure.to_string())?;
+        let since = Utc::now() - Span::days(RECENT_DAYS);
+        let listed = self
+            .sink
+            .list_runs(&RunQuery {
+                agent: Some("chat".to_owned()),
+                harness: None,
+                offset: 0,
+                limit: RECENT_CHATS,
+            })
+            .await
+            .map_err(|error| error.to_string())?;
+        let mut chats = Vec::new();
+        for summary in listed.runs.iter().filter(|run| run.started_at >= since) {
+            if let Some(trajectory) = read_trajectory(self.sink.as_ref(), summary.run, MAX_STEPS)
+                .await
+                .map_err(|error| error.to_string())?
+            {
+                chats.push(trajectory);
+            }
+        }
+        Ok((chats, line.writer.0))
+    }
+
+    /// The profile or writer routed chats point to, from agents not
+    /// resting. It's noted in `skipped` too, since nothing is queued for it.
+    async fn routed_pick(
+        &self,
+        names: &BTreeSet<String>,
+        tried: &BTreeSet<String>,
+        marked: &Marked,
+        skipped: &mut Vec<String>,
+    ) -> Result<Option<Pick>, String> {
+        let routed = match self.recent_chats().await {
+            Ok((chats, writer)) => {
+                let mut found = Vec::new();
+                for chatted in chat_evidence(&chats, &writer, marked) {
+                    // A writer made from system_prompt is no agent's file.
+                    if names.contains(&chatted.agent)
+                        && self.resting(&chatted.agent, tried).await?.is_none()
+                    {
+                        found.push(chatted);
+                    }
+                }
+                best(&found)
+            }
+            Err(why) => {
+                skipped.push(format!("routed chats weren't read: {why}"));
+                None
+            }
+        };
+        if let Some(chatted) = &routed {
+            skipped.push(format!(
+                "{} is picked from routed chats and not attempted: an attempt can't probe a \
+                 profile or the writer as the route runs it yet",
+                chatted.request.agent
+            ));
+        }
+        Ok(routed)
+    }
+
     /// Picks an agent to improve and queues an attempt for it.
     pub(crate) async fn pick_and_queue(&self) -> Result<Picked, String> {
         self.harness_records()
@@ -169,20 +244,30 @@ impl Runtime {
             offset = offset.saturating_add(MAX_AGENTS);
         }
         let tried = self.tried_lately().await?;
+        let marked: Marked = self
+            .marked_bad(Utc::now() - Span::days(RECENT_DAYS))
+            .await
+            .map_err(|error| error.to_string())?;
         let mut skipped = Vec::new();
-        let mut recent = Vec::new();
+        let mut names = BTreeSet::new();
+        let mut own: Vec<Evidence> = Vec::new();
         for definition in agents {
             let name = definition.key.name;
+            names.insert(name.clone());
             match self.resting(&name, &tried).await? {
                 Some(why) => skipped.push(why),
-                None => recent.push(self.recent_runs(&name).await?),
+                None => own.push(evidence(&self.recent_runs(&name).await?, &marked)),
             }
         }
-        let Some(picked) = pick(&recent) else {
+        let routed = self
+            .routed_pick(&names, &tried, &marked, &mut skipped)
+            .await?;
+        let Some(picked) = best(&own) else {
             return Ok(Picked {
                 pick: None,
                 job_id: None,
                 skipped,
+                routed,
             });
         };
         let id = attempt_job_id(&picked.request.agent, Utc::now().date_naive());
@@ -217,6 +302,7 @@ impl Runtime {
             pick: Some(picked),
             job_id: Some(id.to_string()),
             skipped,
+            routed,
         })
     }
 }

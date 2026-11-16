@@ -12,6 +12,7 @@ use uuid::Uuid;
 use crate::attempt::Attempt;
 use crate::calibrate::Calibration;
 use crate::change::{Change, Hold};
+use crate::feedback::{FEEDBACK_TYPE, Feedback};
 use crate::lesson::{LESSON_TYPE, Lesson};
 
 /// The record type of an attempt.
@@ -83,6 +84,13 @@ pub fn declarations() -> RecordDecls {
                 ],
             ),
             declared::<Hold>(HOLD_TYPE, vec![field("agent", FieldKind::Text)]),
+            declared::<Feedback>(
+                FEEDBACK_TYPE,
+                vec![
+                    field("mark", FieldKind::Text),
+                    field("at", FieldKind::Timestamp),
+                ],
+            ),
             declared::<Lesson>(
                 LESSON_TYPE,
                 vec![

@@ -101,6 +101,14 @@ the same one had the same instructions, tools and limits.
 `GET /api/v1/runs/{id}` is the run's
 [trajectory](../schemas/v1/trajectory.schema.json). The id is a receipt's `run`.
 
+`PUT /api/v1/runs/{id}/feedback`
+([schema](../schemas/v1/feedback_request.schema.json)) with
+`{"mark": "bad", "note": "..."}` keeps the owner's word on a run, replacing
+any it had, and answers with [what's kept](../schemas/v1/feedback.schema.json).
+`mark` is `bad` or `good`. A run marked bad is evidence for
+[Harness²](harness.md#what-to-improve) on its own, and its note is the
+problem the editor is told about.
+
 ### Harness²
 
 `POST /api/v1/harness/attempts` queues an attempt to improve an agent, or a

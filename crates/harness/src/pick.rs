@@ -95,37 +95,253 @@ pub struct Pick {
     pub of: u32,
 }
 
-/// The agent whose runs failed the same way most often, at least
-/// [`MIN_REPEATS`] times, with the newest of those runs as the task. Ties go
-/// to the agent listed first.
+/// The failure a run the owner marked bad counts as.
+pub const MARKED_BAD: &str = "the owner marked it bad";
+
+/// One run that went wrong for an agent.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Finding {
+    /// How, in the words runs that went wrong the same way share.
+    pub failure: String,
+    /// What the run was asked.
+    pub task: String,
+    /// The run's calls line.
+    pub calls: String,
+    /// The owner's note, when the owner marked the run bad.
+    pub note: Option<String>,
+}
+
+/// What recent runs say about one agent.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Evidence {
+    /// The agent.
+    pub agent: String,
+    /// The runs that went wrong, newest first, one finding per run and way.
+    pub findings: Vec<Finding>,
+    /// How many runs were looked at.
+    pub of: usize,
+    /// True when the runs were routed chats, where the agent was a profile or
+    /// the writer.
+    pub from_chats: bool,
+}
+
+/// The owner's mark on a run, as the picker reads it: bad, with any note.
+pub type Marked = std::collections::BTreeMap<String, Option<String>>;
+
+fn finding(run: &Trajectory, failure: String, note: Option<String>) -> Option<Finding> {
+    Some(Finding {
+        failure,
+        task: task(run)?,
+        calls: run.calls.clone(),
+        note,
+    })
+}
+
+/// An agent's own runs as evidence: each run's failure, and each run the
+/// owner marked bad.
 #[must_use]
-pub fn pick(agents: &[Recent]) -> Option<Pick> {
-    let mut best: Option<Pick> = None;
-    for recent in agents {
-        let failures: Vec<(String, &Trajectory)> = recent
-            .runs
-            .iter()
-            .filter_map(|run| failure(run).map(|why| (why, run)))
+pub fn evidence(recent: &Recent, marked: &Marked) -> Evidence {
+    let mut findings = Vec::new();
+    for run in &recent.runs {
+        if let Some(note) = marked.get(&run.run) {
+            findings.extend(finding(run, MARKED_BAD.to_owned(), note.clone()));
+        }
+        if let Some(why) = failure(run) {
+            findings.extend(finding(run, why, None));
+        }
+    }
+    Evidence {
+        agent: recent.agent.clone(),
+        findings,
+        of: recent.runs.len(),
+        from_chats: false,
+    }
+}
+
+/// What went wrong in one routed chat, charged to whoever it belongs to: a
+/// call, its arguments or a search to the profile it was made under, and a
+/// chat that ended without an answer to `writer`. Each agent and failure
+/// once. The second list is every agent the chat involved.
+#[must_use]
+pub fn chat_failures(chat: &Trajectory, writer: &str) -> (Vec<(String, String)>, Vec<String>) {
+    let mut charged: Vec<(String, String)> = Vec::new();
+    let mut involved = vec![writer.to_owned()];
+    let mut profile: Option<String> = None;
+    let mut charge = |agent: &str, why: String| {
+        let entry = (agent.to_owned(), why);
+        if !charged.contains(&entry) {
+            charged.push(entry);
+        }
+    };
+    for timed in &chat.steps {
+        match &timed.step {
+            Step::Choice {
+                stage,
+                picked,
+                of,
+                profile: under,
+            } => {
+                if stage == "profile" {
+                    // A reply that named no profile looks nothing up.
+                    profile = of.contains(picked).then(|| picked.clone());
+                } else if under.is_some() {
+                    profile.clone_from(under);
+                }
+                if let Some(name) = &profile
+                    && !involved.contains(name)
+                {
+                    involved.push(name.clone());
+                }
+            }
+            Step::Tool {
+                tool,
+                status,
+                refusal,
+                by_harness: false,
+                ..
+            } => {
+                let why = match status {
+                    CallStatus::Failed | CallStatus::TimedOut => {
+                        Some(format!("{tool} {}", word(status)))
+                    }
+                    CallStatus::Refused => Some(format!(
+                        "{tool} refused ({})",
+                        refusal.map(word).unwrap_or_default()
+                    )),
+                    CallStatus::Ran | CallStatus::Stubbed => None,
+                };
+                if let (Some(why), Some(name)) = (why, &profile) {
+                    charge(name, why);
+                }
+            }
+            Step::Arguments { tool, dropped, .. } => {
+                if let Some(name) = &profile
+                    && dropped.trim() != "{}"
+                {
+                    charge(name, format!("{tool} was given values the question didn't"));
+                }
+            }
+            Step::Rule { rule, detail } => {
+                let why = match rule.as_str() {
+                    "no_repeat" => Some(format!(
+                        "{} would have run twice the same way",
+                        detail.split_whitespace().next().unwrap_or("a tool")
+                    )),
+                    "not_found" => Some(
+                        "its memory searches found nothing that answers the question".to_owned(),
+                    ),
+                    _ => None,
+                };
+                if let (Some(why), Some(name)) = (why, &profile) {
+                    charge(name, why);
+                }
+            }
+            Step::Ended {
+                outcome,
+                budget_hit,
+                ..
+            } if *outcome != Outcome::Answered => charge(
+                writer,
+                match budget_hit {
+                    Some(limit) => {
+                        format!("ended {}, hit its {} limit", word(outcome), word(limit))
+                    }
+                    None => format!("ended {}", word(outcome)),
+                },
+            ),
+            _ => {}
+        }
+    }
+    (charged, involved)
+}
+
+/// Routed chats, newest first, as evidence for each profile and the writer.
+/// A chat the owner marked bad is charged to the writer, since it's the
+/// answer the owner saw.
+#[must_use]
+pub fn chat_evidence(chats: &[Trajectory], writer: &str, marked: &Marked) -> Vec<Evidence> {
+    let mut all: Vec<Evidence> = Vec::new();
+    let of = |agent: &str, all: &mut Vec<Evidence>| -> usize {
+        if let Some(at) = all.iter().position(|evidence| evidence.agent == agent) {
+            return at;
+        }
+        all.push(Evidence {
+            agent: agent.to_owned(),
+            findings: Vec::new(),
+            of: 0,
+            from_chats: true,
+        });
+        all.len() - 1
+    };
+    for chat in chats {
+        let (charged, involved) = chat_failures(chat, writer);
+        for agent in &involved {
+            let at = of(agent, &mut all);
+            if let Some(evidence) = all.get_mut(at) {
+                evidence.of += 1;
+            }
+        }
+        let mut found: Vec<(String, Finding)> = charged
+            .into_iter()
+            .filter_map(|(agent, why)| finding(chat, why, None).map(|found| (agent, found)))
             .collect();
-        for (why, newest) in &failures {
-            let repeats = failures.iter().filter(|(other, _)| other == why).count();
-            if repeats < MIN_REPEATS || best.as_ref().is_some_and(|b| b.repeats as usize >= repeats)
-            {
+        if let Some(note) = marked.get(&chat.run) {
+            found.extend(
+                finding(chat, MARKED_BAD.to_owned(), note.clone())
+                    .map(|found| (writer.to_owned(), found)),
+            );
+        }
+        for (agent, found) in found {
+            let at = of(&agent, &mut all);
+            if let Some(evidence) = all.get_mut(at) {
+                evidence.findings.push(found);
+            }
+        }
+    }
+    all
+}
+
+/// The agent whose runs went wrong the same way most often, at least
+/// [`MIN_REPEATS`] times, or once when the owner marked it bad, with the
+/// newest of those runs as the task. Ties go to the agent listed first.
+#[must_use]
+pub fn best(evidence: &[Evidence]) -> Option<Pick> {
+    let mut best: Option<Pick> = None;
+    for agent in evidence {
+        for newest in &agent.findings {
+            let why = &newest.failure;
+            let repeats = agent
+                .findings
+                .iter()
+                .filter(|other| &other.failure == why)
+                .count();
+            let needed = if why == MARKED_BAD { 1 } else { MIN_REPEATS };
+            if repeats < needed || best.as_ref().is_some_and(|b| b.repeats as usize >= repeats) {
                 continue;
             }
-            let Some(task) = task(newest) else { continue };
-            let of = recent.runs.len();
+            let runs = if agent.from_chats {
+                "chats it took part in"
+            } else {
+                "runs"
+            };
+            let of = agent.of;
+            let owner = newest
+                .note
+                .as_ref()
+                .map(|note| format!(" The owner said: {note}."))
+                .unwrap_or_default();
+            let said = format!(
+                "{repeats} of its last {of} {runs} went wrong the same way: {why}.{owner} \
+                 The newest went: {}",
+                newest.calls
+            );
             best = Some(Pick {
                 request: Request {
-                    agent: recent.agent.clone(),
-                    task,
+                    agent: agent.agent.clone(),
+                    task: newest.task.clone(),
                     inputs: None,
                     target: crate::Target::Agent,
-                    why: Some(format!(
-                        "{repeats} of its last {of} runs went wrong the same way: {why}. \
-                         The newest went: {}",
-                        newest.calls
-                    )),
+                    why: Some(said),
                 },
                 failure: why.clone(),
                 repeats: u32::try_from(repeats).unwrap_or(u32::MAX),
@@ -134,6 +350,17 @@ pub fn pick(agents: &[Recent]) -> Option<Pick> {
         }
     }
     best
+}
+
+/// [`best`] over agents' own runs, with nothing marked by the owner.
+#[must_use]
+pub fn pick(agents: &[Recent]) -> Option<Pick> {
+    let none = Marked::new();
+    let evidence: Vec<Evidence> = agents
+        .iter()
+        .map(|recent| evidence(recent, &none))
+        .collect();
+    best(&evidence)
 }
 
 #[cfg(test)]
@@ -273,5 +500,162 @@ mod tests {
         };
         let agents = [recent("two", failing(2)), recent("three", failing(3))];
         assert_eq!(pick(&agents).unwrap().request.agent, "three");
+    }
+
+    fn routed(question: &str, steps: Vec<Step>, outcome: Outcome) -> Trajectory {
+        let mut chat = run(question, None, outcome);
+        chat.agent = Some("chat".to_owned());
+        let ended = chat.steps.pop().unwrap();
+        chat.steps.extend(steps.into_iter().map(timed));
+        chat.steps.push(ended);
+        chat
+    }
+
+    fn chose(stage: &str, picked: &str, profile: Option<&str>) -> Step {
+        Step::Choice {
+            stage: stage.to_owned(),
+            picked: picked.to_owned(),
+            of: vec!["todos".to_owned(), "notes".to_owned(), picked.to_owned()],
+            profile: profile.map(str::to_owned),
+        }
+    }
+
+    fn tool(name: &str, status: CallStatus) -> Step {
+        Step::Tool {
+            index: 0,
+            tool: name.to_owned(),
+            status,
+            refusal: None,
+            effect: None,
+            by_harness: false,
+            arguments: "{}".to_owned(),
+            reply: None,
+            duration_ms: 0,
+        }
+    }
+
+    #[test]
+    fn a_chat_charges_each_failure_to_the_profile_it_happened_under() {
+        let chat = routed(
+            "what's open, and what did I note?",
+            vec![
+                chose("profile", "todos", None),
+                chose("tool", "todos_list", Some("todos")),
+                tool("todos_list", CallStatus::Failed),
+                chose("profile", "notes", None),
+                Step::Arguments {
+                    tool: "memory".to_owned(),
+                    kept: "{}".to_owned(),
+                    dropped: r#"{"tags":["x"]}"#.to_owned(),
+                    refilled: false,
+                },
+                Step::Rule {
+                    rule: "not_found".to_owned(),
+                    detail: "a second search found nothing".to_owned(),
+                },
+            ],
+            Outcome::ModelFailed,
+        );
+        let (charged, involved) = chat_failures(&chat, "writer");
+        assert_eq!(
+            charged,
+            vec![
+                ("todos".to_owned(), "todos_list failed".to_owned()),
+                (
+                    "notes".to_owned(),
+                    "memory was given values the question didn't".to_owned()
+                ),
+                (
+                    "notes".to_owned(),
+                    "its memory searches found nothing that answers the question".to_owned()
+                ),
+                ("writer".to_owned(), "ended model_failed".to_owned()),
+            ]
+        );
+        assert_eq!(involved, ["writer", "todos", "notes"]);
+    }
+
+    #[test]
+    fn a_choice_that_named_no_profile_charges_nothing() {
+        let chat = routed(
+            "hi",
+            vec![
+                Step::Choice {
+                    stage: "profile".to_owned(),
+                    picked: "invalid".to_owned(),
+                    of: vec!["todos".to_owned()],
+                    profile: None,
+                },
+                tool("memory", CallStatus::Failed),
+            ],
+            Outcome::Answered,
+        );
+        assert_eq!(chat_failures(&chat, "writer").0, vec![]);
+    }
+
+    #[test]
+    fn chats_that_fail_the_same_way_twice_pick_the_profile() {
+        let failing = |question: &str| {
+            routed(
+                question,
+                vec![
+                    chose("profile", "todos", None),
+                    tool("todos_list", CallStatus::Failed),
+                ],
+                Outcome::Answered,
+            )
+        };
+        let fine = routed(
+            "fine",
+            vec![chose("profile", "notes", None)],
+            Outcome::Answered,
+        );
+        let chats = [failing("newest"), fine, failing("older")];
+        let evidence = chat_evidence(&chats, "writer", &Marked::new());
+        let picked = best(&evidence).unwrap();
+        assert_eq!(picked.request.agent, "todos");
+        assert_eq!(picked.request.task, "newest");
+        assert_eq!((picked.repeats, picked.of), (2, 2));
+        assert!(
+            picked
+                .request
+                .why
+                .unwrap()
+                .starts_with("2 of its last 2 chats it took part in")
+        );
+        let writer = evidence.iter().find(|e| e.agent == "writer").unwrap();
+        assert_eq!(writer.of, 3);
+    }
+
+    #[test]
+    fn a_run_the_owner_marked_bad_counts_on_its_own_with_the_note() {
+        let chat = routed(
+            "what's open?",
+            vec![chose("profile", "todos", None)],
+            Outcome::Answered,
+        );
+        let mut marked = Marked::new();
+        marked.insert(
+            chat.run.clone(),
+            Some("it left out the in-progress one".to_owned()),
+        );
+        let picked = best(&chat_evidence(&[chat], "writer", &marked)).unwrap();
+        assert_eq!(picked.request.agent, "writer");
+        assert_eq!(picked.failure, MARKED_BAD);
+        assert!(
+            picked
+                .request
+                .why
+                .unwrap()
+                .contains("The owner said: it left out the in-progress one.")
+        );
+        let own = recent("helper", vec![run("q", None, Outcome::Answered)]);
+        let mut marked = Marked::new();
+        marked.insert("r".to_owned(), None);
+        let picked = best(&[evidence(&own, &marked)]).unwrap();
+        assert_eq!(
+            (picked.request.agent.as_str(), picked.repeats),
+            ("helper", 1)
+        );
     }
 }

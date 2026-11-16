@@ -222,6 +222,18 @@ real runs, and queues one attempt for it. Put it on a
   refused, or if the run ended without an answer.
 - **One failure is noise.** An agent is picked only when two or more runs went
   wrong the same way, and the agent with the most such runs wins.
+- **The owner's word isn't.** A run marked bad with
+  `PUT /api/v1/runs/{id}/feedback` ([API](api.md#runs)) is enough on its
+  own, and the owner's note goes to the editor with the task.
+- **Routed chats count too.** It reads the last 50 chats from the past 7 days
+  and charges what went wrong to the profile it happened under: a call that
+  failed, timed out or was refused, arguments that held values the question
+  didn't, a call that would have run twice, or memory searches that found
+  nothing that answers the question. A chat that ended without an answer, or
+  one the owner marked bad, is charged to the writer.
+- **A profile or the writer isn't attempted yet.** An attempt probes an agent
+  as a conversation, which isn't how the route runs it. The one chats point
+  to is in the result's `routed`, and nothing is queued for it.
 - **The task is the newest of those runs' own question,** and `why` says how the
   runs went wrong.
 - **An agent is left alone** if it's held, was tried in the last 24 hours, or was
@@ -241,5 +253,7 @@ before each release.
 
 ## What comes next
 
+- **Routed attempts:** a probe that runs the route with one profile or the
+  writer swapped for a candidate, so what chats point to can be attempted.
 - **The picker for workflows:** choosing a workflow to improve from its
   failed runs, as `harness_pick` does for agents.

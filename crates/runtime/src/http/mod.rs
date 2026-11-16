@@ -190,6 +190,7 @@ pub(super) struct App {
     openai_request: Arc<Validator>,
     improve_request: Arc<Validator>,
     hold_request: Arc<Validator>,
+    feedback_request: Arc<Validator>,
 }
 
 impl App {
@@ -348,6 +349,7 @@ impl Runtime {
             openai_request: validator::<OpenAiRequest>()?,
             improve_request: validator::<::harness::Request>()?,
             hold_request: validator::<harness::HoldRequest>()?,
+            feedback_request: validator::<::harness::FeedbackRequest>()?,
         };
         let metrics = Router::new().route("/metrics", get(metrics_page));
         let (open, keyed) = if self.config.server.open_metrics {

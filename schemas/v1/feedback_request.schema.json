@@ -1,0 +1,43 @@
+{
+  "$defs": {
+    "Mark": {
+      "description": "What the owner thought of a run.",
+      "oneOf": [
+        {
+          "const": "bad",
+          "description": "It went wrong. Harness² treats the run as evidence for an attempt.",
+          "type": "string"
+        },
+        {
+          "const": "good",
+          "description": "It went right. Kept, and not yet used.",
+          "type": "string"
+        }
+      ]
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "Feedback on a run, as `PUT /api/v1/runs/{id}/feedback` takes it.",
+  "properties": {
+    "mark": {
+      "$ref": "#/$defs/Mark",
+      "description": "Bad or good."
+    },
+    "note": {
+      "default": null,
+      "description": "What was wrong, or right, in the owner's words. Harness²'s editor\nreads it as the reported problem.",
+      "maxLength": 2048,
+      "minLength": 1,
+      "type": [
+        "string",
+        "null"
+      ]
+    }
+  },
+  "required": [
+    "mark"
+  ],
+  "title": "FeedbackRequest",
+  "type": "object"
+}
