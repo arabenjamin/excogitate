@@ -16,6 +16,7 @@ use crate::Runtime;
 mod adopt;
 mod feedback;
 mod pick;
+mod routed;
 
 pub(crate) use adopt::ChangeError;
 use adopt::not_adopted as adoption_skipped;
@@ -66,6 +67,7 @@ impl Runtime {
         };
         let looped = Loop {
             engine: &self.workflows,
+            router: Some(self),
             judges: Judges {
                 gateway: &self.gateway,
                 max_output_tokens: config.judge_output_tokens,

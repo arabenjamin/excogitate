@@ -9,6 +9,7 @@ repository.workspace = true
 publish = false
 
 [dependencies]
+async-trait.workspace = true
 chrono.workspace = true
 dispatch = { path = "../dispatch" }
 events = { path = "../events" }
@@ -24,7 +25,6 @@ uuid = { workspace = true, features = ["v5"] }
 workflow = { path = "../workflow" }
 
 [dev-dependencies]
-async-trait.workspace = true
 chaos-model = { path = "../chaos-model" }
 plugin-api = { path = "../plugin-api" }
 proptest.workspace = true

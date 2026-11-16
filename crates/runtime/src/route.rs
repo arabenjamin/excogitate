@@ -343,6 +343,27 @@ impl Runtime {
         input: ChatInput,
         purpose: &str,
     ) -> Result<ChatResult, ToolFailure> {
+        self.routed_as(line, input, purpose, "chat", None).await
+    }
+
+    /// The line the routed chat runs now: `front_door`'s, or the default.
+    pub(crate) async fn current_line(&self) -> Result<Line, ToolFailure> {
+        match self.config.route() {
+            Some(route) => self.line_of(route).await,
+            None => self.default_line().await,
+        }
+    }
+
+    /// Answers one turn by `line`, recorded as `subject`, as a probe when
+    /// `probe` is set: writes stubbed, and only its reads run.
+    pub(crate) async fn routed_as(
+        &self,
+        line: &Line,
+        input: ChatInput,
+        purpose: &str,
+        subject: &str,
+        probe: Option<dispatch::Probe>,
+    ) -> Result<ChatResult, ToolFailure> {
         let route = &line.route;
         let profiles = &line.profiles;
         let writer = &line.writer.1;
@@ -373,9 +394,10 @@ impl Runtime {
             purpose,
             self.config.max_result_chars,
             dispatch::RunSubject {
-                agent: "chat".to_owned(),
+                agent: subject.to_owned(),
                 harness,
             },
+            probe,
         )?;
         let question = input.question;
         session.begin(&[Message::user(question.clone())]).await;
@@ -643,6 +665,11 @@ impl Turn<'_> {
         profile: &Agent,
     ) -> Result<Vec<Found>, Stop> {
         let instructions = workflow::instructions(profile, self.question).text;
+        // While its calls run, memory reads only the sources it names.
+        let _sources = self
+            .runtime
+            .workflows
+            .choose_sources(session.run(), profile);
         let tools: Options = profile
             .tools
             .iter()

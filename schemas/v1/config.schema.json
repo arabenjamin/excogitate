@@ -168,6 +168,17 @@
           "maxItems": 64,
           "type": "array"
         },
+        "routed_probe_skips": {
+          "default": [],
+          "description": "Reads a routed probe doesn't run. A routed probe runs every read its\nprofiles make, since the writer can only be judged on real results;\nlist here the ones that cost money or a quota.",
+          "items": {
+            "maxLength": 64,
+            "minLength": 1,
+            "type": "string"
+          },
+          "maxItems": 64,
+          "type": "array"
+        },
         "time_limit_seconds": {
           "default": 1800,
           "description": "The longest one attempt may take, in seconds.",
@@ -627,6 +638,7 @@
         "probe_reads": [
           "memory"
         ],
+        "routed_probe_skips": [],
         "time_limit_seconds": 1800
       },
       "description": "How Harness² improves agents."

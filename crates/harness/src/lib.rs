@@ -22,7 +22,8 @@ mod render;
 mod roles;
 
 pub use attempt::{
-    Adoption, Attempt, Candidate, Checked, Kind, Loop, Probed, Request, Settings, Status,
+    Adoption, Attempt, Candidate, Checked, Kind, Loop, PROFILE_PART, Probed, Request, RouteProbe,
+    Settings, Status, WRITER_PART,
 };
 pub use calibrate::{Calibration, CaseResult};
 pub use change::{

@@ -409,6 +409,7 @@ impl Loop<'_> {
             task: &task,
             why: request.why.as_deref(),
             lessons: &lessons,
+            part: None,
         };
         let money = self.judge_money(&attempt);
         let edited = match self.judges.edit_workflow(&brief, &reference, money).await {

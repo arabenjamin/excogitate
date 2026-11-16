@@ -68,6 +68,11 @@ pub struct HarnessConfig {
     /// writes never run, whatever this says.
     #[schemars(length(max = 64), inner(length(min = 1, max = 64)))]
     pub probe_reads: Vec<String>,
+    /// Reads a routed probe doesn't run. A routed probe runs every read its
+    /// profiles make, since the writer can only be judged on real results;
+    /// list here the ones that cost money or a quota.
+    #[schemars(length(max = 64), inner(length(min = 1, max = 64)))]
+    pub routed_probe_skips: Vec<String>,
     /// What the judges may spend on one attempt, in millionths of a dollar.
     /// They need a capable model, marked `investigative` in `models.yaml`.
     pub judge_usd_micros: u64,
@@ -90,6 +95,7 @@ impl Default for HarnessConfig {
     fn default() -> Self {
         Self {
             probe_reads: vec!["memory".to_owned()],
+            routed_probe_skips: Vec::new(),
             judge_usd_micros: 0,
             judge_output_tokens: 4000,
             time_limit_seconds: 1800,

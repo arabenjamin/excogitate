@@ -54,6 +54,10 @@
           ],
           "x-extension": "checked against the workflow's inputs schema"
         },
+        "routed": {
+          "description": "True to probe the agent as the routed chat runs it, as a profile or\nthe writer, rather than as a conversation.",
+          "type": "boolean"
+        },
         "target": {
           "description": "What to improve: an agent unless it says otherwise.",
           "oneOf": [
@@ -121,7 +125,15 @@
           "type": "null"
         }
       ],
-      "description": "The profile or writer that routed chats point to, found as an agent\nis but not attempted: an attempt probes an agent as a conversation,\nwhich isn't how the route runs it."
+      "description": "The profile or writer that routed chats point to. Its attempt probes\nit as the route runs it."
+    },
+    "routed_job_id": {
+      "description": "The attempt queued for it.",
+      "maxLength": 36,
+      "type": [
+        "string",
+        "null"
+      ]
     },
     "skipped": {
       "description": "Agents left alone, and why.",

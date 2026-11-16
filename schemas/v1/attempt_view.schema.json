@@ -566,6 +566,10 @@
           ],
           "x-extension": "checked against the workflow's inputs schema"
         },
+        "routed": {
+          "description": "True to probe the agent as the routed chat runs it, as a profile or\nthe writer, rather than as a conversation.",
+          "type": "boolean"
+        },
         "target": {
           "description": "What to improve: an agent unless it says otherwise.",
           "oneOf": [

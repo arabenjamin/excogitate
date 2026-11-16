@@ -231,9 +231,10 @@ real runs, and queues one attempt for it. Put it on a
   didn't, a call that would have run twice, or memory searches that found
   nothing that answers the question. A chat that ended without an answer, or
   one the owner marked bad, is charged to the writer.
-- **A profile or the writer isn't attempted yet.** An attempt probes an agent
-  as a conversation, which isn't how the route runs it. The one chats point
-  to is in the result's `routed`, and nothing is queued for it.
+- **What chats point to gets a routed attempt.** The profile or writer they
+  point to is in the result's `routed`, and its attempt (`routed_job_id`)
+  probes it as the route runs it (below). An agent picked from its own runs
+  and from chats on the same day is attempted once.
 - **The task is the newest of those runs' own question,** and `why` says how the
   runs went wrong.
 - **An agent is left alone** if it's held, was tried in the last 24 hours, or was
@@ -251,9 +252,28 @@ supported edit is adopted only after the judge passes its known answers, and a
 revert puts the file back byte for byte. A run on real models is a manual check
 before each release.
 
+## Routed attempts
+
+A profile or the writer doesn't converse, so probing it as a conversation
+tests a way it never runs. An attempt with `"routed": true` probes it as
+the routed chat runs it.
+
+- **Each probe is a routed turn** on the task, with the route as it runs
+  now and only the agent under test swapped for the candidate. Its
+  trajectory is `probe:<name>`, and the judges read the route's steps: the
+  choices, the arguments, the results and the answer.
+- **Writes are stubbed, reads run.** A writer can only be judged on real
+  results, so a routed probe runs every read its profiles make, apart from
+  those in `harness.routed_probe_skips`: list the ones that cost money or a
+  quota there. A profile's `chat_writes` doesn't let a probe's write run.
+- **The judges are told the agent's part:** a profile's instructions only
+  fill a tool's arguments, and the writer writes from the results.
+- **A candidate may not add a guardrail.** An agent with one can't be a
+  profile, so adopting it would drop the agent from the route.
+- **Only an agent the route runs** can be attempted this way: an attempt on
+  any other fails and says so, and a workflow is refused.
+
 ## What comes next
 
-- **Routed attempts:** a probe that runs the route with one profile or the
-  writer swapped for a candidate, so what chats point to can be attempted.
 - **The picker for workflows:** choosing a workflow to improve from its
   failed runs, as `harness_pick` does for agents.

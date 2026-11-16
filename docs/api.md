@@ -112,7 +112,8 @@ problem the editor is told about.
 ### Harness²
 
 `POST /api/v1/harness/attempts` queues an attempt to improve an agent, or a
-workflow with `"target": "workflow"`, and
+workflow with `"target": "workflow"`; `"routed": true` probes an agent as
+the routed chat runs it ([routed attempts](harness.md#routed-attempts)), and
 `GET /api/v1/harness/attempts` and `GET /api/v1/harness/attempts/{id}` read what
 attempts found. See [Harness²](harness.md#running-one). The system adopts what
 the evidence supports on its own; `GET /api/v1/harness/changes`,

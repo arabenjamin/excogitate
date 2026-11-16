@@ -341,6 +341,7 @@ pub fn best(evidence: &[Evidence]) -> Option<Pick> {
                     task: newest.task.clone(),
                     inputs: None,
                     target: crate::Target::Agent,
+                    routed: agent.from_chats,
                     why: Some(said),
                 },
                 failure: why.clone(),

@@ -563,6 +563,83 @@ async fn a_profile_with_chat_writes_stores_and_the_answer_says_what_ran() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn a_routed_probe_swaps_in_the_candidate_and_stubs_its_writes() {
+    use harness::RouteProbe;
+    let keeper = "description: Keeps what it's told.\nsystem_prompt: You keep notes.\n\
+                  tools: [memory]\nchat_writes: true\n";
+    let fixture = fixture_without_front_door(
+        "probe-routed",
+        vec![
+            choice("keeper"),
+            json_reply(&json!({ "operation": "store", "text": "Sea otters hold hands." })),
+            choice("done"),
+            text("Stored it."),
+        ],
+        &[("keeper", keeper), ("writer", WRITER)],
+    )
+    .await;
+    let candidate: workflow::Agent = serde_json::from_value(json!({
+        "description": "Keeps what it's told.",
+        "system_prompt": "You keep notes, word for word.",
+        "tools": ["memory"],
+        "chat_writes": true,
+    }))
+    .unwrap();
+    assert_eq!(
+        fixture.runtime.part_of("keeper").await.unwrap(),
+        harness::PROFILE_PART
+    );
+    assert_eq!(
+        fixture.runtime.part_of("writer").await.unwrap(),
+        harness::WRITER_PART
+    );
+    assert!(fixture.runtime.part_of("nobody").await.is_err());
+    let probed = fixture
+        .runtime
+        .probe_routed("keeper", &candidate, "Remember that sea otters hold hands.")
+        .await
+        .unwrap();
+    assert_eq!(probed.answer.as_deref(), Some("Stored it."));
+    // The candidate's instructions filled the arguments.
+    let system = fixture.seen()[1]["messages"][0]["content"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    assert!(system.contains("word for word"), "{system}");
+    // A probe's write never runs, even for a profile that may write.
+    assert_eq!(
+        probed.receipt.tool_calls[0].status,
+        dispatch::CallStatus::Stubbed
+    );
+    let found = fixture
+        .call(
+            "memory",
+            &json!({ "operation": "search", "query": "otters" }),
+        )
+        .await;
+    assert_eq!(found["result"]["hits"], json!([]), "{found}");
+    let runs = fixture
+        .sink
+        .list_runs(&events::RunQuery {
+            agent: Some("probe:keeper".to_owned()),
+            harness: None,
+            offset: 0,
+            limit: 10,
+        })
+        .await
+        .unwrap();
+    assert_eq!(runs.runs.len(), 1);
+    assert!(
+        fixture
+            .runtime
+            .probe_routed("nobody", &candidate, "Hi.")
+            .await
+            .unwrap_err()
+            .contains("neither a profile")
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn a_search_query_in_other_words_is_kept_since_a_search_needs_one() {
     let mut once = route(&["notes"]);
     once.max_calls = 1;

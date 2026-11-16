@@ -1524,7 +1524,7 @@ async fn a_run_the_owner_marks_bad_is_picked_with_the_owners_words() {
 }
 
 #[tokio::test]
-async fn chats_that_end_the_same_way_twice_point_at_the_writer_but_queue_nothing() {
+async fn chats_that_end_the_same_way_twice_queue_a_routed_attempt_on_the_writer() {
     let running = quiet(
         "pick-chat",
         vec![ChaosStep::Status(500), ChaosStep::Status(500)],
@@ -1547,19 +1547,76 @@ async fn chats_that_end_the_same_way_twice_point_at_the_writer_but_queue_nothing
     assert_eq!(result["pick"], Value::Null, "{result}");
     assert_eq!(result["job_id"], Value::Null);
     assert_eq!(result["routed"]["request"]["agent"], "writer", "{result}");
+    assert_eq!(result["routed"]["request"]["routed"], true);
     assert_eq!(result["routed"]["failure"], "ended model_failed");
     assert_eq!(result["routed"]["repeats"], 2);
-    assert!(
-        result["skipped"].as_array().unwrap().iter().any(|why| why
-            .as_str()
-            .unwrap()
-            .contains("writer is picked from routed chats")),
-        "{result}"
-    );
+    let job = result["routed_job_id"].as_str().unwrap().to_owned();
+    let queued = body_of(running.get(&format!("/api/v1/jobs/{job}")).await).await;
+    assert_eq!(queued["kind"], "harness");
+    assert_eq!(queued["payload"]["routed"], true, "{queued}");
     Validator::from_schema(&schema::schema_of::<runtime::Picked>())
         .unwrap()
         .check(result)
         .unwrap();
+}
+
+#[tokio::test]
+async fn a_routed_attempt_probes_the_writer_as_the_route_runs_it() {
+    let script = [supported_attempt(), known_answers()].concat();
+    let running = quiet("routed-attempt", script).await;
+    running
+        .define(
+            "agents/writer.yaml",
+            "system_prompt: You help.\ntools: []\n",
+        )
+        .await;
+    let request = json!({ "agent": "writer", "task": "What is six times seven?", "routed": true });
+    let started = body_of(running.post("/api/v1/harness/attempts", &request).await).await;
+    let done = running.work_off(started["job_id"].as_str().unwrap()).await;
+    let attempt = &done["result"]["attempt"];
+    assert_eq!(attempt["status"], "supported", "{attempt}");
+    assert_eq!(attempt["adoption"]["adopted"], true, "{attempt}");
+    // Each probe was a routed turn, recorded as the writer's probe.
+    let probes = body_of(running.get("/api/v1/runs?agent=probe:writer").await).await;
+    let probes = probes["items"].as_array().unwrap();
+    assert_eq!(probes.len(), 2, "{probes:?}");
+    let run = probes[0]["run"].as_str().unwrap();
+    let trajectory = body_of(running.get(&format!("/api/v1/runs/{run}")).await).await;
+    assert!(
+        trajectory["steps"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|step| step["step"]["rule"] == "default_route"),
+        "{trajectory}"
+    );
+    let written = std::fs::read_to_string(running.root.join("agents/writer.yaml")).unwrap();
+    assert!(written.contains(WORK_IT_OUT), "{written}");
+}
+
+#[tokio::test]
+async fn a_routed_attempt_on_an_agent_the_route_doesnt_run_fails_and_says_why() {
+    let running = adopting("routed-none", vec![]).await;
+    let request = json!({ "agent": "helper", "task": "What is six times seven?", "routed": true });
+    let started = body_of(running.post("/api/v1/harness/attempts", &request).await).await;
+    let done = running.work_off(started["job_id"].as_str().unwrap()).await;
+    let attempt = &done["result"]["attempt"];
+    assert_eq!(attempt["status"], "failed", "{done}");
+    assert!(
+        attempt["problems"][0]
+            .as_str()
+            .unwrap()
+            .contains("neither a profile of the routed chat nor its writer"),
+        "{attempt}"
+    );
+    let workflow = json!({ "agent": "flow", "target": "workflow", "inputs": {}, "routed": true });
+    assert_eq!(
+        running
+            .post("/api/v1/harness/attempts", &workflow)
+            .await
+            .status(),
+        StatusCode::BAD_REQUEST
+    );
 }
 
 // A workflow as Harness²'s target.

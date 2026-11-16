@@ -56,11 +56,14 @@ pub struct Picked {
     /// Agents left alone, and why.
     #[schemars(length(max = 200), inner(length(max = 2048)))]
     pub skipped: Vec<String>,
-    /// The profile or writer that routed chats point to, found as an agent
-    /// is but not attempted: an attempt probes an agent as a conversation,
-    /// which isn't how the route runs it.
+    /// The profile or writer that routed chats point to. Its attempt probes
+    /// it as the route runs it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub routed: Option<Pick>,
+    /// The attempt queued for it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(length(max = 36))]
+    pub routed_job_id: Option<String>,
 }
 
 /// One attempt per agent per day, so a schedule that fires twice queues it
@@ -212,13 +215,6 @@ impl Runtime {
                 None
             }
         };
-        if let Some(chatted) = &routed {
-            skipped.push(format!(
-                "{} is picked from routed chats and not attempted: an attempt can't probe a \
-                 profile or the writer as the route runs it yet",
-                chatted.request.agent
-            ));
-        }
         Ok(routed)
     }
 
@@ -262,14 +258,32 @@ impl Runtime {
         let routed = self
             .routed_pick(&names, &tried, &marked, &mut skipped)
             .await?;
+        let routed_job_id = match &routed {
+            Some(chatted) => Some(self.queue(chatted, &mut skipped).await?),
+            None => None,
+        };
         let Some(picked) = best(&own) else {
             return Ok(Picked {
                 pick: None,
                 job_id: None,
                 skipped,
                 routed,
+                routed_job_id,
             });
         };
+        let job_id = Some(self.queue(&picked, &mut skipped).await?);
+        Ok(Picked {
+            pick: Some(picked),
+            job_id,
+            skipped,
+            routed,
+            routed_job_id,
+        })
+    }
+
+    /// Queues `picked`'s attempt: one per agent per day, so an agent picked
+    /// twice in a day, or from its runs and its chats, is attempted once.
+    async fn queue(&self, picked: &Pick, skipped: &mut Vec<String>) -> Result<String, String> {
         let id = attempt_job_id(&picked.request.agent, Utc::now().date_naive());
         let job = Job {
             id,
@@ -298,12 +312,7 @@ impl Runtime {
                 picked.request.agent
             ));
         }
-        Ok(Picked {
-            pick: Some(picked),
-            job_id: Some(id.to_string()),
-            skipped,
-            routed,
-        })
+        Ok(id.to_string())
     }
 }
 

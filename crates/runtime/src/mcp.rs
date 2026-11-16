@@ -48,6 +48,7 @@ fn session_for(
         purpose,
         max_result_chars,
         subject,
+        None,
     )
 }
 
@@ -58,6 +59,7 @@ pub(crate) fn session_with(
     purpose: &str,
     max_result_chars: usize,
     subject: RunSubject,
+    probe: Option<dispatch::Probe>,
 ) -> Result<Session, ToolFailure> {
     Session::new(
         Arc::clone(&runtime.registry),
@@ -70,7 +72,7 @@ pub(crate) fn session_with(
             purpose: purpose.to_owned(),
             max_result_chars,
             subject,
-            probe: None,
+            probe,
         },
     )
     .map(|session| session.with_stop(runtime.workflows.stop.clone()))

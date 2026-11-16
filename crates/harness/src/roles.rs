@@ -239,6 +239,8 @@ pub struct Brief<'a> {
     /// Lessons from earlier adopted changes that fit this task, from the
     /// library. Hints, to weigh against the runs.
     pub lessons: &'a [String],
+    /// What the agent does in the routed chat, when it's probed routed.
+    pub part: Option<&'a str>,
 }
 
 impl Brief<'_> {
@@ -254,6 +256,9 @@ impl Brief<'_> {
             text.push_str(&block("TASK", self.task));
         } else {
             text.push_str(&block("INPUTS", self.task));
+        }
+        if let Some(part) = self.part {
+            text.push_str(&block("WHERE IT RUNS", part));
         }
         if let Some(why) = self.why {
             text.push_str(&block("REPORTED PROBLEM", why));

@@ -47,6 +47,10 @@ pub struct Request {
     /// What to improve: an agent unless it says otherwise.
     #[serde(default, skip_serializing_if = "Target::is_agent")]
     pub target: Target,
+    /// True to probe the agent as the routed chat runs it, as a profile or
+    /// the writer, rather than as a conversation.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub routed: bool,
 
     /// What went wrong, if someone said.
     #[schemars(length(max = 2000))]
@@ -61,6 +65,9 @@ impl Request {
     ///
     /// What's wrong, in a sentence.
     pub fn check(&self) -> Result<(), String> {
+        if self.routed && self.target != Target::Agent {
+            return Err("only an agent is probed routed; a workflow runs as itself".to_owned());
+        }
         match self.target {
             Target::Agent if self.inputs.is_some() => {
                 Err("an agent is improved on a task; inputs are for a workflow".to_owned())
@@ -437,11 +444,45 @@ impl Attempt {
     }
 }
 
+/// Runs the routed chat as a probe: the route as it is, with one profile or
+/// the writer swapped for a candidate, writes stubbed.
+#[async_trait::async_trait]
+pub trait RouteProbe: Send + Sync + std::fmt::Debug {
+    /// Runs the route on `task` with `agent` in `name`'s place.
+    ///
+    /// # Errors
+    ///
+    /// Why it couldn't run, such as `name` being neither a profile of the
+    /// route nor its writer.
+    async fn probe_routed(&self, name: &str, agent: &Agent, task: &str)
+    -> Result<ProbeRun, String>;
+
+    /// What `name` does in the route, for the judges, or why it has no part
+    /// in it.
+    ///
+    /// # Errors
+    ///
+    /// `name` is neither a profile of the route nor its writer.
+    async fn part_of(&self, name: &str) -> Result<&'static str, String>;
+}
+
+/// What a profile does in the route, for the judges.
+pub const PROFILE_PART: &str = "This agent is a profile of the routed chat, not a conversation. \
+     The route picks it by its description, picks one of its tools, and uses its instructions \
+     only to fill that tool's arguments. Its runs here are routed chats: judge the arguments \
+     it filled and what they found.";
+/// What the writer does in the route, for the judges.
+pub const WRITER_PART: &str = "This agent is the writer of the routed chat, not a conversation. \
+     It has no tools: it writes the answer from the results the profiles found. Its runs here \
+     are routed chats: judge the answer against those results.";
+
 /// What the loop runs with.
 #[derive(Debug, Clone)]
 pub struct Loop<'a> {
     /// Runs the probes.
     pub engine: &'a Engine,
+    /// Runs routed probes, when the runtime has a route.
+    pub router: Option<&'a dyn RouteProbe>,
     /// The editor and composer.
     pub judges: Judges<'a>,
     /// How it runs.
@@ -460,11 +501,17 @@ impl Loop<'_> {
         task: &str,
         attempt: &mut Attempt,
     ) -> Option<(ProbeRun, Trajectory)> {
-        let probed = match self
-            .engine
-            .probe_agent(name, agent, task, self.settings.reads.clone())
-            .await
-        {
+        let probed = if attempt.request.routed {
+            match self.router {
+                Some(router) => router.probe_routed(name, agent, task).await,
+                None => Err("there's no route to probe".to_owned()),
+            }
+        } else {
+            self.engine
+                .probe_agent(name, agent, task, self.settings.reads.clone())
+                .await
+        };
+        let probed = match probed {
             Ok(probed) => probed,
             Err(why) => {
                 attempt.problem(format!("a probe couldn't run: {why}"));
@@ -510,6 +557,21 @@ impl Loop<'_> {
             }
         };
         attempt.base_harness = Some(self.engine.agent_harness(&agent));
+        let part = if request.routed {
+            let found = match self.router {
+                Some(router) => router.part_of(&request.agent).await,
+                None => Err("there's no route to probe".to_owned()),
+            };
+            match found {
+                Ok(part) => Some(part),
+                Err(why) => {
+                    attempt.problem(why);
+                    return attempt.end(Status::Failed);
+                }
+            }
+        } else {
+            None
+        };
         let Some((probed, trajectory)) = self
             .probe(&request.agent, &agent, &request.task, &mut attempt)
             .await
@@ -528,6 +590,7 @@ impl Loop<'_> {
             task: &request.task,
             why: request.why.as_deref(),
             lessons: &lessons,
+            part,
         };
         let money = self.judge_money(&attempt);
         let edited = match self.judges.edit(&brief, &reference, money).await {
@@ -582,7 +645,15 @@ impl Loop<'_> {
         let mut runs = vec![reference.clone()];
         let task = attempt.request.task_text();
         for mut candidate in candidates {
-            candidate.refused = self.refusal(&mut candidate, base, &task, &reference).await;
+            candidate.refused = self
+                .refusal(
+                    &mut candidate,
+                    base,
+                    &task,
+                    &reference,
+                    attempt.request.routed,
+                )
+                .await;
             if candidate.refused.is_none()
                 && let Some((probed, rendered)) =
                     self.try_candidate(base, &candidate, attempt).await
@@ -632,10 +703,21 @@ impl Loop<'_> {
 
     /// Why a candidate can't be run, if it can't: it breaks a rule on what
     /// an edit may do, or wouldn't pass the checks a definition does.
-    async fn unusable(&self, base: &Base, candidate: &Candidate, task: &str) -> Option<String> {
+    async fn unusable(
+        &self,
+        base: &Base,
+        candidate: &Candidate,
+        task: &str,
+        routed: bool,
+    ) -> Option<String> {
         match base {
             Base::Agent(agent) => {
                 let edit = candidate.agent(agent);
+                if routed && edit.guardrails != agent.guardrails {
+                    // An agent with a guardrail can't be a profile: adopted,
+                    // the edit would drop it from the route.
+                    return Some("an agent the route runs takes no new guardrails".to_owned());
+                }
                 check_harness(&edit, agent, task)
                     .and_then(|()| self.engine.check_candidate(&edit))
                     .err()
@@ -665,11 +747,12 @@ impl Loop<'_> {
         base: &Base,
         task: &str,
         reference: &Rendered,
+        routed: bool,
     ) -> Option<String> {
         if candidate.changes_nothing(base) {
             return Some("it changes nothing".to_owned());
         }
-        if let Some(why) = self.unusable(base, candidate, task).await {
+        if let Some(why) = self.unusable(base, candidate, task, routed).await {
             return Some(why);
         }
         // Every edit traces to a moment in the reference run.
@@ -814,7 +897,9 @@ impl Loop<'_> {
             }
         }
         let task = attempt.request.task_text();
-        candidate.refused = self.unusable(base, &candidate, &task).await;
+        candidate.refused = self
+            .unusable(base, &candidate, &task, attempt.request.routed)
+            .await;
         if candidate.refused.is_some() {
             attempt.candidates.push(candidate);
             return attempt.end(Status::Kept);

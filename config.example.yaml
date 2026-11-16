@@ -69,6 +69,9 @@ budget:
 # harness:
 #   # Tools a Harness² probe really runs, for their reads only. Writes never run.
 #   probe_reads: [memory]
+#   # Reads a routed probe doesn't run. It runs every read its profiles make,
+#   # so list the ones that cost money or a quota.
+#   routed_probe_skips: []
 #   # What the judges may spend on one attempt. They need a model marked
 #   # investigative in models.yaml.
 #   judge_usd_micros: 0

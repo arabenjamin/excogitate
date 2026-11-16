@@ -131,6 +131,7 @@ async fn attempt(setup: &Setup) -> Attempt {
     };
     let looped = Loop {
         engine: &setup.engine,
+        router: None,
         judges: Judges {
             gateway: &setup.engine.gateway,
             max_output_tokens: 4000,
@@ -141,6 +142,7 @@ async fn attempt(setup: &Setup) -> Attempt {
         .improve(Request {
             agent: "helper".to_owned(),
             target: harness::Target::Agent,
+            routed: false,
             task: TASK.to_owned(),
             inputs: None,
             why: Some("It gave up without looking.".to_owned()),
@@ -349,6 +351,7 @@ async fn an_agent_that_doesnt_exist_fails_and_says_so() {
     };
     let looped = Loop {
         engine: &setup.engine,
+        router: None,
         judges: Judges {
             gateway: &setup.engine.gateway,
             max_output_tokens: 4000,
@@ -359,6 +362,7 @@ async fn an_agent_that_doesnt_exist_fails_and_says_so() {
         .improve(Request {
             agent: "ghost".to_owned(),
             target: harness::Target::Agent,
+            routed: false,
             task: TASK.to_owned(),
             inputs: None,
             why: None,
@@ -383,6 +387,7 @@ async fn the_record_type_registers_and_an_attempt_meets_it() {
     };
     let looped = Loop {
         engine: &setup.engine,
+        router: None,
         judges: Judges {
             gateway: &setup.engine.gateway,
             max_output_tokens: 4000,
@@ -393,6 +398,7 @@ async fn the_record_type_registers_and_an_attempt_meets_it() {
         .improve(Request {
             agent: "ghost".to_owned(),
             target: harness::Target::Agent,
+            routed: false,
             task: TASK.to_owned(),
             inputs: None,
             why: None,
@@ -848,6 +854,7 @@ async fn a_workflows_merge_combines_the_step_edits_and_is_judged_on_its_own() {
     };
     let looped = Loop {
         engine: &setup.engine,
+        router: None,
         judges: Judges {
             gateway: &setup.engine.gateway,
             max_output_tokens: 4000,
@@ -862,6 +869,7 @@ async fn a_workflows_merge_combines_the_step_edits_and_is_judged_on_its_own() {
                 .as_object()
                 .cloned(),
             target: harness::Target::Workflow,
+            routed: false,
             why: None,
         })
         .await;
@@ -931,6 +939,7 @@ async fn a_fan_out_steps_items_are_read_as_one_run() {
     };
     let looped = Loop {
         engine: &setup.engine,
+        router: None,
         judges: Judges {
             gateway: &setup.engine.gateway,
             max_output_tokens: 4000,
@@ -945,6 +954,7 @@ async fn a_fan_out_steps_items_are_read_as_one_run() {
                 .as_object()
                 .cloned(),
             target: harness::Target::Workflow,
+            routed: false,
             why: None,
         })
         .await;

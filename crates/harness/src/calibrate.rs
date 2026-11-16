@@ -120,6 +120,7 @@ impl Judges<'_> {
             task: TASK,
             why: None,
             lessons: &[],
+            part: None,
         };
         let mut calibration = Calibration {
             model: String::new(),
