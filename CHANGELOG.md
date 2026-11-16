@@ -3,6 +3,12 @@
 All notable changes are listed here. The file is generated from the
 Conventional Commits by [git-cliff](https://git-cliff.org) (`cliff.toml`).
 
+## [0.17.0] - 2026-11-16
+
+### Added
+
+- Every chat is a routed turn, and a profile may write (breaking)
+
 ## [0.16.0] - 2026-11-15
 
 ### Added
