@@ -3,6 +3,12 @@
 All notable changes are listed here. The file is generated from the
 Conventional Commits by [git-cliff](https://git-cliff.org) (`cliff.toml`).
 
+## [0.20.1] - 2026-11-16
+
+### Fixed
+
+- Published schemas keep only the formats JSON Schema defines
+
 ## [0.20.0] - 2026-11-16
 
 ### Added
