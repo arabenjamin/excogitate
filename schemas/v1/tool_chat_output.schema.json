@@ -96,7 +96,6 @@
       "properties": {
         "cost_usd_micros": {
           "description": "What it cost, in millionths of a dollar.",
-          "format": "uint64",
           "minimum": 0,
           "type": "integer"
         },
@@ -110,13 +109,11 @@
         },
         "failed_attempts": {
           "description": "How many models failed before this one, or failed altogether.",
-          "format": "uint32",
           "minimum": 0,
           "type": "integer"
         },
         "input_tokens": {
           "description": "Tokens read.",
-          "format": "uint64",
           "minimum": 0,
           "type": "integer"
         },
@@ -130,7 +127,6 @@
         },
         "output_tokens": {
           "description": "Tokens written.",
-          "format": "uint64",
           "minimum": 0,
           "type": "integer"
         },
@@ -204,13 +200,11 @@
         },
         "calls_not_recorded": {
           "description": "Calls made after a budget ran out. Refused, and only counted here.",
-          "format": "uint64",
           "minimum": 0,
           "type": "integer"
         },
         "events_lost": {
           "description": "How many events the sink lost. The trajectory is incomplete if not 0.",
-          "format": "uint32",
           "minimum": 0,
           "type": "integer"
         },
@@ -306,13 +300,11 @@
         "capability_calls": {
           "default": 0,
           "description": "How many calls a plugin's tool made through its capabilities. Each\ncounts as a tool call, and each is on the trajectory.",
-          "format": "uint32",
           "minimum": 0,
           "type": "integer"
         },
         "cost_usd_micros": {
           "description": "What it spent, in millionths of a dollar.",
-          "format": "uint64",
           "minimum": 0,
           "type": "integer"
         },
@@ -326,7 +318,6 @@
         },
         "duration_ms": {
           "description": "How long it ran.",
-          "format": "uint64",
           "minimum": 0,
           "type": "integer"
         },
@@ -395,37 +386,31 @@
       "properties": {
         "cost_usd_micros": {
           "description": "Money, in millionths of a dollar.",
-          "format": "uint64",
           "minimum": 0,
           "type": "integer"
         },
         "duration_ms": {
           "description": "Wall-clock time.",
-          "format": "uint64",
           "minimum": 0,
           "type": "integer"
         },
         "rounds": {
           "description": "Model calls.",
-          "format": "uint32",
           "minimum": 0,
           "type": "integer"
         },
         "tokens": {
           "description": "Tokens read and written.",
-          "format": "uint64",
           "minimum": 0,
           "type": "integer"
         },
         "tool_calls": {
           "description": "Tool calls, including the ones refused.",
-          "format": "uint32",
           "minimum": 0,
           "type": "integer"
         },
         "writes": {
           "description": "Writes started.",
-          "format": "uint32",
           "minimum": 0,
           "type": "integer"
         }

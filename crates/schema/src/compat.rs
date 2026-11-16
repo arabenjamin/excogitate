@@ -51,9 +51,14 @@ impl fmt::Display for Break {
 /// `old`, for a schema in `role`. Empty means the change is compatible.
 #[must_use]
 pub fn breaking_changes(old: &Value, new: &Value, role: Role) -> Vec<Break> {
+    // A format JSON Schema doesn't define, such as `uint64`, constrains
+    // nothing a validator checks, so it's compared as absent on both sides.
+    let (mut old, mut new) = (old.clone(), new.clone());
+    crate::portable(&mut old);
+    crate::portable(&mut new);
     let (wider, narrower) = match role {
-        Role::Input => (new, old),
-        Role::Output => (old, new),
+        Role::Input => (&new, &old),
+        Role::Output => (&old, &new),
     };
     let mut walk = Walk {
         wider_root: wider,

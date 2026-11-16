@@ -100,7 +100,6 @@
         },
         "cost_usd_micros": {
           "description": "What the attempt cost: its probes and its judges.",
-          "format": "uint64",
           "minimum": 0,
           "type": "integer"
         },
@@ -364,7 +363,6 @@
         },
         "step": {
           "description": "The step's number in that run.",
-          "format": "uint32",
           "maximum": 4096,
           "minimum": 0,
           "type": "integer"
@@ -460,7 +458,6 @@
         },
         "max_calls": {
           "description": "Refuses the agent's calls past this many.",
-          "format": "uint32",
           "maximum": 1000,
           "minimum": 1,
           "type": [

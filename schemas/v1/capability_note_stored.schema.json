@@ -4,12 +4,10 @@
   "description": "What storing a note did, on the wire.",
   "properties": {
     "chunks": {
-      "format": "uint32",
       "minimum": 0,
       "type": "integer"
     },
     "cost_usd_micros": {
-      "format": "uint64",
       "minimum": 0,
       "type": "integer"
     },
@@ -21,7 +19,6 @@
       "type": "string"
     },
     "unembedded_chunks": {
-      "format": "uint32",
       "minimum": 0,
       "type": "integer"
     }

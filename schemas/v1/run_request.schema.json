@@ -19,7 +19,6 @@
     "priority": {
       "default": 0,
       "description": "Higher runs first.",
-      "format": "int32",
       "maximum": 1000,
       "minimum": -1000,
       "type": "integer"

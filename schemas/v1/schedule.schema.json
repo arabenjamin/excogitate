@@ -6,7 +6,6 @@
     "catch_up_seconds": {
       "default": 3600,
       "description": "How late a run may start after the runtime was down. An older run is\nskipped. At least [`MIN_CATCH_UP_SECONDS`], so a slot can't fall\nbetween two of the scheduler's looks.",
-      "format": "uint32",
       "maximum": 604800,
       "minimum": 10,
       "type": "integer"
@@ -31,7 +30,6 @@
     "max_attempts": {
       "default": 1,
       "description": "How many times it may be tried. One by default, because a retry can\nspend money or repeat what the first attempt did.",
-      "format": "uint32",
       "maximum": 10,
       "minimum": 1,
       "type": "integer"
@@ -43,7 +41,6 @@
     "priority": {
       "default": 0,
       "description": "Higher runs first.",
-      "format": "int32",
       "type": "integer"
     },
     "timezone": {

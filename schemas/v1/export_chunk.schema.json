@@ -6,7 +6,6 @@
     "embedding": {
       "description": "Its embedding, if it had one.",
       "items": {
-        "format": "float",
         "type": "number"
       },
       "maxItems": 8192,
@@ -27,7 +26,6 @@
     },
     "ordinal": {
       "description": "Its place in the note, from 0.",
-      "format": "uint32",
       "minimum": 0,
       "type": "integer"
     },
@@ -38,7 +36,6 @@
     },
     "token_count": {
       "description": "Its length in the embedder's tokens.",
-      "format": "uint32",
       "minimum": 0,
       "type": "integer"
     }

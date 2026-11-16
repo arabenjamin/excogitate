@@ -6,7 +6,6 @@
       "properties": {
         "budget_usd_micros": {
           "description": "What's left of the run's budget.",
-          "format": "uint64",
           "minimum": 0,
           "type": "integer"
         },
@@ -64,7 +63,6 @@
       "description": "The call's context."
     },
     "limit": {
-      "format": "uint32",
       "maximum": 50,
       "minimum": 1,
       "type": "integer"
@@ -80,7 +78,6 @@
     },
     "vector": {
       "items": {
-        "format": "float",
         "type": "number"
       },
       "maxItems": 65536,

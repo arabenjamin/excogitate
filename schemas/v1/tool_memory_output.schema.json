@@ -11,12 +11,10 @@
         },
         "score": {
           "description": "Its score, comparable only within this search.",
-          "format": "float",
           "type": "number"
         },
         "similarity": {
           "description": "How close it is in meaning to the query, if vector search found it.",
-          "format": "float",
           "type": [
             "number",
             "null"
@@ -157,12 +155,10 @@
         },
         "score": {
           "description": "Its score, comparable with the notes' within this search.",
-          "format": "float",
           "type": "number"
         },
         "similarity": {
           "description": "How close it is in meaning to the query, if the source searched\nwith the query's vector.",
-          "format": "float",
           "type": [
             "number",
             "null"
@@ -227,7 +223,6 @@
       "properties": {
         "chunks": {
           "description": "How many chunks it has.",
-          "format": "uint32",
           "minimum": 0,
           "type": "integer"
         },
@@ -246,7 +241,6 @@
         },
         "unembedded_chunks": {
           "description": "How many of them only a keyword search can find.",
-          "format": "uint32",
           "minimum": 0,
           "type": "integer"
         }
@@ -287,7 +281,6 @@
         "not_close_enough": {
           "default": 0,
           "description": "Notes that matched and were left out for being less similar\nthan `min_similarity`.",
-          "format": "uint32",
           "minimum": 0,
           "type": "integer"
         },
@@ -483,7 +476,6 @@
         },
         "total": {
           "description": "How many notes mention it, listed or not.",
-          "format": "uint64",
           "minimum": 0,
           "type": "integer"
         },
@@ -532,7 +524,6 @@
         },
         "total": {
           "description": "How many notes the window holds, listed or not.",
-          "format": "uint64",
           "minimum": 0,
           "type": "integer"
         },

@@ -41,13 +41,11 @@
     },
     "redirects": {
       "description": "How many redirects were followed.",
-      "format": "uint32",
       "minimum": 0,
       "type": "integer"
     },
     "status": {
       "description": "The status code.",
-      "format": "uint16",
       "maximum": 65535,
       "minimum": 0,
       "type": "integer"

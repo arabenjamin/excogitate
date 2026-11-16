@@ -15,7 +15,6 @@
     },
     "value": {
       "description": "Its value.",
-      "format": "double",
       "type": "number"
     }
   },

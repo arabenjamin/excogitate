@@ -187,3 +187,18 @@ fn a_new_kind_of_output_matches_no_old_choice() {
         ["(top)|2: a new value matches none of the old choices"]
     );
 }
+
+#[test]
+fn a_format_json_schema_doesnt_define_is_no_change_but_a_real_one_is() {
+    let old = json!({ "type": "object", "properties": {
+        "count": { "type": "integer", "format": "uint64", "minimum": 0 },
+        "at": { "type": "string", "format": "date-time" }
+    } });
+    let new = json!({ "type": "object", "properties": {
+        "count": { "type": "integer", "minimum": 0 },
+        "at": { "type": "string" }
+    } });
+    let found = breaking_changes(&old, &new, Role::Output);
+    assert_eq!(found.len(), 1, "{found:?}");
+    assert!(found[0].path.contains("at"), "{found:?}");
+}

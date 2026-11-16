@@ -170,7 +170,6 @@
         },
         "step": {
           "description": "The step's number in that run.",
-          "format": "uint32",
           "maximum": 4096,
           "minimum": 0,
           "type": "integer"

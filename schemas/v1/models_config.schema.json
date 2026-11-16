@@ -45,13 +45,11 @@
         },
         "context_tokens": {
           "description": "Its context window.",
-          "format": "uint32",
           "minimum": 1,
           "type": "integer"
         },
         "embedding_dimension": {
           "description": "The width of its embeddings. Required with the `embeddings` capability.",
-          "format": "uint32",
           "maximum": 65535,
           "minimum": 1,
           "type": [
@@ -61,7 +59,6 @@
         },
         "max_output_tokens": {
           "description": "The most it may write in one reply.",
-          "format": "uint32",
           "minimum": 1,
           "type": "integer"
         },
@@ -111,13 +108,11 @@
       "properties": {
         "input_usd_micros_per_mtok": {
           "description": "Per million input tokens.",
-          "format": "uint64",
           "minimum": 0,
           "type": "integer"
         },
         "output_usd_micros_per_mtok": {
           "description": "Per million output tokens.",
-          "format": "uint64",
           "minimum": 0,
           "type": "integer"
         }
@@ -171,7 +166,6 @@
         },
         "spend_cap_usd_micros_per_day": {
           "description": "The most it may spend per UTC day. Required for a priced model.",
-          "format": "uint64",
           "minimum": 0,
           "type": [
             "integer",
@@ -180,7 +174,6 @@
         },
         "timeout_secs": {
           "description": "How long one request may take.",
-          "format": "uint32",
           "maximum": 3600,
           "minimum": 1,
           "type": "integer"
@@ -255,7 +248,6 @@
     },
     "version": {
       "description": "The format version.",
-      "format": "uint32",
       "maximum": 1,
       "minimum": 1,
       "type": "integer"

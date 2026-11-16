@@ -6,55 +6,46 @@
       "properties": {
         "chunks": {
           "description": "`chunks.jsonl`.",
-          "format": "uint64",
           "minimum": 0,
           "type": "integer"
         },
         "definitions": {
           "description": "`definitions.jsonl`.",
-          "format": "uint64",
           "minimum": 0,
           "type": "integer"
         },
         "jobs": {
           "description": "`jobs.jsonl`.",
-          "format": "uint64",
           "minimum": 0,
           "type": "integer"
         },
         "links": {
           "description": "`links.jsonl`.",
-          "format": "uint64",
           "minimum": 0,
           "type": "integer"
         },
         "notes": {
           "description": "`notes.jsonl`.",
-          "format": "uint64",
           "minimum": 0,
           "type": "integer"
         },
         "records": {
           "description": "`records.jsonl`.",
-          "format": "uint64",
           "minimum": 0,
           "type": "integer"
         },
         "spend": {
           "description": "`spend.jsonl`.",
-          "format": "uint64",
           "minimum": 0,
           "type": "integer"
         },
         "tasks": {
           "description": "`tasks.jsonl`.",
-          "format": "uint64",
           "minimum": 0,
           "type": "integer"
         },
         "working": {
           "description": "`working.jsonl`.",
-          "format": "uint64",
           "minimum": 0,
           "type": "integer"
         }
@@ -83,7 +74,6 @@
     },
     "embedding_dimension": {
       "description": "The width of the chunks' embeddings.",
-      "format": "uint32",
       "minimum": 0,
       "type": "integer"
     },
@@ -94,7 +84,6 @@
     },
     "format_version": {
       "description": "The format's version.",
-      "format": "uint32",
       "minimum": 0,
       "type": "integer"
     },

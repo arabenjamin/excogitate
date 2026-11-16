@@ -167,7 +167,6 @@
     "max_body_chars": {
       "default": 50000,
       "description": "The most text it returns.",
-      "format": "uint",
       "maximum": 200000,
       "minimum": 1,
       "type": "integer"
@@ -175,7 +174,6 @@
     "max_read_bytes": {
       "default": 4194304,
       "description": "The most of a response it reads.",
-      "format": "uint",
       "maximum": 67108864,
       "minimum": 1,
       "type": "integer"
@@ -183,7 +181,6 @@
     "max_redirects": {
       "default": 5,
       "description": "How many redirects it follows.",
-      "format": "uint32",
       "maximum": 10,
       "minimum": 0,
       "type": "integer"
@@ -191,7 +188,6 @@
     "timeout_seconds": {
       "default": 30,
       "description": "The most one call may take, redirects and reading included.",
-      "format": "uint64",
       "maximum": 300,
       "minimum": 1,
       "type": "integer"

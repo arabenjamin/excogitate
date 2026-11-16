@@ -17,7 +17,6 @@
         },
         "max_items": {
           "description": "The most items it runs for. A longer list is cut, and the step's\n`fan_out` says so.",
-          "format": "uint32",
           "maximum": 50,
           "minimum": 1,
           "type": "integer"
@@ -42,7 +41,6 @@
             },
             "capability_calls": {
               "description": "The most calls a plugin's tool may make through its capabilities\n(`http`, `model`, `memory`, `jobs`), each one counted as a tool\ncall of the step: 1 unless set. A tool that fetches pages or asks\na model more than once needs more.",
-              "format": "uint32",
               "maximum": 200,
               "minimum": 1,
               "type": [
@@ -162,7 +160,6 @@
     "max_usd_micros": {
       "default": 0,
       "description": "The most the whole run may spend, in millionths of a dollar.",
-      "format": "uint64",
       "minimum": 0,
       "type": "integer"
     },

@@ -105,7 +105,6 @@
         "source_time_limit_secs": {
           "default": 5,
           "description": "How long one search of one of its sources may take, in seconds,\ninside the memory call's own limit. Over it, memory goes on\nwithout that source and says so.",
-          "format": "uint32",
           "maximum": 60,
           "minimum": 1,
           "type": "integer"
@@ -157,7 +156,6 @@
         "timeout_secs": {
           "default": 30,
           "description": "How long one call may take, in seconds.",
-          "format": "uint32",
           "maximum": 3600,
           "minimum": 1,
           "type": "integer"
@@ -184,7 +182,6 @@
     },
     "version": {
       "description": "The format version.",
-      "format": "uint32",
       "maximum": 1,
       "minimum": 1,
       "type": "integer"

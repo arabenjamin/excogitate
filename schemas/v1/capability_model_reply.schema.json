@@ -4,7 +4,6 @@
   "description": "A model's reply on the wire.",
   "properties": {
     "cost_usd_micros": {
-      "format": "uint64",
       "minimum": 0,
       "type": "integer"
     },

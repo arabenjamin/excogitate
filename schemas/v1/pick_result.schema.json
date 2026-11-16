@@ -11,13 +11,11 @@
         },
         "of": {
           "description": "How many recent runs were looked at.",
-          "format": "uint32",
           "minimum": 0,
           "type": "integer"
         },
         "repeats": {
           "description": "How many recent runs went wrong that way.",
-          "format": "uint32",
           "minimum": 0,
           "type": "integer"
         },

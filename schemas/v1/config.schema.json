@@ -6,45 +6,38 @@
       "properties": {
         "max_duration_ms": {
           "description": "Wall-clock time.",
-          "format": "uint64",
           "minimum": 1,
           "type": "integer"
         },
         "max_request_bytes": {
           "description": "The size of one request to a model.",
-          "format": "uint64",
           "minimum": 1,
           "type": "integer"
         },
         "max_rounds": {
           "description": "Model calls.",
-          "format": "uint32",
           "maximum": 512,
           "minimum": 1,
           "type": "integer"
         },
         "max_tool_calls": {
           "description": "Tool calls, including the ones refused.",
-          "format": "uint32",
           "maximum": 512,
           "minimum": 0,
           "type": "integer"
         },
         "max_total_tokens": {
           "description": "Tokens read and written across all model calls.",
-          "format": "uint64",
           "minimum": 1,
           "type": "integer"
         },
         "max_usd_micros": {
           "description": "Money, in millionths of a dollar.",
-          "format": "uint64",
           "minimum": 0,
           "type": "integer"
         },
         "max_writes": {
           "description": "Tool calls that write.",
-          "format": "uint32",
           "maximum": 512,
           "minimum": 0,
           "type": "integer"
@@ -133,7 +126,6 @@
         "judge_output_tokens": {
           "default": 4000,
           "description": "The longest reply a judge may give.",
-          "format": "uint32",
           "maximum": 100000,
           "minimum": 256,
           "type": "integer"
@@ -141,7 +133,6 @@
         "judge_usd_micros": {
           "default": 0,
           "description": "What the judges may spend on one attempt, in millionths of a dollar.\nThey need a capable model, marked `investigative` in `models.yaml`.",
-          "format": "uint64",
           "minimum": 0,
           "type": "integer"
         },
@@ -171,7 +162,6 @@
         "replay_tasks": {
           "default": 3,
           "description": "How many other recent tasks of the same agent a supported edit is\nreplayed on before it's adopted, the agent as it is against the\nedit. Any regression, or a replay that can't finish, stops adoption.\n0 adopts on the one task's evidence.",
-          "format": "uint32",
           "maximum": 8,
           "minimum": 0,
           "type": "integer"
@@ -179,7 +169,6 @@
         "review_chats": {
           "default": 0,
           "description": "How many of the last day's answered chats the `harness_review` job\nreviews, each judged on whether its answer holds up against its\nresults. 0 reviews none.",
-          "format": "uint32",
           "maximum": 200,
           "minimum": 0,
           "type": "integer"
@@ -187,7 +176,6 @@
         "review_usd_micros": {
           "default": 0,
           "description": "What one `harness_review` job may spend, in millionths of a dollar.",
-          "format": "uint64",
           "minimum": 0,
           "type": "integer"
         },
@@ -205,7 +193,6 @@
         "time_limit_seconds": {
           "default": 1800,
           "description": "The longest one attempt may take, in seconds.",
-          "format": "uint32",
           "maximum": 86400,
           "minimum": 1,
           "type": "integer"
@@ -284,7 +271,6 @@
         "max_body_chars": {
           "default": 50000,
           "description": "The most text it returns.",
-          "format": "uint",
           "maximum": 200000,
           "minimum": 1,
           "type": "integer"
@@ -292,7 +278,6 @@
         "max_read_bytes": {
           "default": 4194304,
           "description": "The most of a response it reads.",
-          "format": "uint",
           "maximum": 67108864,
           "minimum": 1,
           "type": "integer"
@@ -300,7 +285,6 @@
         "max_redirects": {
           "default": 5,
           "description": "How many redirects it follows.",
-          "format": "uint32",
           "maximum": 10,
           "minimum": 0,
           "type": "integer"
@@ -308,7 +292,6 @@
         "timeout_seconds": {
           "default": 30,
           "description": "The most one call may take, redirects and reading included.",
-          "format": "uint64",
           "maximum": 300,
           "minimum": 1,
           "type": "integer"
@@ -353,7 +336,6 @@
         "max_result_chars": {
           "default": 50000,
           "description": "How much of a result a run sees, in characters; past it the result\nis cut and says so.",
-          "format": "uint",
           "maximum": 200000,
           "minimum": 1,
           "type": "integer"
@@ -388,7 +370,6 @@
         "timeout_seconds": {
           "default": 30,
           "description": "How long one call may take, in seconds.",
-          "format": "uint32",
           "maximum": 600,
           "minimum": 1,
           "type": "integer"
@@ -490,7 +471,6 @@
         "job_days": {
           "default": 30,
           "description": "Days a finished job is kept, counted from when it finished. At least\n8: a schedule may fire up to 7 days late, and its job is how it\nknows it already has.",
-          "format": "uint32",
           "maximum": 36500,
           "minimum": 8,
           "type": [
@@ -501,7 +481,6 @@
         "trajectory_days": {
           "default": 30,
           "description": "Days a run's trajectory is kept, counted from its start. Trajectories\nhold private data. At least 8, so the week of runs Harness² reads is\nalways there.",
-          "format": "uint32",
           "maximum": 36500,
           "minimum": 8,
           "type": [
@@ -537,7 +516,6 @@
         "max_calls": {
           "default": 3,
           "description": "The most tool calls one turn makes.",
-          "format": "uint32",
           "maximum": 6,
           "minimum": 1,
           "type": "integer"
@@ -545,7 +523,6 @@
         "max_parts": {
           "default": 1,
           "description": "The most parts a turn is split into, when it asks about more than\none subject: each part is routed on its own, and the writer answers\nthe whole turn from all of them. 1, the default, doesn't split.",
-          "format": "uint32",
           "maximum": 4,
           "minimum": 1,
           "type": "integer"
@@ -609,7 +586,6 @@
         "max_concurrent_requests": {
           "default": 8,
           "description": "How many chats and tool calls run at once. Past this a request is\nturned away with a 503, and not queued.",
-          "format": "uint32",
           "maximum": 1024,
           "minimum": 1,
           "type": "integer"
@@ -711,7 +687,6 @@
     "max_output_tokens": {
       "default": 2048,
       "description": "The longest each of the model's replies may be.",
-      "format": "uint32",
       "maximum": 1000000,
       "minimum": 1,
       "type": "integer"
@@ -719,7 +694,6 @@
     "max_result_chars": {
       "default": 12000,
       "description": "How much of each tool result a chat's model sees. Small enough for a\nsmall model's context.",
-      "format": "uint",
       "maximum": 1000000,
       "minimum": 1,
       "type": "integer"
@@ -759,7 +733,6 @@
     "workers": {
       "default": 1,
       "description": "How many jobs run at once. One suits a single model server.",
-      "format": "uint32",
       "maximum": 64,
       "minimum": 1,
       "type": "integer"
@@ -767,7 +740,6 @@
     "workflow_time_limit_seconds": {
       "default": 1800,
       "description": "The longest one workflow run may take, in seconds.",
-      "format": "uint32",
       "maximum": 86400,
       "minimum": 1,
       "type": "integer"

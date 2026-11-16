@@ -49,45 +49,38 @@
       "properties": {
         "max_duration_ms": {
           "description": "Wall-clock time.",
-          "format": "uint64",
           "minimum": 1,
           "type": "integer"
         },
         "max_request_bytes": {
           "description": "The size of one request to a model.",
-          "format": "uint64",
           "minimum": 1,
           "type": "integer"
         },
         "max_rounds": {
           "description": "Model calls.",
-          "format": "uint32",
           "maximum": 512,
           "minimum": 1,
           "type": "integer"
         },
         "max_tool_calls": {
           "description": "Tool calls, including the ones refused.",
-          "format": "uint32",
           "maximum": 512,
           "minimum": 0,
           "type": "integer"
         },
         "max_total_tokens": {
           "description": "Tokens read and written across all model calls.",
-          "format": "uint64",
           "minimum": 1,
           "type": "integer"
         },
         "max_usd_micros": {
           "description": "Money, in millionths of a dollar.",
-          "format": "uint64",
           "minimum": 0,
           "type": "integer"
         },
         "max_writes": {
           "description": "Tool calls that write.",
-          "format": "uint32",
           "maximum": 512,
           "minimum": 0,
           "type": "integer"
@@ -177,7 +170,6 @@
         },
         "max_calls": {
           "description": "Refuses the agent's calls past this many.",
-          "format": "uint32",
           "maximum": 1000,
           "minimum": 1,
           "type": [
@@ -285,7 +277,6 @@
     },
     "max_output_tokens": {
       "description": "The longest each of its replies may be.",
-      "format": "uint32",
       "maximum": 1000000,
       "minimum": 1,
       "type": [

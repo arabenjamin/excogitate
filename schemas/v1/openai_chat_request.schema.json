@@ -103,7 +103,6 @@
   "properties": {
     "max_completion_tokens": {
       "description": "The same, under the newer name.",
-      "format": "uint32",
       "maximum": 1000000,
       "minimum": 1,
       "type": [
@@ -113,7 +112,6 @@
     },
     "max_tokens": {
       "description": "The longest each reply may be. The server's own limit still applies.",
-      "format": "uint32",
       "maximum": 1000000,
       "minimum": 1,
       "type": [
@@ -138,7 +136,6 @@
     },
     "n": {
       "description": "How many replies. Only 1.",
-      "format": "uint32",
       "maximum": 1,
       "minimum": 1,
       "type": [
@@ -159,7 +156,6 @@
     },
     "temperature": {
       "description": "Sampling temperature.",
-      "format": "float",
       "maximum": 2.0,
       "minimum": 0.0,
       "type": [

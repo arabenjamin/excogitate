@@ -78,13 +78,11 @@
             },
             "limit": {
               "description": "The most to return.",
-              "format": "uint32",
               "minimum": 0,
               "type": "integer"
             },
             "offset": {
               "description": "How many to skip.",
-              "format": "uint32",
               "minimum": 0,
               "type": "integer"
             },
@@ -229,13 +227,11 @@
             },
             "limit": {
               "description": "The most to return.",
-              "format": "uint32",
               "minimum": 0,
               "type": "integer"
             },
             "offset": {
               "description": "How many to skip.",
-              "format": "uint32",
               "minimum": 0,
               "type": "integer"
             },
@@ -349,7 +345,6 @@
             },
             "priority": {
               "description": "Higher runs first.",
-              "format": "int32",
               "maximum": 1000,
               "minimum": -1000,
               "type": "integer"
@@ -589,7 +584,6 @@
               "type": "string"
             },
             "value": {
-              "format": "int64",
               "type": "integer"
             }
           },
@@ -607,7 +601,6 @@
               "type": "string"
             },
             "value": {
-              "format": "double",
               "type": "number"
             }
           },

@@ -18,7 +18,6 @@
         },
         "step": {
           "description": "The step's number in that run.",
-          "format": "uint32",
           "maximum": 4096,
           "minimum": 0,
           "type": "integer"
@@ -74,7 +73,6 @@
         },
         "cost_usd_micros": {
           "description": "What the review cost, in millionths of a dollar.",
-          "format": "uint64",
           "minimum": 0,
           "type": "integer"
         },
@@ -124,7 +122,6 @@
   "properties": {
     "cost_usd_micros": {
       "description": "What it spent, in millionths of a dollar.",
-      "format": "uint64",
       "minimum": 0,
       "type": "integer"
     },

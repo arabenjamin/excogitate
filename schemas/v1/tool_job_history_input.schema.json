@@ -17,7 +17,6 @@
   "properties": {
     "limit": {
       "description": "How many, the latest first. The default is 10.",
-      "format": "uint32",
       "maximum": 50,
       "minimum": 1,
       "type": [

@@ -15,7 +15,6 @@
           "type": "boolean"
         },
         "similarity": {
-          "format": "float",
           "maximum": 1.0,
           "minimum": -1.0,
           "type": [
@@ -60,7 +59,6 @@
   "properties": {
     "cost_usd_micros": {
       "default": 0,
-      "format": "uint64",
       "minimum": 0,
       "type": "integer"
     },

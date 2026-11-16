@@ -6,45 +6,38 @@
       "properties": {
         "max_duration_ms": {
           "description": "Wall-clock time.",
-          "format": "uint64",
           "minimum": 1,
           "type": "integer"
         },
         "max_request_bytes": {
           "description": "The size of one request to a model.",
-          "format": "uint64",
           "minimum": 1,
           "type": "integer"
         },
         "max_rounds": {
           "description": "Model calls.",
-          "format": "uint32",
           "maximum": 512,
           "minimum": 1,
           "type": "integer"
         },
         "max_tool_calls": {
           "description": "Tool calls, including the ones refused.",
-          "format": "uint32",
           "maximum": 512,
           "minimum": 0,
           "type": "integer"
         },
         "max_total_tokens": {
           "description": "Tokens read and written across all model calls.",
-          "format": "uint64",
           "minimum": 1,
           "type": "integer"
         },
         "max_usd_micros": {
           "description": "Money, in millionths of a dollar.",
-          "format": "uint64",
           "minimum": 0,
           "type": "integer"
         },
         "max_writes": {
           "description": "Tool calls that write.",
-          "format": "uint32",
           "maximum": 512,
           "minimum": 0,
           "type": "integer"
@@ -361,14 +354,12 @@
           "properties": {
             "cost_usd_micros": {
               "description": "What it cost, in millionths of a dollar.",
-              "format": "uint64",
               "minimum": 0,
               "type": "integer"
             },
             "duration_ms": {
               "default": 0,
               "description": "How long the call took, retries and fallbacks included.",
-              "format": "uint64",
               "minimum": 0,
               "type": "integer"
             },
@@ -391,7 +382,6 @@
             "input_tokens": {
               "default": 0,
               "description": "The prompt's tokens, as the model counted them or as estimated.\nZero on a failed call, and in events written before 0.10.0.",
-              "format": "uint64",
               "minimum": 0,
               "type": "integer"
             },
@@ -406,7 +396,6 @@
             "output_tokens": {
               "default": 0,
               "description": "The reply's tokens, likewise.",
-              "format": "uint64",
               "minimum": 0,
               "type": "integer"
             },
@@ -420,7 +409,6 @@
             },
             "tool_calls": {
               "description": "How many tools it asked for.",
-              "format": "uint32",
               "minimum": 0,
               "type": "integer"
             },
@@ -451,7 +439,6 @@
             },
             "duration_ms": {
               "description": "How long it ran.",
-              "format": "uint64",
               "minimum": 0,
               "type": "integer"
             },
@@ -468,7 +455,6 @@
             },
             "index": {
               "description": "Its place among the run's tool calls, from 0.",
-              "format": "uint32",
               "minimum": 0,
               "type": "integer"
             },
@@ -527,13 +513,11 @@
             },
             "cost_usd_micros": {
               "description": "What it cost, in millionths of a dollar.",
-              "format": "uint64",
               "minimum": 0,
               "type": "integer"
             },
             "duration_ms": {
               "description": "How long it took.",
-              "format": "uint64",
               "minimum": 0,
               "type": "integer"
             },
@@ -543,7 +527,6 @@
             },
             "tool_index": {
               "description": "The tool call's place among the run's tool calls.",
-              "format": "uint32",
               "minimum": 0,
               "type": "integer"
             },
@@ -692,7 +675,6 @@
             },
             "cost_usd_micros": {
               "description": "What the whole run cost.",
-              "format": "uint64",
               "minimum": 0,
               "type": "integer"
             },
@@ -779,7 +761,6 @@
     },
     "unreadable": {
       "description": "Events that couldn't be read as steps, such as ones written before\nsteps had a schema.",
-      "format": "uint32",
       "minimum": 0,
       "type": "integer"
     }

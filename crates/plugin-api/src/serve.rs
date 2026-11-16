@@ -31,7 +31,11 @@ fn tool_listing(tools: &HashMap<String, Served>) -> Value {
     let mut listed: Vec<Value> = tools
         .values()
         .map(|Served { tool, .. }| {
-            let definition = tool.definition();
+            let mut definition = tool.definition();
+            // A plugin's or a remote server's own schema may carry formats
+            // that MCP clients warn on, as a generated one would.
+            schema::portable(&mut definition.input_schema);
+            schema::portable(&mut definition.output_schema);
             json!({
                 "name": definition.name,
                 "description": definition.description,

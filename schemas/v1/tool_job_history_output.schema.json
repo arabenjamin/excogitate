@@ -6,7 +6,6 @@
       "properties": {
         "attempts": {
           "description": "Tries so far.",
-          "format": "uint32",
           "minimum": 0,
           "type": "integer"
         },
@@ -38,7 +37,6 @@
         },
         "max_attempts": {
           "description": "Tries it may have.",
-          "format": "uint32",
           "minimum": 0,
           "type": "integer"
         },

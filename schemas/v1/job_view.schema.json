@@ -32,7 +32,6 @@
   "properties": {
     "attempts": {
       "description": "How many times it has been claimed.",
-      "format": "uint32",
       "minimum": 0,
       "type": "integer"
     },
@@ -56,7 +55,6 @@
     },
     "max_attempts": {
       "description": "How many claims it may have.",
-      "format": "uint32",
       "minimum": 0,
       "type": "integer"
     },
@@ -66,7 +64,6 @@
     },
     "priority": {
       "description": "Higher runs first.",
-      "format": "int32",
       "type": "integer"
     },
     "requested_by": {

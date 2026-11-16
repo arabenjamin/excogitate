@@ -235,7 +235,6 @@
       "properties": {
         "dimension": {
           "description": "The width of its vectors.",
-          "format": "uint32",
           "maximum": 65536,
           "minimum": 1,
           "type": "integer"
@@ -298,7 +297,6 @@
   "properties": {
     "api_version": {
       "description": "The contract version it's written against.",
-      "format": "uint32",
       "maximum": 1,
       "minimum": 1,
       "type": "integer"

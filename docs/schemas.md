@@ -15,6 +15,13 @@ every schema a plugin declares when it registers:
 - a place that really is open declares it with `x-extension`, whose value
   says why.
 
+A generated schema keeps only the `format`s JSON Schema defines (`date-time`,
+`uuid` and the like). The `uint64` or `double` a Rust type carries is
+dropped, since validators that check formats, such as the Ajv in MCP
+clients, warn on each one, and an integer's `minimum` already says what its
+`uint` did. The MCP tool list drops them from a plugin's or a remote
+server's schemas the same way (`schema::portable`).
+
 ## Changing one
 
 1. Change the Rust type.
@@ -44,7 +51,8 @@ newest `v*` tag). What breaks depends on who reads the schema, which
   doesn't: a reader built against the old schema ignores it.
 
 A removed schema is a break, and a changed `pattern`, `format` or condition
-is treated as one. A break passes only when the workspace version is past
+is treated as one. A format JSON Schema doesn't define is compared as
+absent, so dropping one isn't. A break passes only when the workspace version is past
 the tag's (the minor before 1.0, the major after), so it's declared. To run
 the check yourself:
 
