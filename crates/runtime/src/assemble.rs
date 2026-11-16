@@ -16,11 +16,10 @@ use plugin_host::{
 };
 use store::Store;
 use tools::{CalculateTool, HttpConfigError, HttpRequestTool, JobHistoryTool, MemoryTool};
-use workflow::{DELEGATE_TOOL, Engine, EngineLimits};
+use workflow::{Engine, EngineLimits};
 
 use crate::Config;
 use crate::capability::RuntimeCapabilities;
-use crate::delegate::DelegateTool;
 use crate::ledger::StoreLedger;
 use crate::mcp::{ChatTool, DispatchedTool};
 use crate::metrics::{Metrics, MetricsSink};
@@ -363,17 +362,11 @@ impl Runtime {
         // counted.
         let metrics = Arc::new(Metrics::new());
         let sink: Arc<dyn EventSink> = Arc::new(MetricsSink::new(sink, Arc::clone(&metrics)));
-        let mut names: Vec<String> = registry
+        let names: Vec<String> = registry
             .definitions()
             .into_iter()
             .map(|definition| definition.name)
             .collect();
-        if names.iter().any(|name| name == DELEGATE_TOOL) {
-            return Err(RuntimeError::Config(format!(
-                "a plugin's tool is named {DELEGATE_TOOL}, which the runtime keeps for itself"
-            )));
-        }
-        names.push(DELEGATE_TOOL.to_owned());
         if let Some(missing) = config
             .harness
             .probe_reads
@@ -390,30 +383,8 @@ impl Runtime {
             agent_output_tokens: config.max_output_tokens,
             time_limit: Duration::from_secs(u64::from(config.workflow_time_limit_seconds)),
         };
-        // `delegate` runs agents through the registry it's in, so it gets the
-        // registry as it's made, weakly.
-        let mut refused = None;
         let stop = StopSignal::new();
-        let registry = Arc::new_cyclic(|weak| {
-            let mut registry = registry;
-            let delegate = DelegateTool {
-                registry: weak.clone(),
-                gateway: Arc::clone(&gateway),
-                sink: Arc::clone(&sink),
-                store: Arc::clone(&store),
-                limits,
-                stop: stop.clone(),
-                probe_reads: config.harness.probe_reads.iter().cloned().collect(),
-                sources: choices.clone(),
-            };
-            if let Err(error) = registry.register(Arc::new(delegate)) {
-                refused = Some(error);
-            }
-            registry
-        });
-        if let Some(error) = refused {
-            return Err(error.into());
-        }
+        let registry = Arc::new(registry);
         let workflows = Engine {
             registry: Arc::clone(&registry),
             gateway: Arc::clone(&gateway),
@@ -451,18 +422,12 @@ impl Runtime {
         self
     }
 
-    /// What it offers over MCP: a chat, and each tool but `delegate`. All of them
-    /// go through dispatch, so a client gets no way around its checks.
+    /// What it offers over MCP: a chat, and each tool. All of them go
+    /// through dispatch, so a client gets no way around its checks.
     #[must_use]
     pub fn mcp_tools(&self) -> Vec<Arc<dyn Tool>> {
         let mut tools: Vec<Arc<dyn Tool>> = vec![Arc::new(ChatTool::new(self.clone()))];
-        // A hand-off is the front door's, reached through `chat`.
-        for definition in self
-            .registry
-            .definitions()
-            .into_iter()
-            .filter(|definition| definition.name != DELEGATE_TOOL)
-        {
+        for definition in self.registry.definitions() {
             tools.push(Arc::new(DispatchedTool::new(self.clone(), definition)));
         }
         tools

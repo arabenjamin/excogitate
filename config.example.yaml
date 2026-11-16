@@ -4,15 +4,12 @@
 # How much of each tool result a chat's model sees. Sized for a small model.
 max_result_chars: 12000
 
-# The agent that answers chats, with its own tools and `delegate` for the
-# rest. See docs/workflows.md#the-front-door and
-# definitions/agents/front-door.yaml.example.
-# front_door: front-door
-#
-# Or a route, a line of workers: a choice of profile (an agent, by its
-# description), its tools one at a time with their arguments checked in
-# code, then a writer that answers from the results. See
-# docs/workflows.md#the-routed-front-door.
+# What answers chats: a route, a line of workers. A choice of profile (an
+# agent, by its description), its tools one at a time with their arguments
+# checked in code, then a writer that answers from the results. See
+# docs/workflows.md#the-routed-front-door. Left out, every agent that can be
+# a profile (a description, one to six tools, no guardrails) is routed, and
+# the agent `writer` writes, or system_prompt if there's none.
 # front_door:
 #   profiles: [notes, jobs, web]
 #   writer: writer
@@ -23,13 +20,6 @@ max_result_chars: 12000
 #   arguments_role: arguments
 #   only_when_asked:
 #     - {profile: web, asked: '\b(web|online|latest|search)\b', otherwise: notes}
-
-# How many notes to search for before a chat's first round. 0 turns it off.
-recall_limit: 3
-# How close in meaning a note must be to be used, from 0 to 1. This suits
-# bge-m3 on short notes; measure it for your embedder. With no embedder, this
-# search finds nothing to use, and the model can still search for itself.
-recall_min_similarity: 0.6
 
 # The longest one workflow run may take, in seconds.
 workflow_time_limit_seconds: 1800

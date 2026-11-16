@@ -71,7 +71,6 @@ async fn start(name: &str, script: Vec<ChaosStep>, config: Config) -> Running {
 
 async fn quiet(name: &str, script: Vec<ChaosStep>) -> Running {
     let config = Config {
-        recall_limit: 0,
         ..Config::default()
     };
     start(name, script, config).await
@@ -581,7 +580,6 @@ async fn the_front_door_refuses_in_its_clients_format() {
 #[tokio::test]
 async fn past_the_limit_a_request_is_turned_away() {
     let mut config = Config {
-        recall_limit: 0,
         ..Config::default()
     };
     config.server.max_concurrent_requests = 1;
@@ -803,14 +801,32 @@ async fn a_chat_leaves_a_trajectory_that_meets_its_schema() {
         .unwrap();
     assert_eq!(trajectory["agent"], "chat");
     assert_eq!(trajectory["harness"], listed["items"][0]["harness"]);
-    assert_eq!(trajectory["calls"], "answered");
-    let steps = trajectory["steps"].as_array().unwrap();
-    assert_eq!(steps[0]["step"]["type"], "started");
-    assert_eq!(steps[1]["step"]["role"], "system");
-    assert_eq!(steps[2]["step"]["role"], "user");
-    assert_eq!(steps[2]["step"]["content"], "hi");
-    assert_eq!(steps[3]["step"]["reply"], "Hello.");
-    assert_eq!(steps.last().unwrap()["step"]["type"], "ended");
+    // No front_door and no agents: the default route, written by
+    // system_prompt, says so.
+    assert_eq!(trajectory["calls"], "rule default_route → answered");
+    let steps: Vec<&Value> = trajectory["steps"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|step| &step["step"])
+        .collect();
+    assert_eq!(steps[0]["type"], "started");
+    assert!(
+        steps
+            .iter()
+            .any(|step| step["role"] == "user" && step["content"] == "hi"),
+        "{steps:?}"
+    );
+    assert!(
+        steps.iter().any(|step| step["rule"] == "default_route"
+            && step["detail"] == "no front_door: profiles none; written by system_prompt"),
+        "{steps:?}"
+    );
+    assert!(
+        steps.iter().any(|step| step["reply"] == "Hello."),
+        "{steps:?}"
+    );
+    assert_eq!(steps.last().unwrap()["type"], "ended");
 }
 
 #[tokio::test]
@@ -1248,7 +1264,6 @@ async fn an_owners_edit_after_a_change_stands_and_holds_the_agent() {
 #[tokio::test]
 async fn adoption_can_be_turned_off() {
     let config = Config {
-        recall_limit: 0,
         harness: runtime::HarnessConfig {
             adopt: false,
             ..runtime::HarnessConfig::default()

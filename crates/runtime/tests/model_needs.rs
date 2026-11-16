@@ -72,7 +72,7 @@ impl Plugin for Asker {
 }
 
 /// A runtime with both models, the plugin granted as `grant` says, and a
-/// front door agent with `door_needs`.
+/// writer agent with `door_needs`.
 async fn runtime(grant: &str, door_needs: &str) -> (Runtime, ChaosServer) {
     let server = ChaosServer::start(vec![ChaosStep::Text("I am a model.".to_owned()); 4])
         .await
@@ -88,11 +88,7 @@ async fn runtime(grant: &str, door_needs: &str) -> (Runtime, ChaosServer) {
          \x20 - {{name: capable, provider: paid, wire_model: 'm2', capabilities: [chat, tools, investigative], context_tokens: 100000, \
          max_output_tokens: 100, price: {{input_usd_micros_per_mtok: 1000, output_usd_micros_per_mtok: 1000}}}}\n"
     );
-    let mut config = Config {
-        recall_limit: 0,
-        front_door: Some("door".into()),
-        ..Config::default()
-    };
+    let mut config = Config::default();
     config.budget.max_usd_micros = 100_000;
     let store = Arc::new(MemoryStore::new(3));
     let runtime = Runtime::build(
@@ -114,7 +110,7 @@ async fn runtime(grant: &str, door_needs: &str) -> (Runtime, ChaosServer) {
         std::fs::create_dir_all(root.join(directory)).unwrap();
     }
     let door = format!("description: Talks.\nsystem_prompt: You talk.\ntools: []\n{door_needs}");
-    std::fs::write(root.join("agents/door.yaml"), door).unwrap();
+    std::fs::write(root.join("agents/writer.yaml"), door).unwrap();
     runtime
         .load_definitions(&root, chrono::Utc::now())
         .await

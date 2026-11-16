@@ -67,9 +67,6 @@ pub struct SessionConfig {
 pub struct Probe {
     /// The read tools that really run. Anything else is stubbed.
     pub reads: BTreeSet<String>,
-    /// Tools that run in a probe because they probe in turn, as `delegate`
-    /// does: told it's a probe, the agent it hands to runs as one too.
-    pub nested: BTreeSet<String>,
 }
 
 /// What a probed run is told in place of a result.
@@ -824,7 +821,6 @@ impl Session {
         }
         self.guardrails_saw(&name, &arguments);
         if let Some(probe) = &self.config.probe
-            && !probe.nested.contains(&name)
             && (effect == crate::Effect::Write || !probe.reads.contains(&name))
         {
             return self.stub(call, name, effect).await;

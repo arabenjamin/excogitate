@@ -50,7 +50,7 @@ fn definitions(name: &str, door: &str) -> PathBuf {
     for directory in ["agents", "workflows", "schedules"] {
         std::fs::create_dir_all(root.join(directory)).unwrap();
     }
-    std::fs::write(root.join("agents/door.yaml"), door).unwrap();
+    std::fs::write(root.join("agents/writer.yaml"), door).unwrap();
     root
 }
 
@@ -68,8 +68,6 @@ fn runtime(url: &str) -> Runtime {
         Arc::new(MemorySink::new()),
         Catalog::from_yaml(&yaml, |_| None).unwrap(),
         Config {
-            front_door: Some("door".into()),
-            recall_limit: 0,
             ..Config::default()
         },
         &|_| None,
@@ -93,18 +91,10 @@ async fn chat(runtime: &Runtime) {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn an_agent_with_a_role_runs_on_the_roles_first_model() {
+async fn a_writer_with_a_role_writes_on_the_roles_first_model() {
     for (name, door, wire) in [
-        (
-            "with",
-            "description: d\nsystem_prompt: s\ntools: [memory]\nrole: writer\n",
-            "wire-best",
-        ),
-        (
-            "without",
-            "description: d\nsystem_prompt: s\ntools: [memory]\n",
-            "wire-cheap",
-        ),
+        ("with", "system_prompt: s\nrole: writer\n", "wire-best"),
+        ("without", "system_prompt: s\n", "wire-cheap"),
     ] {
         let (url, asked) = server().await;
         let runtime = runtime(&url);

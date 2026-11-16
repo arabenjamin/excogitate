@@ -22,7 +22,7 @@ refuses the key, that message gets an error and the session carries on.
 
 | Tool | What it does |
 |---|---|
-| `chat` | Asks Excogitate. It reads URLs and uses its memory, and returns `answer`, `stopped_because` and the full `receipt`. |
+| `chat` | Asks Excogitate, such as where a matter stands: a [routed turn](workflows.md#the-routed-front-door) looks up what it needs and a writer answers. Returns `answer`, `stopped_because` and the full `receipt`. |
 | `memory` | [The memory tool](tools.md), called directly. |
 | `http_request` | [The fetch tool](tools.md), called directly. |
 | `job_history` | [What the job queue ran](tools.md#job_history), the latest first. |
@@ -40,60 +40,13 @@ check.
   refuse them. They're still enforced, and a refusal says what was missing.
 - Each chat stands alone. What carries over between them is what's in memory.
 
-## Recall
-
-Before a chat's first round, the harness searches memory for the question.
-Notes close enough in meaning join the transcript as a search already made, so
-a small model has them without having to think of it. The receipt marks that
-call `by_harness`, and it counts against the budget. On the trajectory the
-search comes after the instructions and the question it was made for. If
-nothing is close
-enough, the model sees nothing, because irrelevant notes make a small model
-say it doesn't know things it does.
-
-`recall_limit` sets how many notes (0 turns it off), and
-`recall_min_similarity` how close they must be. The default of 0.6 suits
-bge-m3 on short notes, so measure it for your embedder. With no embedder,
-nothing passes that gate and the model can still search for itself.
-
-Measured on a small local model, three tries per question, with 21 made-up
-notes. Questions didn't ask it to search:
-
-| | Stored facts | Plain questions | Tokens per chat |
-|---|---|---|---|
-| Nothing added | 20/66 | 27/30 | 950 |
-| A prompt telling it to search first | 50/66 | 26/30 | 2020 |
-| Recall with no gate | 66/66 | 20/30 | 1398 |
-| Recall with the gate (the default) | 66/66, twice | 28/30, twice | about 1000 |
-
-Part of the stored-fact set was held back from choosing the gate: 24 tries on
-notes it wasn't tuned on all passed. It's one model and a small set of short
-notes, so treat it as a direction. A stored instruction to reply with a fixed
-word was never obeyed; the model sometimes quotes it.
-
-The default system prompt tells the model that an empty memory isn't the same as
-not knowing, and to store what it's asked to remember. Measured the same way,
-on the same small model, against the earlier prompt that didn't say so:
-
-| | Earlier prompt | Default prompt |
-|---|---|---|
-| Plain questions, with and without stored notes | 103/120 | 120/120 |
-| Stored facts | 66/66 | 66/66 |
-| Told to remember something, then asked for it | 25/30 | 29/30 |
-| Told to read a page, and to store it | 18/18 | 18/18 |
-| Tokens per chat, with stored notes | 1165 | 829 |
-
-Personal questions with no answer in memory weren't invented in any of 42 tries
-each. Plain questions held back from writing the prompt all passed. It's still
-one model and small sets.
-
 All work is private for now, so it only reaches `no_log` providers.
 
 ## Settings
 
 [The variables are in env.md](env.md).
 
-Settings cover each run's budget, the system prompt, reply and result sizes,
+Settings cover each run's budget, the route and its writer's prompt, reply and result sizes,
 and [`http_request`](tools.md#configuration). Money is off by default:
 `max_usd_micros` is 0, so a priced model isn't used until you raise it. Chats
 pay as purpose `chat`, direct calls as `tool`, and embedding as `memory`,

@@ -20,8 +20,6 @@ effects, so a candidate can be judged before anything changes.
 - **Reads run only if they're allowed.** Any other read is stubbed too.
 - **A stubbed call still counts** against the budgets, so a probe hits the
   same limits a real run would.
-- **An agent that delegates is probed as it runs:** with its roster in its
-  instructions, and `delegate` running the agent it hands to as a probe too.
 - **A candidate is checked first** against the [agent schema](../schemas/v1/agent.schema.json),
   and every tool it names must exist.
 - **Its trajectory is `probe:<name>`,** apart from the agent's real runs, and

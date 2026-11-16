@@ -36,7 +36,6 @@ fn config() -> Config {
             allowed_ranges: vec!["127.0.0.1/32".to_owned()],
             ..HttpConfig::default()
         },
-        recall_limit: 0,
         ..Config::default()
     }
 }
@@ -93,10 +92,6 @@ async fn call_one(runtime: &Runtime, tool: &str, arguments: &Value) -> Value {
     replies.remove(0)["result"].take()
 }
 
-fn tool_call(name: &str, arguments: &Value) -> ChaosStep {
-    ChaosStep::ToolCalls(vec![(name.to_owned(), arguments.to_string())])
-}
-
 #[tokio::test(flavor = "multi_thread")]
 async fn it_lists_a_chat_and_the_two_tools_in_forms_clients_accept() {
     let (runtime, _server) = runtime_with(vec![], config()).await;
@@ -122,73 +117,6 @@ async fn it_lists_a_chat_and_the_two_tools_in_forms_clients_accept() {
         assert_eq!(tool["outputSchema"]["type"], "object", "{}", tool["name"]);
         assert_eq!(check_strict(&tool["outputSchema"]), vec![]);
     }
-}
-
-#[tokio::test(flavor = "multi_thread")]
-async fn a_chat_fetches_a_page_stores_it_and_a_new_chat_finds_it() {
-    let url = page_url().await;
-    let script = vec![
-        tool_call("http_request", &json!({ "url": url })),
-        tool_call(
-            "memory",
-            &json!({ "operation": "store", "text": "Sea otters hold hands while sleeping." }),
-        ),
-        ChaosStep::Text("Stored it.".to_owned()),
-        tool_call(
-            "memory",
-            &json!({ "operation": "search", "query": "otters" }),
-        ),
-        ChaosStep::Text("They hold hands.".to_owned()),
-    ];
-    let (runtime, _server) = runtime_with(script, config()).await;
-
-    let first = call_one(&runtime, "chat", &json!({ "message": "read it" })).await;
-    assert_eq!(first["isError"], false);
-    let reply = &first["structuredContent"];
-    assert_eq!(reply["answer"], "Stored it.");
-    assert_eq!(reply["receipt"]["outcome"], "answered");
-    let calls = reply["receipt"]["tool_calls"].as_array().unwrap();
-    assert_eq!(calls[0]["tool"], "http_request");
-    assert_eq!(calls[0]["status"], "ran");
-    assert_eq!(calls[0]["untrusted"], true);
-    assert_eq!(calls[1]["tool"], "memory");
-    assert_eq!(calls[1]["status"], "ran");
-    assert_eq!(reply["receipt"]["totals"]["writes"], 1);
-
-    let second = call_one(
-        &runtime,
-        "chat",
-        &json!({ "message": "what do otters do?" }),
-    )
-    .await;
-    assert_eq!(second["structuredContent"]["answer"], "They hold hands.");
-    let recall = &second["structuredContent"]["receipt"];
-    assert_eq!(recall["tool_calls"][0]["status"], "ran");
-    assert_eq!(recall["totals"]["writes"], 0, "a search isn't a write");
-
-    let found = call_one(
-        &runtime,
-        "memory",
-        &json!({ "operation": "search", "query": "otters" }),
-    )
-    .await;
-    let hits = &found["structuredContent"]["result"]["hits"];
-    assert_eq!(hits.as_array().unwrap().len(), 1);
-    assert!(hits[0]["text"].as_str().unwrap().contains("hold hands"));
-}
-
-#[tokio::test(flavor = "multi_thread")]
-async fn a_chat_cant_call_itself() {
-    let script = vec![
-        tool_call("chat", &json!({ "message": "again" })),
-        ChaosStep::Text("no".to_owned()),
-    ];
-    let (runtime, server) = runtime_with(script, config()).await;
-    let result = call_one(&runtime, "chat", &json!({ "message": "hi" })).await;
-    let entry = &result["structuredContent"]["receipt"]["tool_calls"][0];
-    assert_eq!(entry["status"], "refused");
-    assert_eq!(entry["refusal"], "not_offered");
-    assert_eq!(server.served().len(), 2);
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -345,7 +273,7 @@ async fn listening_model() -> (String, Arc<Mutex<Vec<Value>>>) {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn the_model_gets_the_owners_prompt_and_only_the_tools() {
+async fn without_a_front_door_or_agents_the_owners_prompt_writes_with_no_tools() {
     let (base_url, seen) = listening_model().await;
     let yaml = format!(
         "version: 1\nproviders:\n  - {{name: c, base_url: '{base_url}', no_log: true, timeout_secs: 10}}\n\
@@ -365,42 +293,34 @@ async fn the_model_gets_the_owners_prompt_and_only_the_tools() {
     let result = call_one(&runtime, "chat", &json!({ "message": "the question" })).await;
     assert_eq!(result["structuredContent"]["answer"], "heard");
 
+    // No front_door and no agents: system_prompt writes, with no tools,
+    // and says nothing was looked up.
     let seen = seen.lock().unwrap();
+    assert_eq!(seen.len(), 1, "one call: the writer's");
     let messages = seen[0]["messages"].as_array().unwrap();
     assert_eq!(messages[0]["role"], "system");
     assert_eq!(messages[0]["content"], "the owner's prompt");
     assert_eq!(messages[1]["role"], "user");
-    assert_eq!(messages[1]["content"], "the question");
-    let tools = seen[0]["tools"].as_array().unwrap();
-    let names: Vec<&str> = tools
-        .iter()
-        .map(|tool| tool["function"]["name"].as_str().unwrap())
-        .collect();
-    assert_eq!(
-        names,
-        ["calculate", "http_request", "job_history", "memory"]
+    let asked = messages[1]["content"].as_str().unwrap();
+    assert!(
+        asked.ends_with("Nothing was looked up for this turn.\n\nthe question"),
+        "{asked}"
     );
-    for tool in tools {
-        assert_eq!(tool["function"]["parameters"]["allOf"], Value::Null);
-    }
+    assert!(
+        seen[0]["tools"].as_array().is_none_or(Vec::is_empty),
+        "{}",
+        seen[0]
+    );
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn a_chats_tool_results_are_sized_for_its_model() {
-    let url = page_url().await;
-    let script = vec![
-        tool_call("http_request", &json!({ "url": url })),
-        ChaosStep::Text("ok".to_owned()),
-    ];
+async fn direct_calls_get_a_result_whole() {
+    // A chat's results are sized for its model; a client's aren't.
     let small = Config {
         max_result_chars: 20,
         ..config()
     };
-    let (runtime, _server) = runtime_with(script, small).await;
-    let result = call_one(&runtime, "chat", &json!({ "message": "read it" })).await;
-    let entry = &result["structuredContent"]["receipt"]["tool_calls"][0];
-    assert_eq!(entry["truncated"], true);
-
+    let (runtime, _server) = runtime_with(Vec::new(), small).await;
     let direct = call_one(
         &runtime,
         "http_request",
@@ -455,140 +375,6 @@ async fn spending_outlives_the_runtime_that_spent_it() {
     assert_eq!(seen.lock().unwrap().len(), 1, "no second call was made");
 }
 
-fn listening_runtime(base_url: &str, recall_limit: u32, recall_min_similarity: f32) -> Runtime {
-    let yaml = format!(
-        "version: 1\nproviders:\n  - {{name: c, base_url: '{base_url}', no_log: true, timeout_secs: 10}}\n\
-         models:\n  - {{name: c, provider: c, wire_model: x, capabilities: [chat, tools], context_tokens: 100000, max_output_tokens: 100}}\n  - {{name: e, provider: c, wire_model: emb, capabilities: [embeddings], context_tokens: 8000, max_output_tokens: 1, embedding_dimension: 3}}\n"
-    );
-    Runtime::assemble(
-        Arc::new(MemoryStore::new(3)),
-        Arc::new(MemorySink::new()),
-        Catalog::from_yaml(&yaml, |_| None).unwrap(),
-        Config {
-            recall_limit,
-            recall_min_similarity,
-            ..config()
-        },
-        &|_| None,
-    )
-    .unwrap()
-}
-
-#[tokio::test(flavor = "multi_thread")]
-async fn a_chat_starts_with_what_memory_already_has() {
-    let (base_url, seen) = listening_model().await;
-    let runtime = listening_runtime(&base_url, 3, 0.6);
-    let note = json!({ "operation": "store", "text": "Sea otters hold hands." });
-    call_one(&runtime, "memory", &note).await;
-
-    let result = call_one(&runtime, "chat", &json!({ "message": "otters" })).await;
-    let reply = &result["structuredContent"];
-    assert_eq!(reply["answer"], "heard");
-    let entry = &reply["receipt"]["tool_calls"][0];
-    assert_eq!(entry["tool"], "memory");
-    assert_eq!(entry["status"], "ran");
-    assert_eq!(entry["effect"], "read");
-    assert_eq!(entry["by_harness"], true);
-    assert_eq!(entry["untrusted"], true, "a model wrote that note");
-
-    let seen = seen.lock().unwrap();
-    let messages = seen[0]["messages"].as_array().unwrap();
-    assert_eq!(messages[1]["role"], "user");
-    assert_eq!(messages[2]["role"], "assistant");
-    assert_eq!(messages[2]["tool_calls"][0]["function"]["name"], "memory");
-    assert_ne!(
-        messages[2]["content"], "",
-        "a small model goes silent after a blank turn"
-    );
-    assert_eq!(messages[3]["role"], "tool");
-    let found = messages[3]["content"].as_str().unwrap();
-    assert!(found.contains("hold hands"), "{found}");
-    assert!(found.contains("\"untrusted\":true"), "{found}");
-}
-
-#[tokio::test(flavor = "multi_thread")]
-async fn notes_that_arent_close_enough_stay_out_of_the_transcript() {
-    let (base_url, seen) = listening_model().await;
-    let runtime = listening_runtime(&base_url, 3, 0.6);
-    let note = json!({ "operation": "store", "text": "Sea otters hold hands." });
-    call_one(&runtime, "memory", &note).await;
-
-    let result = call_one(&runtime, "chat", &json!({ "message": "capital of France" })).await;
-    let entry = &result["structuredContent"]["receipt"]["tool_calls"][0];
-    assert_eq!(
-        entry["by_harness"], true,
-        "the search still ran, and says so"
-    );
-    assert_eq!(entry["status"], "ran");
-    assert_eq!(
-        seen.lock().unwrap()[0]["messages"]
-            .as_array()
-            .unwrap()
-            .len(),
-        2
-    );
-}
-
-#[tokio::test(flavor = "multi_thread")]
-async fn nothing_found_means_nothing_added() {
-    let (base_url, seen) = listening_model().await;
-    let runtime = listening_runtime(&base_url, 3, 0.0);
-    call_one(&runtime, "chat", &json!({ "message": "otters" })).await;
-    assert_eq!(
-        seen.lock().unwrap()[0]["messages"]
-            .as_array()
-            .unwrap()
-            .len(),
-        2
-    );
-}
-
-#[tokio::test(flavor = "multi_thread")]
-async fn a_recall_that_is_refused_stays_out_of_the_transcript() {
-    let (base_url, seen) = listening_model().await;
-    // Past what the memory tool allows, so dispatch refuses the search.
-    let runtime = listening_runtime(&base_url, 51, 0.0);
-    let result = call_one(&runtime, "chat", &json!({ "message": "otters" })).await;
-    let reply = &result["structuredContent"];
-    assert_eq!(reply["answer"], "heard");
-    assert_eq!(reply["receipt"]["tool_calls"][0]["status"], "refused");
-    assert_eq!(
-        seen.lock().unwrap()[0]["messages"]
-            .as_array()
-            .unwrap()
-            .len(),
-        2
-    );
-}
-
-#[tokio::test(flavor = "multi_thread")]
-async fn recall_can_be_turned_off() {
-    let (base_url, seen) = listening_model().await;
-    let runtime = listening_runtime(&base_url, 0, 0.0);
-    let result = call_one(&runtime, "chat", &json!({ "message": "otters" })).await;
-    let calls = result["structuredContent"]["receipt"]["tool_calls"]
-        .as_array()
-        .unwrap();
-    assert_eq!(calls.len(), 0);
-    assert_eq!(
-        seen.lock().unwrap()[0]["messages"]
-            .as_array()
-            .unwrap()
-            .len(),
-        2
-    );
-}
-
-#[tokio::test(flavor = "multi_thread")]
-async fn a_question_longer_than_a_query_still_recalls() {
-    let (base_url, _seen) = listening_model().await;
-    let runtime = listening_runtime(&base_url, 3, 0.0);
-    let result = call_one(&runtime, "chat", &json!({ "message": "é".repeat(5000) })).await;
-    let entry = &result["structuredContent"]["receipt"]["tool_calls"][0];
-    assert_eq!(entry["status"], "ran", "{entry}");
-}
-
-/// A schedule's whole path: due, queued, run by a worker, recorded.
 async fn run_one_scheduled_chat(script: Vec<ChaosStep>) -> store::Job {
     let store = Arc::new(MemoryStore::new(3));
     let server = ChaosServer::start(script).await.unwrap();

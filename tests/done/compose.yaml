@@ -7,6 +7,8 @@ services:
     volumes:
       - ./tests/done/models.yaml:/config/models.yaml:ro
       - ./tests/done/config.yaml:/config/config.yaml:ro
+      # The quickstart's agents, copied from definitions/agents/*.example.
+      - ${DONE_DEFINITIONS:?}:/config/definitions:ro
 
   server:
     environment:
@@ -14,6 +16,8 @@ services:
     volumes:
       - ./tests/done/models.yaml:/config/models.yaml:ro
       - ./tests/done/config.yaml:/config/config.yaml:ro
+      # The quickstart's agents, copied from definitions/agents/*.example.
+      - ${DONE_DEFINITIONS:?}:/config/definitions:ro
 
   session_chaos:
     image: excogitate:local
@@ -24,6 +28,7 @@ services:
     volumes:
       - ./tests/done/models.chaos.yaml:/config/models.yaml:ro
       - ./tests/done/config.yaml:/config/config.yaml:ro
+      - ${DONE_DEFINITIONS:?}:/config/definitions:ro
       - chaos-data:/data
 
   fixture:

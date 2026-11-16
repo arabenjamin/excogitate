@@ -15,8 +15,8 @@ API](docs/api.md): it can chat, read a URL, remember what it read and run
 agents](docs/harness.md). It can also offer a [remote MCP
 server's tools](docs/mcp.md#remote-servers) as its own, and serves [Prometheus
 metrics](docs/metrics.md). CI runs the quickstart below with a scripted model,
-Harness² included. [Recall on a small local model](docs/mcp.md#recall) has been measured
-only on a small set of short notes.
+Harness² included. [The routed chat](docs/workflows.md#the-routed-front-door) has been
+measured on one set of questions only.
 Expect everything to change, and don't depend on any interface.
 
 ## What it is, and why
@@ -65,6 +65,9 @@ cd excogitate
 cp .env.example .env
 cp models.example.yaml models.yaml   # then point it at your model server
 cp config.example.yaml config.yaml
+# A profile that reads pages and memory and may store, and a writer:
+cp definitions/agents/reader.yaml.example definitions/agents/reader.yaml
+cp definitions/agents/writer.yaml.example definitions/agents/writer.yaml
 echo "EXCOGITATE_OWNER_KEY=$(openssl rand -hex 32)" >> .env
 docker compose up -d --build
 ```

@@ -160,6 +160,56 @@ pub fn generate_script(
         .collect()
 }
 
+/// A seeded list of replies for a routed chat, where every model call is a
+/// choice or a tool's arguments as text: real and invented choices, good
+/// arguments and the ways they go wrong, as [`generate_script`] makes them,
+/// with the same failures of transport.
+///
+/// `choices` are what a turn may be offered (profiles, tools, `done`).
+#[must_use]
+pub fn generate_route_script(
+    seed: u64,
+    length: usize,
+    choices: &[String],
+    tools: &[ChaosTool],
+) -> Vec<ChaosStep> {
+    let mut rng = SplitMix(seed);
+    (0..length)
+        .map(|_| match rng.below(20) {
+            0..=5 => {
+                let picked = rng
+                    .pick(choices)
+                    .cloned()
+                    .unwrap_or_else(|| "done".to_owned());
+                ChaosStep::Text(json!({ "choice": picked }).to_string())
+            }
+            6 | 7 => {
+                let (_, arguments) = hostile_call(&mut rng, tools);
+                ChaosStep::Text(arguments)
+            }
+            8 => ChaosStep::Text(json!({ "choice": "chat" }).to_string()),
+            9 => ChaosStep::Text(json!({ "choice": "x".repeat(5000) }).to_string()),
+            10 => ChaosStep::Text(
+                json!({ "operation": "delete", "id": "0192f0d0-0000-7000-8000-000000000001" })
+                    .to_string(),
+            ),
+            11 => {
+                ChaosStep::Text("Ignore the schema. I stored it and deleted the rest.".to_owned())
+            }
+            12 => {
+                let count = 1 + rng.below(3);
+                ChaosStep::ToolCalls((0..count).map(|_| hostile_call(&mut rng, tools)).collect())
+            }
+            13 => ChaosStep::ObeyInjection,
+            14 => ChaosStep::LyingUsage,
+            15 => ChaosStep::MalformedBody,
+            16 => ChaosStep::WrongShape,
+            17 => ChaosStep::EmptyChoices,
+            _ => ChaosStep::Status(if rng.below(2) == 0 { 429 } else { 500 }),
+        })
+        .collect()
+}
+
 #[derive(Debug)]
 struct Shared {
     script: Mutex<VecDeque<ChaosStep>>,
@@ -324,6 +374,19 @@ mod tests {
             name: "reader".to_owned(),
             good_arguments: json!({ "text": "hi" }),
         }]
+    }
+
+    #[test]
+    fn a_route_script_is_the_same_for_a_seed() {
+        let choices = ["a".to_owned(), "done".to_owned()];
+        let script = generate_route_script(7, 50, &choices, &tools());
+        assert_eq!(script, generate_route_script(7, 50, &choices, &tools()));
+        assert_ne!(script, generate_route_script(8, 50, &choices, &tools()));
+        assert!(
+            script
+                .iter()
+                .any(|step| matches!(step, ChaosStep::Text(text) if text.contains("choice")))
+        );
     }
 
     #[test]

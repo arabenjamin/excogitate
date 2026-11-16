@@ -45,8 +45,8 @@ Point any OpenAI client at `http://127.0.0.1:8080/v1`. It sees one model,
 `excogitate`, and behind it all of Excogitate: memory, tools, budgets and routing. The
 models that actually answer are the ones in `models.yaml`.
 
-- Your `system` and `developer` messages are added after Excogitate's own
-  instructions and don't replace them.
+- Your `system` and `developer` messages are added after the writer's own
+  instructions and don't replace them; only the writer sees them.
 - `max_tokens` can only lower the server's own limit.
 - Replies carry an extra `receipt` of what actually ran.
 - With `stream: true`, the answer arrives as one chunk when the run ends. Excogitate

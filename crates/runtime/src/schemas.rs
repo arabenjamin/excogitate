@@ -4,7 +4,6 @@
 use serde_json::Value;
 use tools::{CalculateTool, HttpRequestTool, JobHistoryTool, MemoryTool};
 
-use crate::delegate::{DelegateArgs, DelegateResult};
 use crate::mcp::{ChatArgs, ChatReply};
 
 /// Each bundled tool by name, with its input and output schemas.
@@ -19,11 +18,6 @@ pub fn bundled_tool_schemas() -> Vec<(&'static str, Value, Value)> {
         ("memory", memory_in, memory_out),
         ("job_history", jobs_in, jobs_out),
         ("calculate", calc_in, calc_out),
-        (
-            workflow::DELEGATE_TOOL,
-            schema::schema_of::<DelegateArgs>(),
-            schema::schema_of::<DelegateResult>(),
-        ),
         (
             "chat",
             schema::schema_of::<ChatArgs>(),

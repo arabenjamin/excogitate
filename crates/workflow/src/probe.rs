@@ -12,9 +12,7 @@ use serde_json::{Value, json};
 use store::{DefinitionKind, MAX_PAGE_LIMIT, PageRequest};
 
 use crate::engine::{Engine, Left};
-use crate::{
-    Agent, DELEGATE_TOOL, Workflow, WorkflowError, WorkflowRun, check_agent, check_workflow,
-};
+use crate::{Agent, Workflow, WorkflowError, WorkflowRun, check_agent, check_workflow};
 
 /// How a candidate workflow behaved on its inputs.
 #[derive(Debug, Clone, PartialEq)]
@@ -127,10 +125,7 @@ impl Engine {
             .map_err(|error| bounded(&error.to_string()))?
             .check(inputs)
             .map_err(|refusal| bounded(&format!("the inputs: {refusal}")))?;
-        let probe = Probe {
-            reads,
-            nested: BTreeSet::from([DELEGATE_TOOL.to_owned()]),
-        };
+        let probe = Probe { reads };
         let run = self
             .run_steps(name, candidate, inputs.clone(), Some(&probe))
             .await;
@@ -185,16 +180,11 @@ impl Engine {
         };
         let result = self
             .converse_as(
-                name,
                 &format!("probe:{name}"),
                 candidate,
                 task.to_owned(),
                 left,
-                Some(Probe {
-                    reads,
-                    // A hand-off runs, as a probe of the agent it goes to.
-                    nested: BTreeSet::from([DELEGATE_TOOL.to_owned()]),
-                }),
+                Some(Probe { reads }),
             )
             .await?;
         Ok(ProbeRun {

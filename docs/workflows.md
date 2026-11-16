@@ -150,7 +150,8 @@ limits the `memory` tool, in that agent's runs, to the sources named; an empty
 list reads none, and left out, it reads every source the plugins offer, so a
 narrow agent isn't flooded by a large lake. A source named that no plugin
 offers stops the server, and so does naming sources without the `memory`
-tool. The front door's choice holds for the whole chat.
+tool. A routed chat's profiles don't apply it yet: their searches read every
+source.
 
 ### Skills
 
@@ -166,8 +167,8 @@ skills:
 ```
 
 `when` and `unless` are patterns matched against the task as the agent
-receives it (a step's `message` and `context`, a hand-off's task, or the
-chat's newest message for the front door), ignoring case. A skill that
+receives it (a step's `message` and `context`, or the chat's question for
+a routed chat's profile and writer), ignoring case. A skill that
 matches is added after the agent's instructions, under its name. An agent has
 at most 16, each at most 4,000 characters. The run's trajectory says which
 were loaded.
@@ -230,8 +231,7 @@ guardrails:
 A refused call tells the model `because`. Its receipt entry names the
 guardrail and is `arguments_invalid` for `deny` or `budget` for
 `max_calls`. A per-tool limit doesn't end the run. Only the agent's own calls
-count, not the ones the harness makes for it, such as the front door's
-memory search. A guardrail has at least one rule and holds a tool the agent
+count, not the ones the harness makes for it. A guardrail has at least one rule and holds a tool the agent
 has. Names must be unique and patterns must compile, or the server doesn't
 start. A workflow's `tool` steps have no guardrails; their arguments are
 fixed in the definition.
@@ -240,50 +240,11 @@ An agent uses Excogitate's `budget` unless it sets its own. Either way, it can't
 use more than what's left of the run's money and time. Models are chosen with
 the purpose `workflow`, which is what a provider's `paid_for` matches.
 
-## The front door
-
-Set `front_door` in `config.yaml` to an agent's name, and that agent answers
-every chat: its instructions and its tools, in place of `system_prompt` and the
-full tool list. Without it, a chat is offered every tool but `delegate`, which
-stops working once plugins bring more than about 60 tools, and confuses a
-small model well before that.
-
-**`delegate` hands a task to another agent.** The front door lists it among
-its tools. On every chat, the agents it can hand work to are added to its
-instructions, each with its `description`, read fresh, so an agent added or
-changed is there on the next chat. The agent runs as its own run, with its own
-tools and budget, held to what the chat has left. It sees only the `task` and
-the `context` it's handed, not the conversation. What it returns, its answer,
-how its run ended and the run's id (readable at `/api/v1/runs/{id}`), is
-labelled untrusted, and what it cost goes on the chat's receipt. An answer
-over 200,000 characters is cut to that and comes back with
-`answer_cut_off: true`; the whole answer is in the agent's run.
-
-- **Give the front door `memory` too.** The harness's memory search before
-  the first round (`recall_limit`) runs only for a run offered `memory`, and
-  it's what lets a small model answer from what's stored; on a 4B local
-  model, a front door with only `delegate` handed a stored fact on and lost
-  it, and one with `memory` answered it every time.
-- What's in `context` reaches the agent marked as data, with the task, and
-  the agent is told to use its tools for anything it doesn't cover. An empty
-  `context` is left out.
-- An agent that has `delegate` itself isn't listed and is refused, so a
-  hand-off can't loop.
-- A hand-off counts as a write, since the agent may write. In a Harness²
-  probe it still runs, as a probe of the agent it goes to: that agent's
-  writes are stubbed and only allowed reads run.
-- `delegate` isn't offered over MCP; a client reaches it through `chat`.
-- A missing front door agent stops the server at startup.
-
-The front door's runs are the agent's, so Harness² improves it like any other
-agent. `definitions/agents/front-door.yaml.example` and
-`researcher.yaml.example` are a pair to start from.
-
 ## The routed front door
 
-`front_door` can instead give a route: a line of workers, where each step is
-one small choice held to a closed set or to a schema and checked in code,
-rather than one model holding every tool.
+Every chat is a route: a line of workers, where each step is one small
+choice held to a closed set or to a schema and checked in code, rather than
+one model holding every tool. `front_door` in `config.yaml` names the route:
 
 ```yaml
 front_door:
@@ -326,10 +287,12 @@ A turn goes:
    it's wrong. Arguments the same as a call already made are asked for once
    more, told what already ran; the same again ends the profile.
 5. **Dispatch.** The call goes through dispatch like any other: the same
-   checks, budget, trust labels and receipt. A turn only reads: a call
-   that would change something, by what the tool says of these arguments
-   (memory's `search` reads, its `delete` doesn't), isn't run, and the
-   next choice sees that it was refused.
+   checks, budget, trust labels and receipt. A turn only reads, unless
+   its profile has `chat_writes: true`: a call that would change
+   something, by what the tool says of these arguments (memory's `search`
+   reads, its `delete` doesn't), isn't run otherwise, and the next choice
+   sees that it was refused. A write that runs counts against the run's
+   `max_writes`.
 6. **Relevance.** With `relevance: true`, after a memory search that ran,
    a model says whether what it found answers the question: `answers`,
    `partly` or `none`. On `none` the search is made once more, its
@@ -352,17 +315,41 @@ No step is offered tools. Each choice uses the same pinned decision prompt,
 and its reply must be one of the names. The turn is one run, `chat`, and its
 trajectory records every choice (`choice`, with what was offered),
 arguments kept and dropped (`arguments`), and each rule that fired
-(`rule`: `split`, `invalid_choice`, `stored_first`, `reads_only`,
-`retry`, `not_found`, `no_repeat`, `max_calls`), so a
+(`rule`: `default_route`, `split`, `invalid_choice`, `stored_first`,
+`reads_only`, `retry`, `not_found`, `no_repeat`, `max_calls`), so a
 review sees why it went where it went. Its harness id covers the route,
 each profile's agent and the writer, so changing any of them is a new
 harness.
 
 The route is checked when definitions load, and the server doesn't start
 if it's wrong: each profile is an agent with a description and one to six
-tools, none of them `delegate` and no guardrails, which a routed turn
-doesn't run yet; the writer has no tools; `only_when_asked` names only its
-profiles and its patterns compile; and the roles are defined.
+tools and no guardrails, which a routed turn doesn't run yet; the writer has
+no tools; `only_when_asked` names only its profiles and its patterns
+compile; and the roles are defined. An agent's name in `front_door`, which
+was the front door before 0.17.0, is refused with what to write instead.
+
+### Without `front_door`
+
+Left out, the route is every agent that can be a profile: one with a
+`description`, one to six tools and no guardrails, by name, at most 24. The
+agent named `writer`, if it has no tools, writes; otherwise `system_prompt`
+does. With no profiles, a turn looks nothing up and the writer answers. The
+other settings are their defaults. It's read on every chat, so an agent
+added or changed is in the next one, and the first `rule` on the trajectory,
+`default_route`, says which profiles it had and who wrote.
+
+`definitions/agents/reader.yaml.example` and `writer.yaml.example` are the
+quickstart's pair: a profile that reads pages and memory and may store what
+it's asked to (`chat_writes: true`), and a writer.
+
+### Writing from a chat
+
+A profile with `chat_writes: true` runs its writes in a chat; every other
+profile only reads. It's the agent's setting, so it holds in the default
+route too, and Harness² never changes it. A workflow step's agent writes
+either way. The writer is told, as `system_prompt` is by default, to say
+something was done only if a result shows it, and the receipt says what
+ran.
 
 ## A run
 

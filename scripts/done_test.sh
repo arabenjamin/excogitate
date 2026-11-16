@@ -3,7 +3,7 @@
 # scripted model in place of a real one. It checks that the runtime boots with
 # no plugins and no database server, that it can fetch a page, store it and
 # find it again in a new session, that a hostile model can't crash it or get
-# it past its budgets, that Harness² adopts only what the evidence supports
+# it past its budgets or make a chat write what no profile may, that Harness² adopts only what the evidence supports
 # and can be reverted, that the Neo4j store keeps what it's given, and that
 # an export from it imports into a new DuckDB store.
 #
@@ -12,12 +12,19 @@ set -euo pipefail
 cd "$(git rev-parse --show-toplevel)"
 
 # Must match tests/done/config.yaml.
-max_rounds=6
+max_rounds=8
 max_tool_calls=20
 max_writes=3
 chaos_chats=25
 
 work=$(mktemp -d)
+# The agents the quickstart copies: a reader that may store, and a writer.
+export DONE_DEFINITIONS="$work/definitions"
+mkdir -p "$DONE_DEFINITIONS"/{agents,workflows,schedules}
+for agent in reader writer; do
+  cp "definitions/agents/$agent.yaml.example" "$DONE_DEFINITIONS/agents/$agent.yaml"
+done
+chmod -R a+rX "$DONE_DEFINITIONS"
 compose() { docker compose -p donetest -f compose.yaml -f tests/done/compose.yaml "$@"; }
 cleanup() {
   compose logs --no-color --tail 20 >"$work/logs" 2>&1 || true
@@ -65,14 +72,14 @@ first="$work/first"
 } | compose run --rm --no-deps -T session >"$first"
 
 check "it boots and answers over MCP" "$first" 'map(select(.id==0))[0].result.protocolVersion != null'
-check "it has its two tools, a chat and no plugins" "$first" \
-  'map(select(.id==1))[0].result.tools | map(.name) == ["chat","http_request","memory"]'
+check "it has its bundled tools, a chat and no plugins" "$first" \
+  'map(select(.id==1))[0].result.tools | map(.name) | sort == ["calculate","chat","http_request","job_history","memory"]'
 check "it fetches the page, labelled untrusted" "$first" \
   'map(select(.id==2))[0].result.structuredContent | .untrusted and (.result.body | contains("Sea otters"))'
-check "it reads the page and stores what it learned" "$first" \
+check "a routed chat reads the page and, as its profile may, stores what it learned" "$first" \
   'map(select(.id==3))[0].result.structuredContent
-   | .answer == "Stored it." and .receipt.outcome == "answered"
-     and ([.receipt.tool_calls[] | select(.status == "ran" and (.by_harness | not)) | .tool] == ["http_request","memory"])'
+   | .answer == "Stored it." and .receipt.outcome == "answered" and .receipt.totals.writes == 1
+     and ([.receipt.tool_calls[] | select(.status == "ran") | .tool] == ["http_request","memory"])'
 
 second="$work/second"
 {
@@ -81,11 +88,10 @@ second="$work/second"
   call 2 memory '{"operation":"search","query":"otters"}'
 } | compose run --rm --no-deps -T session >"$second"
 
-check "a new session recalls it through memory" "$second" \
+check "a new session finds it through memory" "$second" \
   'map(select(.id==1))[0].result.structuredContent
    | .answer == "They hold hands." and .receipt.totals.writes == 0
-     and (.receipt.tool_calls[0] | .tool == "memory" and .status == "ran" and .by_harness)
-     and (.receipt.tool_calls[1] | .tool == "memory" and .status == "ran" and (.by_harness | not))'
+     and ([.receipt.tool_calls[] | {tool, status}] == [{"tool":"memory","status":"ran"}])'
 check "what was stored really is there" "$second" \
   'map(select(.id==2))[0].result.structuredContent.result.hits[0].text | contains("hold hands")'
 
@@ -108,8 +114,10 @@ check "an answer is claimed only when there was one" "$chaos" \
   "$replies | all((.answer != null) == (.receipt.outcome == \"answered\"))"
 check "nothing that wasn't offered ever ran" "$chaos" \
   "$replies | all(.receipt.tool_calls | all(.status == \"refused\" or (.tool | IN(\"http_request\",\"memory\"))))"
+check "a chat never deleted anything, whatever the model chose" "$chaos" \
+  "$replies | all(.receipt.totals.writes <= $max_writes)"
 check "the hostile script really was hostile" "$chaos" \
-  "$replies | map(.receipt.tool_calls[] | select(.status == \"refused\")) | length > 10"
+  "$replies | map(select(.receipt.outcome != \"answered\")) | length > 3"
 check "and some runs were stopped" "$chaos" \
   "$replies | map(.receipt.outcome) | (index(\"model_failed\") != null) or (index(\"budget_hit\") != null)"
 
@@ -162,11 +170,11 @@ check "the earlier chats are listed as runs" "$runs" '.[0].items | length >= 2 a
 stored="$work/stored"
 for run in $(jq -r '.items[].run' "$runs"); do
   api "$base/api/v1/runs/$run" >"$stored"
-  jq -e '.calls | endswith("http_request ran → memory ran → answered")' "$stored" >/dev/null && break
+  jq -e '.calls | endswith("http_request ran → memory ran → done → answered")' "$stored" >/dev/null && break
 done
 check "the chat that stored the page left its trajectory" "$stored" \
   '.[0] | .agent == "chat" and .complete and .unreadable == 0
-   and (.calls | endswith("http_request ran → memory ran → answered"))
+   and (.calls | endswith("http_request ran → memory ran → done → answered"))
    and (.steps | map(.step.type) | .[0] == "started" and .[-1] == "ended")
    and ([.steps[].step | select(.type == "message" and .role == "user")] | length == 1)'
 

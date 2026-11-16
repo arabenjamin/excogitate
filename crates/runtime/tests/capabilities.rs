@@ -153,7 +153,6 @@ async fn runtime_limited(
             allowed_ranges: vec!["127.0.0.1/32".to_owned()],
             ..HttpConfig::default()
         },
-        recall_limit: 0,
         ..Config::default()
     };
     config.budget.max_usd_micros = 1_000_000;
@@ -177,7 +176,39 @@ async fn runtime_limited(
     )
     .await
     .unwrap();
+    // Without front_door, these are the chat's profiles.
+    let root = std::env::temp_dir().join(format!("capabilities-{}", uuid::Uuid::new_v4()));
+    for directory in ["agents", "workflows", "schedules"] {
+        std::fs::create_dir_all(root.join(directory)).unwrap();
+    }
+    for (name, tool) in [("ask", "probe_ask"), ("fetch", "probe_fetch")] {
+        let agent =
+            format!("description: Uses {tool}.\nsystem_prompt: You use it.\ntools: [{tool}]\n");
+        std::fs::write(root.join(format!("agents/{name}.yaml")), agent).unwrap();
+    }
+    runtime
+        .load_definitions(&root, chrono::Utc::now())
+        .await
+        .unwrap();
+    let _ = std::fs::remove_dir_all(&root);
     (runtime, server, store)
+}
+
+/// A routed turn's replies around one call: its profile, its arguments,
+/// `during` (what the call itself asks of the model), done, and an answer.
+fn one_call(profile: &str, arguments: &Value, during: &[&str]) -> Vec<ChaosStep> {
+    let mut script = vec![
+        ChaosStep::Text(json!({ "choice": profile }).to_string()),
+        ChaosStep::Text(arguments.to_string()),
+    ];
+    script.extend(
+        during
+            .iter()
+            .map(|text| ChaosStep::Text((*text).to_owned())),
+    );
+    script.push(ChaosStep::Text(json!({ "choice": "done" }).to_string()));
+    script.push(ChaosStep::Text("done".to_owned()));
+    script
 }
 
 async fn call(runtime: &Runtime, tool: &str, arguments: &Value) -> Value {
@@ -224,14 +255,11 @@ async fn http_goes_through_the_network_rules_and_comes_back_untrusted() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_plugins_model_call_is_charged_to_the_run_whatever_it_reports() {
-    let script = vec![
-        ChaosStep::ToolCalls(vec![(
-            "probe_ask".to_owned(),
-            json!({ "prompt": "say hi" }).to_string(),
-        )]),
-        ChaosStep::Text("hi from the plugin's model".to_owned()),
-        ChaosStep::Text("done".to_owned()),
-    ];
+    let script = one_call(
+        "ask",
+        &json!({ "prompt": "say hi" }),
+        &["hi from the plugin's model"],
+    );
     let (runtime, _server, store) = runtime(script, "chat, 'plugin:probe'").await;
     let chatted = call(&runtime, "chat", &json!({ "message": "use the probe" })).await;
     let receipt = &chatted["structuredContent"]["receipt"];
@@ -278,14 +306,11 @@ async fn a_plugin_pays_only_if_the_provider_lets_it() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn a_plugins_model_call_is_charged_even_when_its_tool_fails() {
-    let script = vec![
-        ChaosStep::ToolCalls(vec![(
-            "probe_ask".to_owned(),
-            json!({ "prompt": "fail after this" }).to_string(),
-        )]),
-        ChaosStep::Text("an answer the tool throws away".to_owned()),
-        ChaosStep::Text("done".to_owned()),
-    ];
+    let script = one_call(
+        "ask",
+        &json!({ "prompt": "fail after this" }),
+        &["an answer the tool throws away"],
+    );
     let (runtime, _server, _) = runtime(script, "chat, 'plugin:probe'").await;
     let chatted = call(&runtime, "chat", &json!({ "message": "use the probe" })).await;
     let receipt = &chatted["structuredContent"]["receipt"];
@@ -311,13 +336,7 @@ async fn a_plugins_model_call_is_charged_even_when_its_tool_fails() {
 #[tokio::test(flavor = "multi_thread")]
 async fn a_plugins_request_past_the_runs_tool_calls_is_refused() {
     let url = page_url().await;
-    let script = vec![
-        ChaosStep::ToolCalls(vec![(
-            "probe_fetch".to_owned(),
-            json!({ "url": url }).to_string(),
-        )]),
-        ChaosStep::Text("done".to_owned()),
-    ];
+    let script = one_call("fetch", &json!({ "url": url }), &[]);
     // One tool call in all: the plugin's own call uses it, so its request
     // has none left.
     let (runtime, _server, _) = runtime_limited(script, "chat", Some(1)).await;

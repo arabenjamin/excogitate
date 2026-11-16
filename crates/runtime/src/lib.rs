@@ -11,7 +11,6 @@ mod cli;
 mod config;
 mod connect;
 mod definitions;
-mod delegate;
 mod harness;
 mod http;
 mod jobs;
@@ -30,8 +29,7 @@ pub use archive::{
 pub use assemble::{Plugins, Runtime, RuntimeError};
 pub use cli::{Program, main};
 pub use config::{
-    Config, ConfigError, FrontDoor, HarnessConfig, OnlyWhenAsked, RetentionConfig, Route,
-    ServerConfig,
+    Config, ConfigError, HarnessConfig, OnlyWhenAsked, RetentionConfig, Route, ServerConfig,
 };
 pub use connect::relay;
 pub use harness::{PickArgs, Picked};

@@ -6,8 +6,8 @@
 //! call or done; a writer answers from what the tools found. Every tool
 //! call goes through dispatch like any other, and the whole turn is one run,
 //! `chat`, whose trajectory records each choice
-//! (docs/workflows.md#the-routed-front-door). A turn only reads: a call
-//! that would write isn't run.
+//! (docs/workflows.md#the-routed-front-door). A turn only reads, unless
+//! its profile has `chat_writes`: a call that would write isn't run.
 
 use std::fmt::Write as _;
 
@@ -16,10 +16,19 @@ use model::{ChatRequest, FinishReason, Message, ResponseSchema, ToolCall, first_
 use plugin_api::{Effect, ToolDefinition, ToolFailure};
 use regex::RegexBuilder;
 use serde_json::{Map, Value, json};
+use store::{DefinitionKind, PageRequest};
 use workflow::Agent;
 
+use crate::definitions::MAX_PROFILE_TOOLS;
 use crate::mcp::{ChatInput, session_with};
 use crate::{Route, Runtime};
+
+/// The agent the default route writes with, when there is one.
+pub(crate) const WRITER: &str = "writer";
+/// The most profiles a route has.
+pub(crate) const MAX_PROFILES: usize = 24;
+/// The most agents read to find the default route's profiles.
+const MAX_AGENTS_READ: u32 = 1000;
 
 /// The bundled arithmetic tool, which needs numbers a result gives.
 const CALCULATE: &str = "calculate";
@@ -217,27 +226,128 @@ pub(crate) fn grounded(arguments: &Value, schema: &Value, said: &str) -> (Value,
     (Value::Object(kept), Value::Object(dropped))
 }
 
+/// A route with its agents read: what one turn runs.
+pub(crate) struct Line {
+    pub(crate) route: Route,
+    /// The profiles, by name.
+    pub(crate) profiles: Vec<(String, Agent)>,
+    /// The writer, by name.
+    pub(crate) writer: (String, Agent),
+    /// How the default route was made, for the trajectory.
+    note: Option<String>,
+}
+
+/// Whether `agent` can be one of the default route's profiles.
+fn can_be_profile(agent: &Agent) -> bool {
+    !agent.description.trim().is_empty()
+        && (1..=MAX_PROFILE_TOOLS).contains(&agent.tools.len())
+        && agent.guardrails.is_empty()
+}
+
 /// The routed front door's choices, as the trajectory and the model see
 /// them: each option's name and what it's for.
 type Options = Vec<(String, String)>;
 
 impl Runtime {
-    /// Answers one turn by the route.
-    pub(crate) async fn routed(
-        &self,
-        route: &Route,
-        input: ChatInput,
-        purpose: &str,
-    ) -> Result<ChatResult, ToolFailure> {
-        let question = input.question;
-        let history = input.history;
-        let mut profiles: Vec<(String, Agent)> = Vec::new();
+    /// The line `route` names: its profiles and writer, read now.
+    pub(crate) async fn line_of(&self, route: &Route) -> Result<Line, ToolFailure> {
+        let mut profiles = Vec::new();
         for name in &route.profiles {
             profiles.push((name.clone(), self.agent_named(name).await?));
         }
-        let writer = self.agent_named(&route.writer).await?;
+        let writer = (route.writer.clone(), self.agent_named(&route.writer).await?);
+        Ok(Line {
+            route: route.clone(),
+            profiles,
+            writer,
+            note: None,
+        })
+    }
+
+    /// The line without `front_door`: every agent that can be a profile (a
+    /// description, one to six tools, no guardrails), by name. The writer
+    /// is the agent `writer` if it has no tools, or else `system_prompt`.
+    /// With no profiles, a turn is answered without looking anything up.
+    pub(crate) async fn default_line(&self) -> Result<Line, ToolFailure> {
+        let mut agents: Vec<(String, Agent)> = Vec::new();
+        let mut offset = 0;
+        loop {
+            let page = PageRequest::new(100, offset)
+                .map_err(|error| ToolFailure::new(error.to_string()))?;
+            let listed = self
+                .workflows
+                .store
+                .list_definitions(DefinitionKind::Agent, page)
+                .await
+                .map_err(|error| ToolFailure::new(schema::bounded(&error.to_string())))?;
+            for definition in &listed.items {
+                if let Ok(agent) = serde_json::from_value::<Agent>(definition.body.clone()) {
+                    agents.push((definition.key.name.clone(), agent));
+                }
+            }
+            offset += 100;
+            if !listed.has_more || offset >= MAX_AGENTS_READ {
+                break;
+            }
+        }
+        agents.sort_by(|a, b| a.0.cmp(&b.0));
+        let writer = agents
+            .iter()
+            .find(|(name, agent)| name == WRITER && agent.tools.is_empty())
+            .cloned();
+        let profiles: Vec<(String, Agent)> = agents
+            .into_iter()
+            .filter(|(_, agent)| can_be_profile(agent))
+            .collect();
+        if profiles.len() > MAX_PROFILES {
+            return Err(ToolFailure::new(format!(
+                "{} agents can be profiles, and a route takes at most {MAX_PROFILES}: \
+                 name the ones to use in front_door",
+                profiles.len()
+            )));
+        }
+        let (writer, written_by) = match writer {
+            Some(writer) => (writer, "the agent writer"),
+            None => (self.system_writer()?, "system_prompt"),
+        };
+        let names: Vec<String> = profiles.iter().map(|(name, _)| name.clone()).collect();
+        let note = format!(
+            "no front_door: profiles {}; written by {written_by}",
+            if names.is_empty() {
+                "none".to_owned()
+            } else {
+                names.join(", ")
+            }
+        );
+        Ok(Line {
+            route: Route::of(names, writer.0.clone()),
+            profiles,
+            writer,
+            note: Some(note),
+        })
+    }
+
+    /// A writer with `system_prompt` for its instructions.
+    fn system_writer(&self) -> Result<(String, Agent), ToolFailure> {
+        let agent = serde_json::from_value::<Agent>(json!({
+            "system_prompt": self.config.system_prompt,
+        }))
+        .map_err(|error| ToolFailure::new(error.to_string()))?;
+        Ok(("system_prompt".to_owned(), agent))
+    }
+
+    /// Answers one turn by `line`.
+    pub(crate) async fn routed(
+        &self,
+        line: &Line,
+        input: ChatInput,
+        purpose: &str,
+    ) -> Result<ChatResult, ToolFailure> {
+        let route = &line.route;
+        let profiles = &line.profiles;
+        let writer = &line.writer.1;
         let mut offered: Vec<String> = Vec::new();
-        for (_, agent) in &profiles {
+        for (_, agent) in profiles {
             for tool in &agent.tools {
                 if !offered.contains(tool) {
                     offered.push(tool.clone());
@@ -250,7 +360,7 @@ impl Runtime {
                 .iter()
                 .map(|(name, agent)| json!({ "name": name, "harness": self.workflows.agent_harness(agent) }))
                 .collect::<Vec<_>>(),
-            "writer": self.workflows.agent_harness(&writer),
+            "writer": self.workflows.agent_harness(writer),
         }));
         let mut budget = self.config.budget;
         if let Some(cap) = input.time_cap_ms {
@@ -267,15 +377,29 @@ impl Runtime {
                 harness,
             },
         )?;
+        let question = input.question;
         session.begin(&[Message::user(question.clone())]).await;
+        if let Some(note) = &line.note {
+            session
+                .record_decision(Step::Rule {
+                    rule: "default_route".to_owned(),
+                    detail: cut(note, 3900),
+                })
+                .await;
+        }
         let turn = Turn {
             runtime: self,
             route,
             question: &question,
             asked: &question,
-            history: &history,
+            history: &input.history,
+            writing: Writing {
+                extra: input.extra_system.as_deref(),
+                temperature: input.temperature,
+                max_output_tokens: input.max_output_tokens,
+            },
         };
-        let ended = turn.run(&mut session, &profiles, &writer).await;
+        let ended = turn.run(&mut session, profiles, writer).await;
         Ok(match ended {
             Ok(answer) => ChatResult {
                 answer: Some(answer),
@@ -336,6 +460,18 @@ struct Turn<'a> {
     asked: &'a str,
     /// Earlier turns, which only the writer sees.
     history: &'a [Message],
+    /// What the client asked of the answer.
+    writing: Writing<'a>,
+}
+
+/// What the client asked of the answer, which only the writer sees.
+#[derive(Clone, Copy)]
+struct Writing<'a> {
+    /// Instructions the client added, after the writer's own.
+    extra: Option<&'a str>,
+    temperature: Option<f32>,
+    /// The longest answer, unless the writer agent sets its own.
+    max_output_tokens: u32,
 }
 
 impl Turn<'_> {
@@ -345,6 +481,9 @@ impl Turn<'_> {
         profiles: &[(String, Agent)],
         writer: &Agent,
     ) -> Result<String, Stop> {
+        if profiles.is_empty() {
+            return self.write(session, writer, &[], true).await;
+        }
         let parts = self.split(session).await?;
         if parts.len() < 2 {
             // One subject: the line runs on the owner's own words.
@@ -503,13 +642,7 @@ impl Turn<'_> {
         name: &str,
         profile: &Agent,
     ) -> Result<Vec<Found>, Stop> {
-        let instructions = self
-            .runtime
-            .workflows
-            .instructions(name, profile, self.question)
-            .await
-            .map_err(Stop::Setup)?
-            .text;
+        let instructions = workflow::instructions(profile, self.question).text;
         let tools: Options = profile
             .tools
             .iter()
@@ -560,7 +693,9 @@ impl Turn<'_> {
             else {
                 break;
             };
-            let reply = self.call(session, &tool, &arguments, found.len()).await;
+            let reply = self
+                .call(session, profile, &tool, &arguments, found.len())
+                .await;
             let ran = serde_json::from_str::<Value>(&reply)
                 .is_ok_and(|reply| reply.get("status") == Some(&json!("ok")));
             found.push(Found {
@@ -695,11 +830,21 @@ impl Turn<'_> {
         Ok(next)
     }
 
-    /// Runs one call, if it only reads. What a call does depends on its
-    /// arguments (memory's `search` reads, its `delete` doesn't), so it's
-    /// asked of the tool for this call; one that would write isn't run.
-    async fn call(&self, session: &mut Session, tool: &str, arguments: &Value, n: usize) -> String {
-        if self.runtime.registry.effect_of(tool, arguments) == Some(Effect::Read) {
+    /// Runs one call, if it only reads or the profile has `chat_writes`.
+    /// What a call does depends on its arguments (memory's `search` reads,
+    /// its `delete` doesn't), so it's asked of the tool for this call; one
+    /// that would write isn't run otherwise.
+    async fn call(
+        &self,
+        session: &mut Session,
+        profile: &Agent,
+        tool: &str,
+        arguments: &Value,
+        n: usize,
+    ) -> String {
+        if profile.chat_writes
+            || self.runtime.registry.effect_of(tool, arguments) == Some(Effect::Read)
+        {
             let call = ToolCall {
                 id: format!("route-{n}"),
                 name: tool.to_owned(),
@@ -710,7 +855,10 @@ impl Turn<'_> {
         session
             .record_decision(Step::Rule {
                 rule: "reads_only".to_owned(),
-                detail: format!("{tool} with these arguments would write; not run"),
+                detail: format!(
+                    "{tool} with these arguments would write, and the profile hasn't \
+                     chat_writes; not run"
+                ),
             })
             .await;
         json!({
@@ -935,13 +1083,11 @@ impl Turn<'_> {
         found: &[Found],
         no_records: bool,
     ) -> Result<String, Stop> {
-        let instructions = self
-            .runtime
-            .workflows
-            .instructions(&self.route.writer, writer, self.asked)
-            .await
-            .map_err(Stop::Setup)?
-            .text;
+        let mut instructions = workflow::instructions(writer, self.asked).text;
+        if let Some(extra) = self.writing.extra {
+            instructions.push_str("\n\n");
+            instructions.push_str(extra);
+        }
         let ask = if no_records {
             format!(
                 "Today is {} (UTC). Nothing was looked up for this turn.\n\n{}",
@@ -986,8 +1132,8 @@ impl Turn<'_> {
                     tools: Vec::new(),
                     max_output_tokens: writer
                         .max_output_tokens
-                        .unwrap_or(self.runtime.config.max_output_tokens),
-                    temperature: None,
+                        .unwrap_or(self.writing.max_output_tokens),
+                    temperature: self.writing.temperature,
                     response_schema: None,
                 },
             )

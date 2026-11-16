@@ -56,10 +56,6 @@ real writes use the write budget. A plugin's `http` and `model` calls each
 count as a tool call, and each is a `capability` step on the trajectory
 under the tool call that made it.
 
-A run handed to another agent with `delegate` gets no more time than its
-caller has left, less a margin, so it ends first and its cost reaches the
-caller's receipt.
-
 When the server stops, every run still going ends at once, mid-call if need
 be, as `budget_hit` with `stopped`, and keeps its receipt. A model call cut
 off this way, or by a time limit, is settled in the day's spend at what its
@@ -82,7 +78,7 @@ event sink, apart from the store, one typed step per event
 trajectories, and a person can read one over [REST](api.md#runs).
 
 - **A harness id** is a hash of what decides how a run behaves. For a chat,
-  that's Excogitate's prompt, tools, budget and recall settings. For an agent,
+  that's its route: the route's settings, each profile's agent and the writer. For an agent,
   it's its instructions, tools, own limits, skills and guardrails (the last
   two only when it has any, so an agent's id didn't change when they were
   added). A client's own system message

@@ -79,7 +79,6 @@ async fn runtime(grants: &str) -> Result<Runtime, runtime::RuntimeError> {
         Arc::new(MemorySink::new()),
         Catalog::from_yaml(MODELS, |_| None).unwrap(),
         Config {
-            recall_limit: 0,
             ..Config::default()
         },
         &|_| None,

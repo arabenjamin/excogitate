@@ -1,7 +1,7 @@
 # The fixtures are on a private network, so the test allows that network.
 # scripts/done_test.sh checks receipts against this budget.
 budget:
-  max_rounds: 6
+  max_rounds: 8
   max_tool_calls: 20
   max_writes: 3
   max_total_tokens: 100000

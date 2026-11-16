@@ -10,8 +10,8 @@
 
 mod definition;
 mod engine;
+mod instructions;
 mod probe;
-mod roster;
 mod skill;
 mod template;
 
@@ -20,12 +20,12 @@ pub use definition::{
     check_workflow,
 };
 pub use engine::{
-    DELEGATE_TOOL, Engine, EngineLimits, RunOutcome, StepReport, StepStatus, WorkflowError,
-    WorkflowRun, check_workflow_run,
+    Engine, EngineLimits, RunOutcome, StepReport, StepStatus, WorkflowError, WorkflowRun,
+    check_workflow_run,
 };
+pub use instructions::{Instructions, instructions};
 /// The sources each agent's run may read; the memory tool reads it.
 pub use memory::SourceChoices;
 pub use probe::{ProbeRun, WorkflowProbe};
-pub use roster::{Instructions, ROSTER_LIMIT};
 pub use skill::{MAX_SKILL_CHARS, MAX_SKILLS, Skill, check_skills, with_skills};
 pub use template::{TemplateError, references, render_text, render_value};

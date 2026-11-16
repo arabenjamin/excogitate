@@ -45,8 +45,7 @@ async fn server() -> String {
 
 fn config(url: &str) -> Config {
     Config::from_yaml(&format!(
-        "recall_limit: 0\n\
-         http:\n  allowed_ranges: ['127.0.0.0/8']\n\
+        "http:\n  allowed_ranges: ['127.0.0.0/8']\n\
          mcp_servers:\n\
          \x20 - {{name: docs, url: '{url}', allow_insecure: true, no_log: true, tools: [search], read_only: [search]}}\n"
     ))

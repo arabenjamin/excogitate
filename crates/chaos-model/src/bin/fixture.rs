@@ -6,7 +6,7 @@ use std::process::ExitCode;
 use axum::Router;
 use axum::http::header;
 use axum::routing::get;
-use chaos_model::{ChaosServer, ChaosStep, ChaosTool, generate_script};
+use chaos_model::{ChaosServer, ChaosStep, ChaosTool, generate_route_script};
 use serde_json::{Value, json};
 use tokio::net::{TcpListener, TcpStream};
 
@@ -20,16 +20,29 @@ fn tool_call(name: &str, arguments: &Value) -> ChaosStep {
     ChaosStep::ToolCalls(vec![(name.to_owned(), arguments.to_string())])
 }
 
-/// Two sessions: read a page and store it, then find it again.
+fn choice(name: &str) -> ChaosStep {
+    ChaosStep::Text(json!({ "choice": name }).to_string())
+}
+
+fn arguments(value: &Value) -> ChaosStep {
+    ChaosStep::Text(value.to_string())
+}
+
+/// Two sessions, as routed turns on the quickstart's `reader` profile: read
+/// a page and store it, then find it again.
 fn done_script(page_url: &str) -> Vec<ChaosStep> {
     vec![
-        tool_call("http_request", &json!({ "url": page_url })),
-        tool_call("memory", &json!({ "operation": "store", "text": FACT })),
+        choice("reader"),
+        choice("http_request"),
+        arguments(&json!({ "url": page_url })),
+        choice("memory"),
+        arguments(&json!({ "operation": "store", "text": FACT })),
+        choice("done"),
         ChaosStep::Text("Stored it.".to_owned()),
-        tool_call(
-            "memory",
-            &json!({ "operation": "search", "query": "otters" }),
-        ),
+        choice("reader"),
+        choice("memory"),
+        arguments(&json!({ "operation": "search", "query": "otters" })),
+        choice("done"),
         ChaosStep::Text("They hold hands.".to_owned()),
     ]
 }
@@ -118,7 +131,8 @@ fn chaos_script(page_url: &str, seed: u64) -> Vec<ChaosStep> {
             good_arguments: json!({ "operation": "store", "text": FACT }),
         },
     ];
-    generate_script(seed, CHAOS_STEPS, &tools, &["chat".to_owned()])
+    let choices = ["reader", "http_request", "memory", "done", "small_talk"].map(str::to_owned);
+    generate_route_script(seed, CHAOS_STEPS, &choices, &tools)
 }
 
 async fn serve_page() -> std::io::Result<()> {

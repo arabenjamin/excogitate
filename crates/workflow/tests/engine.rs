@@ -543,6 +543,7 @@ fn candidate(tools: &[&str]) -> workflow::Agent {
         guardrails: Vec::new(),
         needs: Vec::new(),
         role: None,
+        chat_writes: false,
     }
 }
 

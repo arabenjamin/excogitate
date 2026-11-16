@@ -13,7 +13,7 @@ use axum::extract::State;
 use axum::routing::post;
 use events::{EventSink, MemorySink};
 use model::Catalog;
-use runtime::{Config, FrontDoor, OnlyWhenAsked, Route, Runtime};
+use runtime::{Config, OnlyWhenAsked, Route, Runtime};
 use serde_json::{Value, json};
 use store_memory::MemoryStore;
 
@@ -109,6 +109,28 @@ async fn fixture_with(
     recorded: Recorded,
     extra: &[(&str, &str)],
 ) -> Fixture {
+    let mut agents = vec![("notes", NOTES), ("jobs", JOBS), ("writer", WRITER)];
+    agents.extend_from_slice(extra);
+    fixture_of(name, Some(route), url, recorded, &agents).await
+}
+
+/// A fixture with no `front_door`, and only `agents` defined.
+async fn fixture_without_front_door(
+    name: &str,
+    replies: Vec<Value>,
+    agents: &[(&str, &str)],
+) -> Fixture {
+    let (url, recorded) = model(replies).await;
+    fixture_of(name, None, url, recorded, agents).await
+}
+
+async fn fixture_of(
+    name: &str,
+    front_door: Option<Route>,
+    url: String,
+    recorded: Recorded,
+    agents: &[(&str, &str)],
+) -> Fixture {
     let yaml = format!(
         "version: 1\nproviders:\n  - {{name: c, base_url: '{url}', no_log: true, timeout_secs: 10}}\n\
          models:\n  - {{name: c, provider: c, wire_model: x, capabilities: [chat, tools], context_tokens: 100000, max_output_tokens: 100}}\n\
@@ -120,15 +142,14 @@ async fn fixture_with(
         Arc::clone(&sink) as Arc<dyn EventSink>,
         Catalog::from_yaml(&yaml, |_| None).unwrap(),
         Config {
-            front_door: Some(FrontDoor::Route(route)),
+            front_door,
+            system_prompt: "The owner's writer.".to_owned(),
             ..Config::default()
         },
         &|_| None,
     )
     .unwrap();
-    let mut agents = vec![("notes", NOTES), ("jobs", JOBS), ("writer", WRITER)];
-    agents.extend_from_slice(extra);
-    let root = definitions(name, &agents);
+    let root = definitions(name, agents);
     runtime
         .load_definitions(&root, chrono::Utc::now())
         .await
@@ -142,9 +163,14 @@ async fn fixture_with(
 
 impl Fixture {
     async fn chat(&self, message: &str) -> Value {
+        self.call("chat", &json!({ "message": message })).await
+    }
+
+    /// A client's call of `tool`, and its structured reply.
+    async fn call(&self, tool: &str, arguments: &Value) -> Value {
         let request = json!({
             "jsonrpc": "2.0", "id": 1, "method": "tools/call",
-            "params": { "name": "chat", "arguments": { "message": message } }
+            "params": { "name": tool, "arguments": arguments }
         });
         let input = format!("{request}\n");
         let mut output = Vec::new();
@@ -247,6 +273,65 @@ async fn a_turn_chooses_a_profile_fills_its_call_and_the_writer_answers_from_the
     assert_eq!(decisions[1]["tool"], "memory", "{decisions:?}");
     assert_eq!(decisions[2]["picked"], "done", "{decisions:?}");
     assert_eq!(decisions[2]["profile"], "notes", "{decisions:?}");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn without_a_front_door_every_agent_that_can_be_a_profile_is_routed() {
+    let unnamed = "system_prompt: You help.\ntools: [memory]\n";
+    let guarded = "description: Guarded.\nsystem_prompt: You help.\ntools: [memory]\n\
+                   guardrails:\n  - {name: g, tool: memory, required: true, because: It must.}\n";
+    let fixture = fixture_without_front_door(
+        "default",
+        vec![
+            choice("notes"),
+            json_reply(&json!({ "operation": "search", "query": "otters" })),
+            choice("done"),
+            text("They hold hands."),
+        ],
+        &[
+            ("notes", NOTES),
+            ("jobs", JOBS),
+            ("writer", WRITER),
+            ("unnamed", unnamed),
+            ("guarded", guarded),
+        ],
+    )
+    .await;
+    let reply = fixture.chat("What do otters do?").await;
+    assert_eq!(reply["answer"], "They hold hands.", "{reply}");
+    assert_eq!(tool_calls(&reply), ["memory"], "{reply}");
+    let seen = fixture.seen();
+    // No description, or guardrails a turn doesn't run: not a profile.
+    let options = user_text(&seen[0]);
+    assert!(options.contains("What the job queue ran."), "{options}");
+    assert!(!options.contains("Guarded."), "{options}");
+    assert!(!options.contains("unnamed"), "{options}");
+    assert_eq!(seen[3]["messages"][0]["content"], "You write the answer.");
+    let decisions = fixture.decisions(&reply).await;
+    assert_eq!(decisions[0]["rule"], "default_route", "{decisions:?}");
+    assert_eq!(
+        decisions[0]["detail"],
+        "no front_door: profiles jobs, notes; written by the agent writer"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn without_a_writer_agent_system_prompt_writes() {
+    let fixture = fixture_without_front_door(
+        "system-writer",
+        vec![choice("small_talk"), text("Hello.")],
+        &[("notes", NOTES)],
+    )
+    .await;
+    let reply = fixture.chat("Hi there").await;
+    assert_eq!(reply["answer"], "Hello.", "{reply}");
+    let seen = fixture.seen();
+    assert_eq!(seen[1]["messages"][0]["content"], "The owner's writer.");
+    let decisions = fixture.decisions(&reply).await;
+    assert_eq!(
+        decisions[0]["detail"],
+        "no front_door: profiles notes; written by system_prompt"
+    );
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -360,7 +445,7 @@ async fn refused(name: &str, route: Route, agents: &[(&str, &str)], expected: &s
         Arc::new(MemorySink::new()),
         Catalog::from_yaml(&yaml, |_| None).unwrap(),
         Config {
-            front_door: Some(FrontDoor::Route(route)),
+            front_door: Some(route),
             ..Config::default()
         },
         &|_| None,
@@ -384,14 +469,6 @@ async fn a_route_its_agents_cant_serve_is_refused_when_loaded() {
         route(&["notes"]),
         &[("notes", NOTES), ("writer", NOTES)],
         "the writer writer has tools",
-    )
-    .await;
-    let delegating = "description: Hands on.\nsystem_prompt: You hand on.\ntools: [delegate]\n";
-    refused(
-        "delegates",
-        route(&["door"]),
-        &[("door", delegating), ("writer", WRITER)],
-        "delegates",
     )
     .await;
     let mut role = route(&["notes"]);
@@ -442,6 +519,46 @@ async fn a_call_that_would_write_isnt_run() {
     assert!(
         decisions.iter().any(|step| step["rule"] == "reads_only"),
         "{decisions:?}"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_profile_with_chat_writes_stores_and_the_answer_says_what_ran() {
+    let keeper = "description: Keeps what it's told.\nsystem_prompt: You keep notes.\n\
+                  tools: [memory]\nchat_writes: true\n";
+    let fixture = fixture_without_front_door(
+        "writes",
+        vec![
+            choice("keeper"),
+            json_reply(&json!({ "operation": "store", "text": "Sea otters hold hands." })),
+            choice("done"),
+            text("Stored it."),
+        ],
+        &[("keeper", keeper), ("writer", WRITER)],
+    )
+    .await;
+    let reply = fixture.chat("Remember that sea otters hold hands.").await;
+    assert_eq!(reply["answer"], "Stored it.", "{reply}");
+    assert_eq!(tool_calls(&reply), ["memory"], "{reply}");
+    assert_eq!(reply["receipt"]["totals"]["writes"], 1, "{reply}");
+    let asked = user_text(&fixture.seen()[3]);
+    assert!(
+        asked.contains("\"stored\""),
+        "the writer sees what was stored: {asked}"
+    );
+    // And it's there for a direct search.
+    let found = fixture
+        .call(
+            "memory",
+            &json!({ "operation": "search", "query": "otters" }),
+        )
+        .await;
+    assert!(
+        found["result"]["hits"][0]["text"]
+            .as_str()
+            .unwrap()
+            .contains("hold hands"),
+        "{found}"
     );
 }
 

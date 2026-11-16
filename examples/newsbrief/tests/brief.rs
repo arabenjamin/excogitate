@@ -182,7 +182,6 @@ async fn start(search: ScriptedSearch, script: Vec<ChaosStep>) -> Running {
         Arc::new(MemorySink::new()),
         Catalog::from_yaml(&models, |_| None).unwrap(),
         Config {
-            recall_limit: 0,
             ..Config::default()
         },
         &|_| None,

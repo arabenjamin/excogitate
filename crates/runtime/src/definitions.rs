@@ -11,7 +11,7 @@ use schemars::JsonSchema;
 use serde::de::DeserializeOwned;
 use store::DefinitionKind;
 use work::{DefinitionError, DefinitionFile, Schedule, read_definition_files, save_definitions};
-use workflow::{Agent, DELEGATE_TOOL, Workflow, check_agent, check_agent_sources, check_workflow};
+use workflow::{Agent, Workflow, check_agent, check_agent_sources, check_workflow};
 
 use crate::Runtime;
 use crate::jobs::{WORKFLOW_KIND, WorkflowArgs};
@@ -76,7 +76,7 @@ fn check_agent_role(agent: &Agent, catalog: &model::Catalog) -> Result<(), Strin
 
 /// The most tools a route's profile may have: the choice among them is one
 /// small model's.
-const MAX_PROFILE_TOOLS: usize = 6;
+pub(crate) const MAX_PROFILE_TOOLS: usize = 6;
 
 fn check_role(
     role: Option<&String>,
@@ -104,8 +104,11 @@ fn check_route(
             .get(name)
             .ok_or_else(|| format!("it names the agent {name}, and there's no such file"))
     };
-    if route.profiles.is_empty() || route.profiles.len() > 24 {
-        return Err("it needs one to 24 profiles".to_owned());
+    if route.profiles.is_empty() || route.profiles.len() > crate::route::MAX_PROFILES {
+        return Err(format!(
+            "it needs one to {} profiles",
+            crate::route::MAX_PROFILES
+        ));
     }
     if !(1..=6).contains(&route.max_calls) {
         return Err("its max_calls must be 1 to 6".to_owned());
@@ -124,11 +127,6 @@ fn check_route(
             return Err(format!(
                 "the profile {name} has {} tools; a profile has one to {MAX_PROFILE_TOOLS}",
                 profile.tools.len()
-            ));
-        }
-        if profile.tools.iter().any(|tool| tool == DELEGATE_TOOL) {
-            return Err(format!(
-                "the profile {name} delegates; a profile calls its tools itself"
             ));
         }
         if !profile.guardrails.is_empty() {
@@ -192,14 +190,6 @@ fn check_files(files: &[DefinitionFile], runtime: &Runtime) -> Result<(), Defini
                 problem,
             }
         })?;
-    }
-    if let Some(front_door) = runtime.config.front_door_agent()
-        && !agents.contains(front_door)
-    {
-        return Err(DefinitionError::Invalid {
-            name: "front_door".to_owned(),
-            problem: format!("the setting names the agent {front_door}, and there's no such file"),
-        });
     }
     let mut workflows = BTreeMap::new();
     for file in of_kind(DefinitionKind::Workflow) {
@@ -488,18 +478,26 @@ mod tests {
         assert_eq!(fixture.load().await.unwrap(), 3);
     }
 
-    #[test]
-    fn the_front_door_example_meets_the_agent_schema_and_its_guardrails_hold() {
-        let text = include_str!("../../../definitions/agents/front-door.yaml.example");
-        let raw: serde_json::Value = serde_saphyr::from_str(text).unwrap();
-        schema::Validator::for_type::<Agent>()
-            .unwrap()
-            .check(&raw)
-            .unwrap();
-        let agent: Agent = serde_json::from_value(raw).unwrap();
-        workflow::check_skills(&agent.skills).unwrap();
-        dispatch::check_guardrails(&agent.guardrails, &agent.tools).unwrap();
-        assert_eq!(agent.guardrails.len(), 1);
+    #[tokio::test]
+    async fn the_quickstart_agents_load_and_make_the_default_route() {
+        let fixture = Fixture::new("quickstart");
+        for agent in ["reader", "writer"] {
+            let text = match agent {
+                "reader" => include_str!("../../../definitions/agents/reader.yaml.example"),
+                _ => include_str!("../../../definitions/agents/writer.yaml.example"),
+            };
+            fixture.write(&format!("agents/{agent}.yaml"), text);
+        }
+        assert_eq!(fixture.load().await.unwrap(), 2);
+        let line = fixture.runtime.default_line().await.unwrap();
+        let profiles: Vec<&str> = line
+            .profiles
+            .iter()
+            .map(|(name, _)| name.as_str())
+            .collect();
+        assert_eq!(profiles, ["reader"]);
+        assert!(line.profiles[0].1.chat_writes);
+        assert_eq!(line.writer.0, "writer");
     }
 
     #[tokio::test]

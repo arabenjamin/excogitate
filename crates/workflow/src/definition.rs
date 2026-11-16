@@ -59,6 +59,11 @@ pub struct Agent {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(length(min = 1, max = 32), regex(pattern = r"^[a-z][a-z0-9_-]*$"))]
     pub role: Option<String>,
+    /// As a profile of a routed chat, whether its calls may write, such as
+    /// memory's store. Left out, a chat turn only reads. In a workflow step
+    /// it writes either way, and Harness² never changes it.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub chat_writes: bool,
 }
 
 /// What an agent's memory reads, beside the store.

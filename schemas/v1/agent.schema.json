@@ -266,6 +266,10 @@
       ],
       "description": "Its limits. The runtime's default if left out. A workflow's remaining\nmoney and time still apply."
     },
+    "chat_writes": {
+      "description": "As a profile of a routed chat, whether its calls may write, such as\nmemory's store. Left out, a chat turn only reads. In a workflow step\nit writes either way, and Harness² never changes it.",
+      "type": "boolean"
+    },
     "description": {
       "description": "What it's for.",
       "maxLength": 1024,
