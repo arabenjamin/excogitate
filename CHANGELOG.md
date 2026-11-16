@@ -3,6 +3,13 @@
 All notable changes are listed here. The file is generated from the
 Conventional Commits by [git-cliff](https://git-cliff.org) (`cliff.toml`).
 
+## [0.19.0] - 2026-11-16
+
+### Added
+
+- The picker reads routed chats, and the owner can mark a run bad
+- Routed attempts, a profile or the writer probed as the route runs it
+
 ## [0.18.0] - 2026-11-16
 
 ### Added
