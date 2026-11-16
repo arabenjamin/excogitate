@@ -43,5 +43,5 @@ pub use mcp::{ChatArgs, ChatReply, ToolEnvelope};
 pub use metrics::{MAX_JOBS_COUNTED, MAX_VALUES, Metrics, MetricsSink, prefix_for};
 pub use plugin_host::PluginsConfig;
 pub use retention::Swept;
-pub use run::{RunError, run_connect, run_export, run_import, run_server, run_stdio};
+pub use run::{RunError, run_connect, run_export, run_health, run_import, run_server, run_stdio};
 pub use schemas::bundled_tool_schemas;

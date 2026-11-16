@@ -103,6 +103,9 @@ pub enum RunError {
     /// The HTTP server can't be set up.
     #[error(transparent)]
     Http(#[from] crate::http::HttpError),
+    /// The server didn't answer its health check.
+    #[error("unhealthy: {0}")]
+    Unhealthy(String),
 }
 
 fn read(path: &Path) -> Result<String, RunError> {
@@ -361,6 +364,57 @@ pub async fn run_connect(product: &str, url: Option<&str>) -> Result<(), RunErro
         .map_err(RunError::Serve)
 }
 
+/// Asks the server's `/health`, for a container's health check. It reads the
+/// address from `{PREFIX}_BIND`; with none set there's no HTTP server to ask
+/// (stdio, or a server only this host can reach), and it passes.
+///
+/// # Errors
+///
+/// [`RunError::Unhealthy`] unless the server answers 200 within five seconds.
+pub async fn run_health(product: &str) -> Result<(), RunError> {
+    let bind = std::env::var(format!("{}_BIND", product.to_uppercase())).ok();
+    let Some(url) = health_url(bind.as_deref()) else {
+        println!(
+            "no {}_BIND, so no HTTP server to check",
+            product.to_uppercase()
+        );
+        return Ok(());
+    };
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(5))
+        .build()
+        .map_err(|error| RunError::Unhealthy(error.to_string()))?;
+    let response = client
+        .get(&url)
+        .send()
+        .await
+        .map_err(|error| RunError::Unhealthy(format!("{url}: {error}")))?;
+    if response.status().is_success() {
+        println!("{url}: ok");
+        Ok(())
+    } else {
+        Err(RunError::Unhealthy(format!("{url}: {}", response.status())))
+    }
+}
+
+/// `/health` at a bind address, an any-address host asked on loopback. None
+/// for no bind, or an empty one.
+fn health_url(bind: Option<&str>) -> Option<String> {
+    let bind = bind.map(str::trim).filter(|bind| !bind.is_empty())?;
+    let host_port = match bind.parse::<std::net::SocketAddr>() {
+        Ok(address) if address.ip().is_unspecified() => {
+            let loopback: std::net::IpAddr = if address.is_ipv4() {
+                std::net::Ipv4Addr::LOCALHOST.into()
+            } else {
+                std::net::Ipv6Addr::LOCALHOST.into()
+            };
+            std::net::SocketAddr::new(loopback, address.port()).to_string()
+        }
+        _ => bind.to_owned(),
+    };
+    Some(format!("http://{host_port}/health"))
+}
+
 /// Resolves when the process is told to stop.
 async fn stop_signal() {
     #[cfg(unix)]
@@ -556,4 +610,31 @@ pub async fn run_import(
         crate::archive::summary(&counts)
     );
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_health_check_asks_the_bind_address_on_loopback() {
+        assert_eq!(health_url(None), None);
+        assert_eq!(health_url(Some(" ")), None);
+        assert_eq!(
+            health_url(Some("0.0.0.0:8080")).as_deref(),
+            Some("http://127.0.0.1:8080/health")
+        );
+        assert_eq!(
+            health_url(Some("[::]:9000")).as_deref(),
+            Some("http://[::1]:9000/health")
+        );
+        assert_eq!(
+            health_url(Some("127.0.0.1:3011")).as_deref(),
+            Some("http://127.0.0.1:3011/health")
+        );
+        assert_eq!(
+            health_url(Some("server:8080")).as_deref(),
+            Some("http://server:8080/health")
+        );
+    }
 }

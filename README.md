@@ -90,6 +90,9 @@ client with `http://127.0.0.1:8080/mcp`. Both use the key as a bearer token.
 See [the API](docs/api.md). An MCP client that only speaks stdio can
 [relay through `connect`](docs/mcp.md#beside-the-server).
 
+The image's health check runs `excogitate health`, which asks `/health` at
+`EXCOGITATE_BIND` and passes when no bind is set (stdio).
+
 To back up, or to move to another store, stop the server and run
 `export <dir>`; `import <dir>` loads it into an empty store. See
 [export and import](docs/store.md#export-and-import).

@@ -13,7 +13,9 @@ RUN mkdir /out \
     && scripts/fetch_duckdb_extensions.sh /out/extensions
 
 FROM debian:trixie-slim AS excogitate
+# upgrade: a base image cached here can be weeks behind Debian's security fixes.
 RUN apt-get update \
+    && apt-get upgrade --yes \
     && apt-get install --yes --no-install-recommends ca-certificates \
     && rm -rf /var/lib/apt/lists/* \
     && useradd --uid 1000 --create-home excogitate \
@@ -29,6 +31,9 @@ ENV EXCOGITATE_DATA_DIR=/data \
     EXCOGITATE_DEFINITIONS=/config/definitions
 USER excogitate
 VOLUME /data
+# Asks /health at EXCOGITATE_BIND; with no bind set (stdio) it passes.
+HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
+    CMD ["excogitate", "health"]
 ENTRYPOINT ["excogitate"]
 CMD ["serve"]
 
