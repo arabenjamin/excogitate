@@ -3,6 +3,12 @@
 All notable changes are listed here. The file is generated from the
 Conventional Commits by [git-cliff](https://git-cliff.org) (`cliff.toml`).
 
+## [0.18.0] - 2026-11-16
+
+### Added
+
+- Excogitate health, the image's health check
+
 ## [0.17.0] - 2026-11-16
 
 ### Added
