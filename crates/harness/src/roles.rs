@@ -276,7 +276,7 @@ impl Brief<'_> {
 }
 
 impl Judges<'_> {
-    async fn ask<T: JsonSchema + serde::de::DeserializeOwned>(
+    pub(crate) async fn ask<T: JsonSchema + serde::de::DeserializeOwned>(
         &self,
         system: &str,
         user: String,

@@ -1,0 +1,156 @@
+{
+  "$defs": {
+    "Cite": {
+      "additionalProperties": false,
+      "description": "A step in a run, and the words in it that show something.",
+      "properties": {
+        "quote": {
+          "description": "Words copied exactly from that step.",
+          "maxLength": 300,
+          "minLength": 1,
+          "type": "string"
+        },
+        "run": {
+          "description": "The run's label, such as `R`.",
+          "maxLength": 4,
+          "minLength": 1,
+          "type": "string"
+        },
+        "step": {
+          "description": "The step's number in that run.",
+          "format": "uint32",
+          "maximum": 4096,
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "run",
+        "step",
+        "quote"
+      ],
+      "type": "object"
+    },
+    "Grounding": {
+      "description": "How an answer holds up against its results.",
+      "oneOf": [
+        {
+          "const": "supported",
+          "description": "Everything it states is in a result, and nothing asked for is left out.",
+          "type": "string"
+        },
+        {
+          "const": "unsupported",
+          "description": "It states something no result holds.",
+          "type": "string"
+        },
+        {
+          "const": "missed",
+          "description": "A result holds something asked for, and the answer leaves it out.",
+          "type": "string"
+        }
+      ]
+    },
+    "Review": {
+      "additionalProperties": false,
+      "description": "A chat's review, as it's kept: one per chat.",
+      "properties": {
+        "at": {
+          "description": "When it was made.",
+          "format": "date-time",
+          "type": "string"
+        },
+        "charged": {
+          "description": "The agent a checked fault is charged to: the writer for an answer\nthat says too much, the profile whose result it left out for one\nthat says too little.",
+          "maxLength": 64,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "cite": {
+          "$ref": "#/$defs/Cite",
+          "description": "The step it cited."
+        },
+        "cost_usd_micros": {
+          "description": "What the review cost, in millionths of a dollar.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "grounding": {
+          "$ref": "#/$defs/Grounding",
+          "description": "What the reviewer said."
+        },
+        "model": {
+          "description": "The model that reviewed it.",
+          "maxLength": 128,
+          "type": "string"
+        },
+        "reason": {
+          "description": "Why, as the reviewer put it.",
+          "maxLength": 1000,
+          "type": "string"
+        },
+        "refused": {
+          "description": "Why the citation doesn't hold, if it doesn't. A refused review counts\nfor nothing.",
+          "maxLength": 2048,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "run": {
+          "description": "The chat's run.",
+          "maxLength": 36,
+          "type": "string"
+        }
+      },
+      "required": [
+        "run",
+        "grounding",
+        "cite",
+        "reason",
+        "model",
+        "cost_usd_micros",
+        "at"
+      ],
+      "type": "object"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "What a review job did.",
+  "properties": {
+    "cost_usd_micros": {
+      "description": "What it spent, in millionths of a dollar.",
+      "format": "uint64",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "reviewed": {
+      "description": "The chats it reviewed, each as it's kept.",
+      "items": {
+        "$ref": "#/$defs/Review"
+      },
+      "maxItems": 200,
+      "type": "array"
+    },
+    "skipped": {
+      "description": "What it left alone, and why.",
+      "items": {
+        "maxLength": 2048,
+        "type": "string"
+      },
+      "maxItems": 200,
+      "type": "array"
+    }
+  },
+  "required": [
+    "reviewed",
+    "cost_usd_micros",
+    "skipped"
+  ],
+  "title": "ReviewResult",
+  "type": "object"
+}

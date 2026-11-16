@@ -1619,6 +1619,140 @@ async fn a_routed_attempt_on_an_agent_the_route_doesnt_run_fails_and_says_why() 
     );
 }
 
+/// The composer's verdict on a replay of candidate A, citing A's answer.
+fn replayed(effect: &str, quote: &str) -> ChaosStep {
+    judged(&json!({
+        "verdicts": [{ "candidate": "A", "effect": effect,
+                       "cite": { "run": "A", "step": 3, "quote": quote } }],
+        "decision": "keep", "choose": null, "merged": null, "reason": "As the runs show."
+    }))
+}
+
+/// An adopting fixture whose helper already ran once for real, on "About
+/// otters", so a supported edit has another recent task to replay on.
+async fn with_a_recent_task(name: &str, then: Vec<ChaosStep>) -> Running {
+    let script = [vec![ChaosStep::Text("Otters swim.".to_owned())], then].concat();
+    let running = adopting(name, script).await;
+    running.define("workflows/flow.yaml", WORKFLOW).await;
+    let started = body_of(running.post("/api/v1/workflows/flow/runs", &inputs()).await).await;
+    running.work_off(started["job_id"].as_str().unwrap()).await;
+    running
+}
+
+#[tokio::test]
+async fn an_edit_that_does_worse_on_another_recent_task_isnt_adopted() {
+    let then = [
+        supported_attempt(),
+        vec![
+            ChaosStep::Text("Otters swim and hold hands.".to_owned()),
+            ChaosStep::Text("Otters are a kind of fish.".to_owned()),
+            replayed("regressed", "Otters are a kind of fish."),
+        ],
+    ]
+    .concat();
+    let running = with_a_recent_task("replay-worse", then).await;
+    let attempt = running.improve().await;
+    assert_eq!(attempt["status"], "supported", "{attempt}");
+    let replay = &attempt["replay"];
+    assert_eq!(replay["regressed"], true, "{attempt}");
+    assert_eq!(replay["tasks"][0]["task"], "About otters");
+    assert_eq!(attempt["adoption"]["adopted"], false);
+    assert!(
+        attempt["adoption"]["reason"]
+            .as_str()
+            .unwrap()
+            .contains("did worse on one"),
+        "{attempt}"
+    );
+    assert_eq!(running.helper_prompt().await, "You help.");
+}
+
+#[tokio::test]
+async fn an_edit_that_holds_up_on_another_recent_task_is_adopted() {
+    let then = [
+        supported_attempt(),
+        vec![
+            ChaosStep::Text("Otters swim.".to_owned()),
+            ChaosStep::Text("Otters swim well.".to_owned()),
+            replayed("unchanged", "Otters swim well."),
+        ],
+        known_answers(),
+    ]
+    .concat();
+    let running = with_a_recent_task("replay-holds", then).await;
+    let attempt = running.improve().await;
+    let replay = &attempt["replay"];
+    assert_eq!(replay["finished"], true, "{attempt}");
+    assert_eq!(replay["regressed"], false);
+    assert_eq!(attempt["adoption"]["adopted"], true, "{attempt}");
+    assert_eq!(running.helper_prompt().await, WORK_IT_OUT);
+}
+
+#[tokio::test]
+async fn a_review_that_finds_answers_unsupported_twice_points_at_the_writer() {
+    let mut config = Config::default();
+    config.harness.review_chats = 5;
+    config.harness.review_usd_micros = 1000;
+    let review = |quote: &str| {
+        judged(&json!({
+            "grounding": "unsupported",
+            "cite": { "run": "C", "step": 3, "quote": quote },
+            "reason": "Nothing was looked up."
+        }))
+    };
+    let script = vec![
+        ChaosStep::Text("Otters live 40 years.".to_owned()),
+        ChaosStep::Text("Otters weigh 90 kilos.".to_owned()),
+        review("Otters weigh 90 kilos."),
+        review("Otters live 40 years."),
+    ];
+    let running = start("review", script, config).await;
+    running
+        .define(
+            "agents/writer.yaml",
+            "system_prompt: You help.\ntools: []\n",
+        )
+        .await;
+    for _ in 0..2 {
+        running.post("/v1/chat/completions", &ask(&json!({}))).await;
+    }
+    let reviewed = running.run_job("harness_review", json!({})).await;
+    assert_eq!(reviewed["status"], "succeeded", "{reviewed}");
+    let result = &reviewed["result"];
+    assert_eq!(result["reviewed"].as_array().unwrap().len(), 2, "{result}");
+    assert_eq!(result["reviewed"][0]["refused"], Value::Null, "{result}");
+    assert_eq!(result["reviewed"][0]["charged"], "writer");
+    Validator::from_schema(&schema::schema_of::<runtime::ReviewResult>())
+        .unwrap()
+        .check(result)
+        .unwrap();
+    // Reviewed once, never again.
+    let again = running.run_job("harness_review", json!({})).await;
+    assert_eq!(again["result"]["reviewed"], json!([]), "{again}");
+
+    let picked = running.run_job("harness_pick", json!({})).await;
+    let routed = &picked["result"]["routed"];
+    assert_eq!(routed["request"]["agent"], "writer", "{picked}");
+    assert_eq!(
+        routed["failure"],
+        "the review found the answer said what no result holds"
+    );
+    assert_eq!(routed["repeats"], 2);
+}
+
+#[tokio::test]
+async fn without_review_settings_a_review_reviews_nothing() {
+    let running = quiet("review-off", vec![]).await;
+    let reviewed = running.run_job("harness_review", json!({})).await;
+    assert_eq!(reviewed["result"]["reviewed"], json!([]), "{reviewed}");
+    assert!(
+        reviewed["result"]["skipped"][0]
+            .as_str()
+            .unwrap()
+            .contains("must both be set")
+    );
+}
+
 // A workflow as Harness²'s target.
 
 const ASK_FILE: &str = "# Kept by hand.\ninputs:\n  type: object\n  additionalProperties: false\n  \

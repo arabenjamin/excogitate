@@ -271,6 +271,64 @@ pub struct Attempt {
     #[serde(default)]
     #[schemars(length(max = 3), inner(length(max = 36)))]
     pub lessons_shown: Vec<String>,
+    /// The supported candidate replayed on other recent tasks, before it's
+    /// adopted.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub replay: Option<Replay>,
+}
+
+/// The most recent tasks a supported candidate is replayed on.
+pub const MAX_REPLAYS: usize = 8;
+
+/// A supported candidate replayed on other recent tasks of the same agent,
+/// the agent as it is (`R`) against the candidate (`A`) on each, so an edit
+/// that fixes one task and breaks others isn't adopted.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct Replay {
+    /// Each task, in the order it was replayed.
+    #[schemars(length(max = MAX_REPLAYS))]
+    pub tasks: Vec<Replayed>,
+    /// True if the candidate did worse on one.
+    pub regressed: bool,
+    /// True if every task got a checked verdict. Adoption needs it.
+    pub finished: bool,
+}
+
+impl Replay {
+    /// Why the replay stops adoption, if it does.
+    #[must_use]
+    pub fn blocks(&self) -> Option<String> {
+        if self.regressed {
+            return Some(format!(
+                "replayed on {} other recent task(s), the candidate did worse on one",
+                self.tasks.len()
+            ));
+        }
+        (!self.finished).then(|| {
+            "the replay on other recent tasks didn't finish, so nothing vouches for the edit \
+             beyond the one task"
+                .to_owned()
+        })
+    }
+}
+
+/// One task of a replay.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct Replayed {
+    /// The task.
+    #[schemars(length(max = 8000))]
+    pub task: String,
+    /// The agent as it is, on the task.
+    pub reference: Option<Probed>,
+    /// The candidate, on the task.
+    pub candidate: Option<Probed>,
+    /// The composer's verdict on the candidate, checked.
+    pub verdict: Option<Checked>,
+    /// What stopped it, if something did.
+    #[schemars(length(max = 2048))]
+    pub problem: Option<String>,
 }
 
 /// Whether a supported edit was adopted.
@@ -415,6 +473,7 @@ impl Attempt {
             composer_model: None,
             adoption: None,
             lessons_shown: Vec::new(),
+            replay: None,
         }
     }
 
@@ -476,6 +535,15 @@ pub const WRITER_PART: &str = "This agent is the writer of the routed chat, not 
      It has no tools: it writes the answer from the results the profiles found. Its runs here \
      are routed chats: judge the answer against those results.";
 
+/// The agent as it is and the candidate, for a replay.
+struct Pair<'a> {
+    name: &'a str,
+    base: &'a Agent,
+    edit: Agent,
+    shown: String,
+    part: Option<&'static str>,
+}
+
 /// What the loop runs with.
 #[derive(Debug, Clone)]
 pub struct Loop<'a> {
@@ -527,6 +595,142 @@ impl Loop<'_> {
         }
         attempt.problem("a probe's trajectory couldn't be read");
         None
+    }
+
+    /// Replays the attempt's supported candidate on `tasks`, other recent
+    /// tasks of the same agent, and keeps what it found on the attempt. Each
+    /// task is probed with the agent as it is and with the candidate, and
+    /// the composer's verdict on the candidate is checked as in the attempt.
+    /// It stops at the first regression, and at anything that leaves a task
+    /// without a checked verdict.
+    pub async fn replay(&self, attempt: &mut Attempt, tasks: &[String]) {
+        let Some(chosen) = attempt.supported().cloned() else {
+            return;
+        };
+        let name = attempt.request.agent.clone();
+        let base = match self.engine.agent(&name).await {
+            Ok(Some(agent)) => agent,
+            Ok(None) => {
+                attempt.problem(format!("the replay: there is no agent {name}"));
+                return;
+            }
+            Err(error) => {
+                attempt.problem(format!("the replay: {error}"));
+                return;
+            }
+        };
+        let part = match (attempt.request.routed, self.router) {
+            (true, Some(router)) => router.part_of(&name).await.ok(),
+            _ => None,
+        };
+        let pair = Pair {
+            name: &name,
+            base: &base,
+            edit: chosen.agent(&base),
+            shown: chosen.shown(),
+            part,
+        };
+        let mut replay = Replay {
+            tasks: Vec::new(),
+            regressed: false,
+            finished: true,
+        };
+        for task in tasks.iter().take(MAX_REPLAYS) {
+            let one = self.replay_one(attempt, &pair, task).await;
+            match &one.verdict {
+                Some(Checked {
+                    overridden: Some(Effect::Regressed),
+                    ..
+                }) => replay.regressed = true,
+                Some(Checked {
+                    verdict,
+                    refused: None,
+                    ..
+                }) if one.problem.is_none() => {
+                    replay.regressed |= verdict.effect == Effect::Regressed;
+                }
+                _ => replay.finished = false,
+            }
+            let stop = replay.regressed || !replay.finished;
+            replay.tasks.push(one);
+            if stop {
+                break;
+            }
+        }
+        attempt.replay = Some(replay);
+    }
+
+    /// One task of a replay: both probes, then the composer's checked
+    /// verdict on the candidate.
+    async fn replay_one(&self, attempt: &mut Attempt, pair: &Pair<'_>, task: &str) -> Replayed {
+        let mut one = Replayed {
+            task: task.chars().take(MAX_TASK_CHARS).collect(),
+            reference: None,
+            candidate: None,
+            verdict: None,
+            problem: None,
+        };
+        let Some((as_is, as_is_run)) = self.probe(pair.name, pair.base, task, attempt).await else {
+            one.problem = Some("the agent's probe couldn't run".to_owned());
+            return one;
+        };
+        let Some((edited, edited_run)) = self.probe(pair.name, &pair.edit, task, attempt).await
+        else {
+            one.problem = Some("the candidate's probe couldn't run".to_owned());
+            return one;
+        };
+        let r = Rendered::new("R", &as_is_run);
+        let a = Rendered::new("A", &edited_run);
+        one.reference = Some(summary(&as_is, &r));
+        one.candidate = Some(summary(&edited, &a));
+        let brief = Brief {
+            target: Target::Agent,
+            instructions: &pair.base.system_prompt,
+            tools: &pair.base.tools,
+            skills: &pair.base.skills,
+            guardrails: &pair.base.guardrails,
+            task,
+            why: Some(
+                "A replay: this is another recent task of the same agent. Judge only whether \
+                 candidate A does worse than the agent as it is (R) here.",
+            ),
+            lessons: &[],
+            part: pair.part,
+        };
+        let money = self.judge_money(attempt);
+        let judged = match self
+            .judges
+            .compose(&brief, &[&r, &a], &[("A", &pair.shown)], money)
+            .await
+        {
+            Ok(judged) => judged,
+            Err(error) => {
+                attempt.spend(error.cost_usd_micros());
+                one.problem = Some(format!("the composer: {error}"));
+                return one;
+            }
+        };
+        attempt.spend(judged.cost_usd_micros);
+        one.verdict = judged
+            .value
+            .verdicts
+            .into_iter()
+            .find(|verdict| verdict.candidate == "A")
+            .map(|verdict| {
+                let refused = verdict.cite.check(&[&r, &a]).err();
+                let worse = rank(a.outcome.as_deref()) < rank(r.outcome.as_deref());
+                let overridden =
+                    (worse && verdict.effect != Effect::Regressed).then_some(Effect::Regressed);
+                Checked {
+                    verdict,
+                    refused,
+                    overridden,
+                }
+            });
+        if one.verdict.is_none() {
+            one.problem = Some("the composer gave no verdict on the candidate".to_owned());
+        }
+        one
     }
 
     pub(crate) fn judge_money(&self, attempt: &Attempt) -> u64 {

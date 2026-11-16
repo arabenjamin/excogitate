@@ -1,0 +1,8 @@
+# Copy to review-answers.yaml to turn it on. Daily, before the pick, a judge
+# reads the last day's answered chats and says whether each answer holds up
+# against its results. Set harness.review_chats and harness.review_usd_micros
+# in config.yaml first. See docs/harness.md.
+cron: "30 2 * * *"
+kind: harness_review
+payload: {}
+max_attempts: 1

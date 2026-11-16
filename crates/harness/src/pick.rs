@@ -127,6 +127,9 @@ pub struct Evidence {
 
 /// The owner's mark on a run, as the picker reads it: bad, with any note.
 pub type Marked = std::collections::BTreeMap<String, Option<String>>;
+/// A chat's checked review that found a fault, as the picker reads it: the
+/// agent it's charged to, and the failure.
+pub type Reviewed = std::collections::BTreeMap<String, (String, String)>;
 
 fn finding(run: &Trajectory, failure: String, note: Option<String>) -> Option<Finding> {
     Some(Finding {
@@ -255,11 +258,38 @@ pub fn chat_failures(chat: &Trajectory, writer: &str) -> (Vec<(String, String)>,
     (charged, involved)
 }
 
+/// The profile a routed chat was working under at step `index`, if any.
+#[must_use]
+pub fn profile_at(chat: &Trajectory, index: usize) -> Option<String> {
+    let mut profile: Option<String> = None;
+    for timed in chat.steps.iter().take(index.saturating_add(1)) {
+        if let Step::Choice {
+            stage,
+            picked,
+            of,
+            profile: under,
+        } = &timed.step
+        {
+            if stage == "profile" {
+                profile = of.contains(picked).then(|| picked.clone());
+            } else if under.is_some() {
+                profile.clone_from(under);
+            }
+        }
+    }
+    profile
+}
+
 /// Routed chats, newest first, as evidence for each profile and the writer.
 /// A chat the owner marked bad is charged to the writer, since it's the
-/// answer the owner saw.
+/// answer the owner saw; a chat's checked review, to whom it names.
 #[must_use]
-pub fn chat_evidence(chats: &[Trajectory], writer: &str, marked: &Marked) -> Vec<Evidence> {
+pub fn chat_evidence(
+    chats: &[Trajectory],
+    writer: &str,
+    marked: &Marked,
+    reviewed: &Reviewed,
+) -> Vec<Evidence> {
     let mut all: Vec<Evidence> = Vec::new();
     let of = |agent: &str, all: &mut Vec<Evidence>| -> usize {
         if let Some(at) = all.iter().position(|evidence| evidence.agent == agent) {
@@ -290,6 +320,9 @@ pub fn chat_evidence(chats: &[Trajectory], writer: &str, marked: &Marked) -> Vec
                 finding(chat, MARKED_BAD.to_owned(), note.clone())
                     .map(|found| (writer.to_owned(), found)),
             );
+        }
+        if let Some((agent, why)) = reviewed.get(&chat.run) {
+            found.extend(finding(chat, why.clone(), None).map(|found| (agent.clone(), found)));
         }
         for (agent, found) in found {
             let at = of(&agent, &mut all);
@@ -612,7 +645,7 @@ mod tests {
             Outcome::Answered,
         );
         let chats = [failing("newest"), fine, failing("older")];
-        let evidence = chat_evidence(&chats, "writer", &Marked::new());
+        let evidence = chat_evidence(&chats, "writer", &Marked::new(), &Reviewed::new());
         let picked = best(&evidence).unwrap();
         assert_eq!(picked.request.agent, "todos");
         assert_eq!(picked.request.task, "newest");
@@ -640,7 +673,7 @@ mod tests {
             chat.run.clone(),
             Some("it left out the in-progress one".to_owned()),
         );
-        let picked = best(&chat_evidence(&[chat], "writer", &marked)).unwrap();
+        let picked = best(&chat_evidence(&[chat], "writer", &marked, &Reviewed::new())).unwrap();
         assert_eq!(picked.request.agent, "writer");
         assert_eq!(picked.failure, MARKED_BAD);
         assert!(

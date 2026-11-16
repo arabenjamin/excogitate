@@ -113,6 +113,18 @@ every rule below holds. The attempt's `adoption` says what happened and why.
   reverted is never adopted again.
 - **Only instructions change.** An edit that would add a tool or raise a
   budget isn't one the loop makes.
+- **It holds up on other recent tasks.** An edit is tested on the one task it
+  was made for, so before it's adopted it's replayed on up to
+  `harness.replay_tasks` (3 by default, at most 8) other recent tasks of the
+  same agent: from its own runs, or for a [routed attempt](#routed-attempts)
+  from the chats it took part in. Each task runs with the agent as it is and
+  with the edit, and the composer's verdict on the edit is checked as in the
+  attempt. A regression, or a run that ended worse, stops adoption, and so
+  does a replay that couldn't finish, since then nothing vouches for the edit
+  beyond its one task. The attempt's `replay` has each task's runs and
+  verdict. With no other recent tasks there's nothing to replay, and 0 turns
+  the replay off. The replay's probes and judges are paid from the attempt's
+  `harness.judge_usd_micros`.
 
 Adopting records the change as `pending` first, then writes
 `agents/<name>.yaml` all at once, opening with a comment that names the change
@@ -272,6 +284,26 @@ the routed chat runs it.
   profile, so adopting it would drop the agent from the route.
 - **Only an agent the route runs** can be attempted this way: an attempt on
   any other fails and says so, and a workflow is refused.
+
+## Reviewing answers
+
+An agent's run can end well and still answer badly, which no failed call
+shows. A `harness_review` job, which takes `{}`, has a judge read the last
+day's answered chats and say whether each answer holds up against its
+results. Put it on a [schedule](work.md#schedules) before the pick, as in
+[`definitions/schedules/review-answers.yaml.example`](../definitions/schedules/review-answers.yaml.example).
+
+- **It reviews up to `harness.review_chats` chats,** newest first, within
+  `harness.review_usd_micros` for the job. Both are 0 by default, which
+  reviews none. A chat is reviewed once (`harness.review` records).
+- **Each answer is `supported`, `unsupported` or `missed`:** everything it
+  states is in a result; it states something no result holds; or a result
+  holds something the question asked for, and the answer leaves it out.
+  The judge quotes the step that shows it, and a quote that isn't there
+  counts for nothing.
+- **A fault is charged** to the writer for an unsupported answer, and for a
+  missed one to the profile whose result was left out. The picker counts it
+  as it counts a failed call: twice the same way picks the agent.
 
 ## What comes next
 

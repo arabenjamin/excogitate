@@ -158,6 +158,17 @@
           ],
           "description": "The agent as it is, on the task."
         },
+        "replay": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Replay"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The supported candidate replayed on other recent tasks, before it's\nadopted."
+        },
         "request": {
           "$ref": "#/$defs/Request",
           "description": "What was asked."
@@ -543,6 +554,90 @@
         "run",
         "harness",
         "calls"
+      ],
+      "type": "object"
+    },
+    "Replay": {
+      "additionalProperties": false,
+      "description": "A supported candidate replayed on other recent tasks of the same agent,\nthe agent as it is (`R`) against the candidate (`A`) on each, so an edit\nthat fixes one task and breaks others isn't adopted.",
+      "properties": {
+        "finished": {
+          "description": "True if every task got a checked verdict. Adoption needs it.",
+          "type": "boolean"
+        },
+        "regressed": {
+          "description": "True if the candidate did worse on one.",
+          "type": "boolean"
+        },
+        "tasks": {
+          "description": "Each task, in the order it was replayed.",
+          "items": {
+            "$ref": "#/$defs/Replayed"
+          },
+          "maxItems": 8,
+          "type": "array"
+        }
+      },
+      "required": [
+        "tasks",
+        "regressed",
+        "finished"
+      ],
+      "type": "object"
+    },
+    "Replayed": {
+      "additionalProperties": false,
+      "description": "One task of a replay.",
+      "properties": {
+        "candidate": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Probed"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The candidate, on the task."
+        },
+        "problem": {
+          "description": "What stopped it, if something did.",
+          "maxLength": 2048,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "reference": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Probed"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The agent as it is, on the task."
+        },
+        "task": {
+          "description": "The task.",
+          "maxLength": 8000,
+          "type": "string"
+        },
+        "verdict": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Checked"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The composer's verdict on the candidate, checked."
+        }
+      },
+      "required": [
+        "task"
       ],
       "type": "object"
     },

@@ -77,6 +77,13 @@ budget:
 #   judge_usd_micros: 0
 #   judge_output_tokens: 4000
 #   time_limit_seconds: 1800
+#   # Other recent tasks a supported edit is replayed on before it's adopted;
+#   # a regression stops it. 0 adopts on the one task's evidence.
+#   replay_tasks: 3
+#   # The harness_review job: how many of the last day's answered chats it
+#   # judges, and what it may spend. Both 0 reviews none.
+#   review_chats: 0
+#   review_usd_micros: 0
 #   # Whether it changes an agent's file itself when the evidence supports it.
 #   # Every change is logged and can be reverted.
 #   adopt: true

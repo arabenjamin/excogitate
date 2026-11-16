@@ -174,6 +174,7 @@ impl Runtime {
             Arc::new(WorkflowJob(self.clone())),
             Arc::new(crate::harness::HarnessJob(self.clone())),
             Arc::new(crate::harness::PickJob(self.clone())),
+            Arc::new(crate::harness::ReviewJob(self.clone())),
         ]
     }
 }

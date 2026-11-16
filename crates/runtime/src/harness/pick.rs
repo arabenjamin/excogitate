@@ -10,7 +10,7 @@ use async_trait::async_trait;
 use chrono::{Duration as Span, Utc};
 use dispatch::read_trajectory;
 use events::RunQuery;
-use harness::{Attempt, Evidence, Marked, Pick, Recent, best, chat_evidence, evidence};
+use harness::{Attempt, Evidence, Marked, Pick, Recent, Reviewed, best, chat_evidence, evidence};
 use protocol::Actor;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -130,7 +130,7 @@ impl Runtime {
         Ok(None)
     }
 
-    async fn recent_runs(&self, agent: &str) -> Result<Recent, String> {
+    pub(super) async fn recent_runs(&self, agent: &str) -> Result<Recent, String> {
         let since = Utc::now() - Span::days(RECENT_DAYS);
         let listed = self
             .sink
@@ -159,7 +159,7 @@ impl Runtime {
 
     /// The recent routed chats, newest first, and the writer they're
     /// charged to: the route's writer now.
-    async fn recent_chats(&self) -> Result<(Vec<dispatch::Trajectory>, String), String> {
+    pub(super) async fn recent_chats(&self) -> Result<(Vec<dispatch::Trajectory>, String), String> {
         let line = match self.config.route() {
             Some(route) => self.line_of(route).await,
             None => self.default_line().await,
@@ -195,12 +195,13 @@ impl Runtime {
         names: &BTreeSet<String>,
         tried: &BTreeSet<String>,
         marked: &Marked,
+        reviewed: &Reviewed,
         skipped: &mut Vec<String>,
     ) -> Result<Option<Pick>, String> {
         let routed = match self.recent_chats().await {
             Ok((chats, writer)) => {
                 let mut found = Vec::new();
-                for chatted in chat_evidence(&chats, &writer, marked) {
+                for chatted in chat_evidence(&chats, &writer, marked, reviewed) {
                     // A writer made from system_prompt is no agent's file.
                     if names.contains(&chatted.agent)
                         && self.resting(&chatted.agent, tried).await?.is_none()
@@ -216,6 +217,41 @@ impl Runtime {
             }
         };
         Ok(routed)
+    }
+
+    /// Other recent tasks of the attempt's agent, newest first, to replay a
+    /// supported edit on: from the chats it took part in for a routed
+    /// attempt, from its own runs otherwise. Never the attempt's own task.
+    pub(super) async fn replay_tasks(&self, attempt: &Attempt) -> Vec<String> {
+        let most = usize::try_from(self.config.harness.replay_tasks).unwrap_or(0);
+        if most == 0 {
+            return Vec::new();
+        }
+        let agent = &attempt.request.agent;
+        let runs: Vec<dispatch::Trajectory> = if attempt.request.routed {
+            match self.recent_chats().await {
+                Ok((chats, writer)) => chats
+                    .into_iter()
+                    .filter(|chat| harness::chat_failures(chat, &writer).1.contains(agent))
+                    .collect(),
+                Err(_) => Vec::new(),
+            }
+        } else {
+            self.recent_runs(agent)
+                .await
+                .map(|recent| recent.runs)
+                .unwrap_or_default()
+        };
+        let mut tasks: Vec<String> = Vec::new();
+        for task in runs.iter().filter_map(harness::task) {
+            if task != attempt.request.task && !tasks.contains(&task) {
+                tasks.push(task);
+            }
+            if tasks.len() >= most {
+                break;
+            }
+        }
+        tasks
     }
 
     /// Picks an agent to improve and queues an attempt for it.
@@ -244,6 +280,10 @@ impl Runtime {
             .marked_bad(Utc::now() - Span::days(RECENT_DAYS))
             .await
             .map_err(|error| error.to_string())?;
+        let reviewed: Reviewed = self
+            .reviewed_since(Utc::now() - Span::days(RECENT_DAYS))
+            .await
+            .map_err(|error| error.to_string())?;
         let mut skipped = Vec::new();
         let mut names = BTreeSet::new();
         let mut own: Vec<Evidence> = Vec::new();
@@ -256,7 +296,7 @@ impl Runtime {
             }
         }
         let routed = self
-            .routed_pick(&names, &tried, &marked, &mut skipped)
+            .routed_pick(&names, &tried, &marked, &reviewed, &mut skipped)
             .await?;
         let routed_job_id = match &routed {
             Some(chatted) => Some(self.queue(chatted, &mut skipped).await?),

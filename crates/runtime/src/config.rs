@@ -85,6 +85,19 @@ pub struct HarnessConfig {
     /// Whether the system changes an agent's file itself when the evidence
     /// supports it. Every change is logged and can be reverted.
     pub adopt: bool,
+    /// How many other recent tasks of the same agent a supported edit is
+    /// replayed on before it's adopted, the agent as it is against the
+    /// edit. Any regression, or a replay that can't finish, stops adoption.
+    /// 0 adopts on the one task's evidence.
+    #[schemars(range(max = 8))]
+    pub replay_tasks: u32,
+    /// How many of the last day's answered chats the `harness_review` job
+    /// reviews, each judged on whether its answer holds up against its
+    /// results. 0 reviews none.
+    #[schemars(range(max = 200))]
+    pub review_chats: u32,
+    /// What one `harness_review` job may spend, in millionths of a dollar.
+    pub review_usd_micros: u64,
     /// Where to post each change as it's made, so the owner hears of it. The
     /// change log over REST has them all either way.
     #[schemars(length(max = 2048), regex(pattern = r"^https?://"))]
@@ -100,6 +113,9 @@ impl Default for HarnessConfig {
             judge_output_tokens: 4000,
             time_limit_seconds: 1800,
             adopt: true,
+            replay_tasks: 3,
+            review_chats: 0,
+            review_usd_micros: 0,
             notify_url: None,
         }
     }

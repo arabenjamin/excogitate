@@ -76,6 +76,7 @@ fn fixed() -> BTreeMap<&'static str, Value> {
         ("attempt_view", schema_of::<runtime::AttemptView>()),
         ("improve_request", schema_of::<harness::Request>()),
         ("pick_result", schema_of::<runtime::Picked>()),
+        ("review_result", schema_of::<runtime::ReviewResult>()),
         ("definition_list", schema_of::<runtime::DefinitionList>()),
         ("job_list", schema_of::<runtime::JobList>()),
         ("job_view", schema_of::<runtime::JobView>()),
@@ -147,6 +148,7 @@ fn role(stem: &str) -> Option<Role> {
         | "change_view"
         | "definition_list"
         | "feedback"
+        | "review_result"
         | "hold_list"
         | "job_list"
         | "job_view"

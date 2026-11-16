@@ -168,6 +168,29 @@
           "maxItems": 64,
           "type": "array"
         },
+        "replay_tasks": {
+          "default": 3,
+          "description": "How many other recent tasks of the same agent a supported edit is\nreplayed on before it's adopted, the agent as it is against the\nedit. Any regression, or a replay that can't finish, stops adoption.\n0 adopts on the one task's evidence.",
+          "format": "uint32",
+          "maximum": 8,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "review_chats": {
+          "default": 0,
+          "description": "How many of the last day's answered chats the `harness_review` job\nreviews, each judged on whether its answer holds up against its\nresults. 0 reviews none.",
+          "format": "uint32",
+          "maximum": 200,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "review_usd_micros": {
+          "default": 0,
+          "description": "What one `harness_review` job may spend, in millionths of a dollar.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
         "routed_probe_skips": {
           "default": [],
           "description": "Reads a routed probe doesn't run. A routed probe runs every read its\nprofiles make, since the writer can only be judged on real results;\nlist here the ones that cost money or a quota.",
@@ -638,6 +661,9 @@
         "probe_reads": [
           "memory"
         ],
+        "replay_tasks": 3,
+        "review_chats": 0,
+        "review_usd_micros": 0,
         "routed_probe_skips": [],
         "time_limit_seconds": 1800
       },

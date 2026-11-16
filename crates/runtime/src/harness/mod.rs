@@ -16,12 +16,15 @@ use crate::Runtime;
 mod adopt;
 mod feedback;
 mod pick;
+mod review;
 mod routed;
 
 pub(crate) use adopt::ChangeError;
 use adopt::not_adopted as adoption_skipped;
 pub(crate) use pick::PickJob;
 pub use pick::{PickArgs, Picked};
+pub(crate) use review::ReviewJob;
+pub use review::{ReviewArgs, ReviewResult};
 
 /// The kind of job that runs an attempt.
 pub(crate) const HARNESS_KIND: &str = "harness";
@@ -90,9 +93,32 @@ impl Runtime {
         let id = RecordId::generate();
         self.keep(id, &attempt).await?;
         if attempt.status == Status::Supported {
+            let tasks = self.replay_tasks(&attempt).await;
+            if !tasks.is_empty() {
+                let left = limit
+                    .saturating_sub(reserve)
+                    .saturating_sub(started.elapsed());
+                if tokio::time::timeout(left, looped.replay(&mut attempt, &tasks))
+                    .await
+                    .is_err()
+                {
+                    attempt.replay = Some(harness::Replay {
+                        tasks: Vec::new(),
+                        regressed: false,
+                        finished: false,
+                    });
+                    attempt
+                        .problems
+                        .push("the replay ran out of time before it finished".to_owned());
+                }
+                self.keep(id, &attempt).await?;
+            }
             let left = limit.saturating_sub(started.elapsed());
+            let blocked = attempt.replay.as_ref().and_then(harness::Replay::blocks);
             attempt.adoption = Some(if left < reserve / 2 {
                 adoption_skipped("too little of the job's time was left to adopt it safely")
+            } else if let Some(why) = blocked {
+                adoption_skipped(&why)
             } else {
                 self.adopt(id, &attempt).await
             });

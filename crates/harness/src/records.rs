@@ -14,6 +14,7 @@ use crate::calibrate::Calibration;
 use crate::change::{Change, Hold};
 use crate::feedback::{FEEDBACK_TYPE, Feedback};
 use crate::lesson::{LESSON_TYPE, Lesson};
+use crate::review::{REVIEW_TYPE, Review};
 
 /// The record type of an attempt.
 pub const ATTEMPT_TYPE: &str = "harness.attempt";
@@ -84,6 +85,13 @@ pub fn declarations() -> RecordDecls {
                 ],
             ),
             declared::<Hold>(HOLD_TYPE, vec![field("agent", FieldKind::Text)]),
+            declared::<Review>(
+                REVIEW_TYPE,
+                vec![
+                    field("grounding", FieldKind::Text),
+                    field("at", FieldKind::Timestamp),
+                ],
+            ),
             declared::<Feedback>(
                 FEEDBACK_TYPE,
                 vec![

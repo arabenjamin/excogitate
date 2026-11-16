@@ -475,7 +475,11 @@ mod tests {
             "schedules/improve-agents.yaml",
             include_str!("../../../definitions/schedules/improve-agents.yaml.example"),
         );
-        assert_eq!(fixture.load().await.unwrap(), 3);
+        fixture.write(
+            "schedules/review-answers.yaml",
+            include_str!("../../../definitions/schedules/review-answers.yaml.example"),
+        );
+        assert_eq!(fixture.load().await.unwrap(), 4);
     }
 
     #[tokio::test]
