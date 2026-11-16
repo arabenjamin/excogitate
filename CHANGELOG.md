@@ -3,6 +3,12 @@
 All notable changes are listed here. The file is generated from the
 Conventional Commits by [git-cliff](https://git-cliff.org) (`cliff.toml`).
 
+## [0.20.0] - 2026-11-16
+
+### Added
+
+- A daily review of answers, and a replay before adoption
+
 ## [0.19.0] - 2026-11-16
 
 ### Added
