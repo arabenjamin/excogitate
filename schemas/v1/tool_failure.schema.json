@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "A tool call that ran and failed. It still ran, so it isn't an error\nreply.",
+  "properties": {
+    "is_error": {
+      "description": "Always true: tells a failure from a tool's output.",
+      "type": "boolean"
+    },
+    "message": {
+      "description": "Why it failed.",
+      "maxLength": 2048,
+      "type": "string"
+    }
+  },
+  "required": [
+    "is_error",
+    "message"
+  ],
+  "title": "ToolFailureView",
+  "type": "object"
+}

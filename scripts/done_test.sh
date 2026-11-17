@@ -182,6 +182,16 @@ models="$work/models"
 api "$base/v1/models" >"$models"
 check "the front door lists its model" "$models" '.[0].data[0].id == "excogitate"'
 
+spec="$work/openapi"
+api "$base/api/v1/openapi.json" >"$spec"
+check "it serves an OpenAPI document with each tool at a path of its own" "$spec" \
+  '.[0] | .openapi == "3.1.0" and (.paths | has("/api/v1/jobs") and has("/api/v1/tools/calculate")
+   and has("/api/v1/tools/memory") and (has("/api/v1/tools/{name}") | not))'
+calculated="$work/calculated"
+tool_path=$(jq -r '.paths | keys[] | select(endswith("/calculate"))' "$spec")
+api "$base$tool_path" --data '{"expression": "6 * 7"}' >"$calculated"
+check "a tool is called over REST at the path the document gives" "$calculated" '.[0].result.value == 42'
+
 # Harness², on a server of its own: a regression is never adopted, a probe's
 # write never happens, a supported edit is adopted and logged, and a revert
 # puts the file back exactly.

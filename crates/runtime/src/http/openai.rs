@@ -5,7 +5,6 @@ use std::convert::Infallible;
 use std::sync::Arc;
 use std::time::Duration;
 
-use axum::Router;
 use axum::body::Bytes;
 use axum::extract::State;
 use axum::http::{HeaderMap, StatusCode};
@@ -21,6 +20,9 @@ use schemars::JsonSchema;
 use serde::Deserialize;
 use serde_json::{Value, json};
 
+use schema::schema_of;
+
+use super::spec::{Body, Route};
 use super::{ApiError, App, json_body};
 use crate::mcp::ChatInput;
 
@@ -389,10 +391,33 @@ async fn chat_completions(State(app): State<App>, headers: HeaderMap, body: Byte
     }
 }
 
-pub(super) fn routes() -> Router<App> {
-    Router::new()
-        .route("/v1/models", get(list_models))
-        .route("/v1/chat/completions", post(chat_completions))
+pub(super) fn routes() -> Vec<Route> {
+    vec![
+        Route::get(
+            "list_models",
+            "/v1/models",
+            "The one model the OpenAI-compatible front door offers",
+            get(list_models),
+        )
+        .reply(
+            200,
+            "An OpenAI model list.",
+            Body::Described("An OpenAI model list."),
+        ),
+        Route::post(
+            "chat_completions",
+            "/v1/chat/completions",
+            "Chat, as the OpenAI chat completions API",
+            post(chat_completions),
+        )
+        .body(Body::Typed(schema_of::<OpenAiRequest>))
+        .reply(
+            200,
+            "An OpenAI chat.completion, or with stream set, a text/event-stream of \
+             chat.completion.chunk events. Both carry the run's receipt.",
+            Body::Described("An OpenAI chat.completion."),
+        ),
+    ]
 }
 
 #[cfg(test)]

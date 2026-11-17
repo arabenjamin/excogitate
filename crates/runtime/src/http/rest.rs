@@ -2,12 +2,12 @@
 
 use std::collections::BTreeMap;
 
+use axum::Json;
 use axum::body::Bytes;
 use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
-use axum::{Json, Router};
 use chrono::{DateTime, Utc};
 use protocol::Actor;
 use schemars::JsonSchema;
@@ -18,6 +18,9 @@ use uuid::Uuid;
 use work::Enqueued;
 use workflow::WorkflowError;
 
+use schema::schema_of;
+
+use super::spec::{Body, LIMIT, OFFSET, Param, Route};
 use super::{ApiError, App, json_body};
 use crate::jobs::workflow_job;
 
@@ -361,11 +364,67 @@ async fn start_run(
     Ok((status, Json(started)).into_response())
 }
 
-pub(super) fn routes() -> Router<App> {
-    Router::new()
-        .route("/api/v1/jobs", get(list_jobs))
-        .route("/api/v1/jobs/{id}", get(get_job))
-        .route("/api/v1/definitions/{kind}", get(list_definitions))
-        .route("/api/v1/definitions/{kind}/{name}", get(get_definition))
-        .route("/api/v1/workflows/{name}/runs", post(start_run))
+const JOB_STATUS: Param = Param {
+    name: "status",
+    about: "Only jobs in this state.",
+    values: &["queued", "claimed", "succeeded", "dead"],
+    number: false,
+};
+
+pub(super) fn routes() -> Vec<Route> {
+    vec![
+        Route::get(
+            "list_jobs",
+            "/api/v1/jobs",
+            "The jobs, newest first",
+            get(list_jobs),
+        )
+        .query(&[JOB_STATUS, LIMIT, OFFSET])
+        .reply(200, "A page of jobs.", Body::Typed(schema_of::<JobList>)),
+        Route::get("get_job", "/api/v1/jobs/{id}", "One job", get(get_job)).reply(
+            200,
+            "The job.",
+            Body::Typed(schema_of::<JobView>),
+        ),
+        Route::get(
+            "list_definitions",
+            "/api/v1/definitions/{kind}",
+            "The definitions of one kind: agent, workflow or schedule",
+            get(list_definitions),
+        )
+        .query(&[LIMIT, OFFSET])
+        .reply(
+            200,
+            "A page of definitions.",
+            Body::Typed(schema_of::<DefinitionList>),
+        ),
+        Route::get(
+            "get_definition",
+            "/api/v1/definitions/{kind}/{name}",
+            "One definition",
+            get(get_definition),
+        )
+        .reply(
+            200,
+            "The definition.",
+            Body::Typed(schema_of::<DefinitionView>),
+        ),
+        Route::post(
+            "start_run",
+            "/api/v1/workflows/{name}/runs",
+            "Start a workflow run, as a job",
+            post(start_run),
+        )
+        .body(Body::Typed(schema_of::<RunRequest>))
+        .reply(
+            202,
+            "The job was queued.",
+            Body::Typed(schema_of::<RunStarted>),
+        )
+        .reply(
+            200,
+            "A job with this idempotency key already exists.",
+            Body::Typed(schema_of::<RunStarted>),
+        ),
+    ]
 }

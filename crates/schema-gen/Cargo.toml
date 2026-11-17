@@ -16,6 +16,7 @@ dispatch = { path = "../dispatch" }
 harness = { path = "../harness" }
 model = { path = "../model" }
 schema = { path = "../schema" }
+serde-saphyr.workspace = true
 serde_json.workspace = true
 store = { path = "../store" }
 tools = { path = "../tools" }

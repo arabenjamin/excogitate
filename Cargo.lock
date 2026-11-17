@@ -2993,6 +2993,7 @@ dependencies = [
  "plugin-host",
  "runtime",
  "schema",
+ "serde-saphyr",
  "serde_json",
  "store",
  "tools",

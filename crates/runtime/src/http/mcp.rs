@@ -3,7 +3,6 @@
 
 use std::sync::Arc;
 
-use axum::Router;
 use axum::body::Bytes;
 use axum::extract::State;
 use axum::http::{HeaderMap, StatusCode};
@@ -13,6 +12,7 @@ use plugin_api::MCP_VERSION;
 use plugin_api::rpc::{INVALID_REQUEST, PARSE_ERROR, failure};
 use serde_json::Value;
 
+use super::spec::{Body, Route};
 use super::{ApiError, App, detached, json_body};
 
 fn rpc_error(status: StatusCode, code: i64, message: &str) -> Response {
@@ -64,6 +64,20 @@ async fn post_message(State(app): State<App>, headers: HeaderMap, body: Bytes) -
     }
 }
 
-pub(super) fn routes() -> Router<App> {
-    Router::new().route("/mcp", post(post_message))
+pub(super) fn routes() -> Vec<Route> {
+    vec![
+        Route::post(
+            "mcp",
+            "/mcp",
+            "MCP over HTTP: one JSON-RPC 2.0 message per request, protocol 2025-06-18",
+            post(post_message),
+        )
+        .body(Body::Described("A JSON-RPC 2.0 message."))
+        .reply(
+            200,
+            "The JSON-RPC reply.",
+            Body::Described("A JSON-RPC 2.0 reply."),
+        )
+        .reply(202, "A notification: nothing to answer.", Body::Empty),
+    ]
 }

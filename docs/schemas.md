@@ -67,7 +67,8 @@ cargo run -p schema-gen -- --against /tmp/baseline/schemas/v1 --since v0.4.0
   `plugins_config`, `http_config`, `plugin_manifest`, `record_decls`,
   `agent`, `workflow`, `schedule`.
 - **The REST API's bodies,** such as `run_request`, `receipt` and
-  `api_error`.
+  `api_error`. [`openapi.yaml`](../openapi.yaml) puts them together with
+  the routes (see [the API](api.md#openapi)).
 - **Each bundled tool's arguments and result:** `tool_<name>_input` and
   `tool_<name>_output`, for `http_request`, `memory`, `job_history`, `calculate` and `chat`.
 - **An export's files:** `export_manifest`, and `export_<kind>` for each

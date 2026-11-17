@@ -1,11 +1,11 @@
 //! Harness² over REST: start an attempt, and read what attempts found.
 
+use axum::Json;
 use axum::body::Bytes;
 use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
-use axum::routing::{get, post, put};
-use axum::{Json, Router};
+use axum::routing::{delete, get, post, put};
 use chrono::Utc;
 use harness::{Attempt, Change, Hold, Lesson, LessonStatus, Request};
 use protocol::Actor;
@@ -15,6 +15,9 @@ use store::{Job, JobId, JobStatus, PageRequest, RecordId};
 use uuid::Uuid;
 
 use super::rest::{DEFAULT_LIMIT, MAX_LIMIT, Params, RunStarted, number, only};
+use schema::schema_of;
+
+use super::spec::{Body, LIMIT, OFFSET, Param, Route};
 use super::{ApiError, App, json_body};
 use crate::harness::{ChangeError, HARNESS_KIND};
 
@@ -394,14 +397,154 @@ async fn release(
     Ok(StatusCode::NO_CONTENT)
 }
 
-pub(super) fn routes() -> Router<App> {
-    Router::new()
-        .route("/api/v1/harness/attempts", post(start).get(list))
-        .route("/api/v1/harness/attempts/{id}", get(get_one))
-        .route("/api/v1/harness/changes", get(list_changes))
-        .route("/api/v1/harness/changes/{id}", get(get_change))
-        .route("/api/v1/harness/changes/{id}/revert", post(revert))
-        .route("/api/v1/harness/lessons", get(list_lessons))
-        .route("/api/v1/harness/holds", get(list_holds))
-        .route("/api/v1/harness/holds/{agent}", put(hold).delete(release))
+const AGENT: Param = Param {
+    name: "agent",
+    about: "Only this agent's.",
+    values: &[],
+    number: false,
+};
+const TARGET: Param = Param {
+    name: "target",
+    about: "Whether the name is an agent's or a workflow's. agent if left out.",
+    values: &["agent", "workflow"],
+    number: false,
+};
+
+pub(super) fn routes() -> Vec<Route> {
+    let mut routes = vec![
+        Route::post(
+            "start_attempt",
+            "/api/v1/harness/attempts",
+            "Start a Harness² attempt, as a job",
+            post(start),
+        )
+        .body(Body::Typed(schema_of::<Request>))
+        .reply(
+            202,
+            "The job was queued.",
+            Body::Typed(schema_of::<RunStarted>),
+        ),
+        Route::get(
+            "list_attempts",
+            "/api/v1/harness/attempts",
+            "The attempts, newest first",
+            get(list),
+        )
+        .query(&[
+            Param {
+                name: "status",
+                about: "Only attempts that ended this way.",
+                values: &["kept", "supported", "failed"],
+                number: false,
+            },
+            LIMIT,
+            OFFSET,
+        ])
+        .reply(
+            200,
+            "A page of attempts.",
+            Body::Typed(schema_of::<AttemptList>),
+        ),
+        Route::get(
+            "get_attempt",
+            "/api/v1/harness/attempts/{id}",
+            "One attempt",
+            get(get_one),
+        )
+        .reply(200, "The attempt.", Body::Typed(schema_of::<AttemptView>)),
+    ];
+    routes.extend(change_routes());
+    routes
+}
+
+fn change_routes() -> Vec<Route> {
+    vec![
+        Route::get(
+            "list_changes",
+            "/api/v1/harness/changes",
+            "The changes Harness² made or proposed",
+            get(list_changes),
+        )
+        .query(&[
+            AGENT,
+            Param {
+                name: "status",
+                about: "Only changes in this state.",
+                values: &["pending", "abandoned", "live", "reverted", "replaced"],
+                number: false,
+            },
+            LIMIT,
+            OFFSET,
+        ])
+        .reply(
+            200,
+            "A page of changes.",
+            Body::Typed(schema_of::<ChangeList>),
+        ),
+        Route::get(
+            "get_change",
+            "/api/v1/harness/changes/{id}",
+            "One change",
+            get(get_change),
+        )
+        .reply(200, "The change.", Body::Typed(schema_of::<ChangeView>)),
+        Route::post(
+            "revert_change",
+            "/api/v1/harness/changes/{id}/revert",
+            "Revert a change",
+            post(revert),
+        )
+        .reply(
+            200,
+            "The change, reverted.",
+            Body::Typed(schema_of::<ChangeView>),
+        ),
+        Route::get(
+            "list_lessons",
+            "/api/v1/harness/lessons",
+            "The lessons Harness² keeps",
+            get(list_lessons),
+        )
+        .query(&[
+            AGENT,
+            Param {
+                name: "status",
+                about: "Only lessons in this state.",
+                values: &["active", "retired"],
+                number: false,
+            },
+            LIMIT,
+            OFFSET,
+        ])
+        .reply(
+            200,
+            "A page of lessons.",
+            Body::Typed(schema_of::<LessonList>),
+        ),
+        Route::get(
+            "list_holds",
+            "/api/v1/harness/holds",
+            "The agents and workflows Harness² leaves alone",
+            get(list_holds),
+        )
+        .query(&[LIMIT, OFFSET])
+        .reply(200, "A page of holds.", Body::Typed(schema_of::<HoldList>)),
+        Route::put(
+            "hold",
+            "/api/v1/harness/holds/{agent}",
+            "Have Harness² leave an agent or workflow alone",
+            put(hold),
+        )
+        .query(&[TARGET])
+        .body(Body::Typed(schema_of::<HoldRequest>))
+        .reply(200, "The hold, as kept.", Body::Typed(schema_of::<Hold>)),
+        Route::delete(
+            "release",
+            "/api/v1/harness/holds/{agent}",
+            "Release a hold",
+            delete(release),
+        )
+        .query(&[TARGET])
+        .reply(204, "Released.", Body::Empty),
+    ]
 }

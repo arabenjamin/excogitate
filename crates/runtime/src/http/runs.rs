@@ -1,10 +1,10 @@
 //! Runs and their trajectories, as Harness² and a person read them.
 
+use axum::Json;
 use axum::body::Bytes;
 use axum::extract::{Path, Query, State};
 use axum::http::HeaderMap;
 use axum::routing::{get, put};
-use axum::{Json, Router};
 use chrono::{DateTime, Utc};
 use dispatch::{Trajectory, read_trajectory};
 use events::{RunQuery, RunSummary};
@@ -13,6 +13,9 @@ use schemars::JsonSchema;
 use serde::Serialize;
 
 use super::rest::{DEFAULT_LIMIT, MAX_LIMIT, Params, number, only};
+use schema::schema_of;
+
+use super::spec::{Body, LIMIT, OFFSET, Param, Route};
 use super::{ApiError, App, json_body};
 
 /// The most steps of one trajectory served. A run's budget caps its calls at
@@ -153,9 +156,47 @@ async fn put_feedback(
     ))
 }
 
-pub(super) fn routes() -> Router<App> {
-    Router::new()
-        .route("/api/v1/runs", get(list_runs))
-        .route("/api/v1/runs/{id}", get(get_run))
-        .route("/api/v1/runs/{id}/feedback", put(put_feedback))
+const AGENT: Param = Param {
+    name: "agent",
+    about: "Only runs of this agent.",
+    values: &[],
+    number: false,
+};
+const HARNESS: Param = Param {
+    name: "harness",
+    about: "Only runs under this harness id.",
+    values: &[],
+    number: false,
+};
+
+pub(super) fn routes() -> Vec<Route> {
+    vec![
+        Route::get(
+            "list_runs",
+            "/api/v1/runs",
+            "The runs, newest first",
+            get(list_runs),
+        )
+        .query(&[AGENT, HARNESS, LIMIT, OFFSET])
+        .reply(200, "A page of runs.", Body::Typed(schema_of::<RunList>)),
+        Route::get(
+            "get_run",
+            "/api/v1/runs/{id}",
+            "One run's trajectory",
+            get(get_run),
+        )
+        .reply(200, "Its trajectory.", Body::Typed(schema_of::<Trajectory>)),
+        Route::put(
+            "put_feedback",
+            "/api/v1/runs/{id}/feedback",
+            "Mark a run good or bad, for Harness²",
+            put(put_feedback),
+        )
+        .body(Body::Typed(schema_of::<harness::FeedbackRequest>))
+        .reply(
+            200,
+            "The feedback, as kept.",
+            Body::Typed(schema_of::<harness::Feedback>),
+        ),
+    ]
 }

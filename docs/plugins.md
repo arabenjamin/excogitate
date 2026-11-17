@@ -258,7 +258,9 @@ What each plugin may use is granted in `plugins.yaml`, named by
 compiled in that asks for a capability stops the start with a message
 saying which. A plugin's tools are offered to chats, may be named by agents
 and workflows, and are listed over MCP, all through dispatch, like the
-bundled ones.
+bundled ones. Each is also at `POST /api/v1/tools/<name>`, and in the
+server's [OpenAPI document](api.md#openapi). A plugin adds tools, never routes
+of its own, so everything it adds is behind the key and checked like the rest.
 
 **As its own process, on the stock image.** The same plugin crate, with no
 rebuild of Excogitate: a binary whose `main` is one line,

@@ -7,7 +7,7 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use protocol::{DataClass, RunId};
-use schema::Validator;
+use schema::{Refusal, Validator};
 use serde_json::{Value, json};
 use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncRead, AsyncWrite};
 
@@ -75,32 +75,42 @@ pub(crate) fn context_of(params: &Value) -> ToolContext {
     }
 }
 
-async fn call_tool(tools: &HashMap<String, Served>, id: &Value, params: &Value) -> Value {
-    let name = params.get("name").and_then(Value::as_str);
-    let Some(Served { tool, input }) = name.and_then(|name| tools.get(name)) else {
+/// What one tool call came to.
+#[derive(Debug)]
+#[non_exhaustive]
+pub enum Called {
+    /// No tool has that name.
+    NoSuchTool,
+    /// The arguments don't meet the tool's input schema, so it didn't run.
+    Refused(Refusal),
+    /// It ran and failed, with why.
+    Failed(String),
+    /// It ran, and this is its output.
+    Ran(Value),
+}
+
+async fn call_tool(handler: &McpHandler, id: &Value, params: &Value) -> Value {
+    let Some(name) = params.get("name").and_then(Value::as_str) else {
         return failure(id, INVALID_PARAMS, "no such tool");
     };
     let arguments = params
         .get("arguments")
         .cloned()
         .unwrap_or_else(|| json!({}));
-    if let Err(refusal) = input.check(&arguments) {
-        let result = json!({
+    let result = match handler.call(name, arguments, context_of(params)).await {
+        Called::NoSuchTool => return failure(id, INVALID_PARAMS, "no such tool"),
+        Called::Refused(refusal) => json!({
             "content": [{ "type": "text", "text": refusal.to_string() }],
             "isError": true,
-        });
-        return success(id, &result);
-    }
-    let context = context_of(params);
-    let result = match tool.run(arguments, context).await {
-        Ok(output) => json!({
-            "content": [{ "type": "text", "text": output.value.to_string() }],
-            "structuredContent": output.value,
-            "isError": false,
         }),
-        Err(failure) => json!({
-            "content": [{ "type": "text", "text": failure.message() }],
+        Called::Failed(message) => json!({
+            "content": [{ "type": "text", "text": message }],
             "isError": true,
+        }),
+        Called::Ran(value) => json!({
+            "content": [{ "type": "text", "text": value.to_string() }],
+            "structuredContent": value,
+            "isError": false,
         }),
     };
     success(id, &result)
@@ -146,6 +156,28 @@ impl McpHandler {
         })
     }
 
+    /// Calls one tool with `arguments`, checked against its input schema
+    /// first: the same call `tools/call` makes.
+    pub async fn call(&self, name: &str, arguments: Value, context: ToolContext) -> Called {
+        let Some(Served { tool, input }) = self.tools.get(name) else {
+            return Called::NoSuchTool;
+        };
+        if let Err(refusal) = input.check(&arguments) {
+            return Called::Refused(refusal);
+        }
+        match tool.run(arguments, context).await {
+            Ok(output) => Called::Ran(output.value),
+            Err(failure) => Called::Failed(failure.message().to_owned()),
+        }
+    }
+
+    /// The tools, as `tools/list` lists them: name, description and both
+    /// schemas, sorted by name.
+    #[must_use]
+    pub fn listing(&self) -> Value {
+        tool_listing(&self.tools)
+    }
+
     /// The reply to one message. A notification gets none.
     pub async fn handle(&self, message: &Value) -> Option<Value> {
         // A message without an id is a notification, and gets no reply.
@@ -162,7 +194,7 @@ impl McpHandler {
             ),
             Some("ping") => success(id, &json!({})),
             Some("tools/list") => success(id, &tool_listing(&self.tools)),
-            Some("tools/call") => call_tool(&self.tools, id, &params).await,
+            Some("tools/call") => call_tool(self, id, &params).await,
             _ => failure(id, METHOD_NOT_FOUND, "no such method"),
         })
     }

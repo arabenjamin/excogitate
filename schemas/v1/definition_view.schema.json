@@ -1,0 +1,34 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "A definition, as the API shows it.",
+  "properties": {
+    "body": {
+      "description": "What it says.",
+      "x-extension": "the definition, which met its own schema when loaded"
+    },
+    "name": {
+      "description": "Its name.",
+      "maxLength": 64,
+      "type": "string"
+    },
+    "source": {
+      "description": "Where it came from.",
+      "maxLength": 256,
+      "type": "string"
+    },
+    "updated_at": {
+      "description": "When it was last written.",
+      "format": "date-time",
+      "type": "string"
+    }
+  },
+  "required": [
+    "name",
+    "source",
+    "updated_at",
+    "body"
+  ],
+  "title": "DefinitionView",
+  "type": "object"
+}

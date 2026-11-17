@@ -7,6 +7,8 @@ mod mcp;
 mod openai;
 mod rest;
 mod runs;
+mod spec;
+mod tools;
 
 use std::collections::BTreeSet;
 use std::future::Future;
@@ -42,6 +44,7 @@ pub use rest::{
     DefinitionList, DefinitionView, JobList, JobStatusView, JobView, RunRequest, RunStarted,
 };
 pub use runs::{RunList, RunView};
+pub use tools::ToolFailureView;
 
 /// The shortest owner key accepted.
 const MIN_KEY_CHARS: usize = 32;
@@ -182,6 +185,8 @@ pub(super) struct App {
     /// The one model the front door lists: the product's name.
     model_id: Arc<str>,
     mcp: Arc<McpHandler>,
+    /// The `OpenAPI` document, built at start with every installed tool.
+    openapi: Arc<Value>,
     transport: Arc<dyn JobTransport>,
     permits: Arc<Semaphore>,
     key: [u8; 32],
@@ -335,10 +340,23 @@ impl Runtime {
         check_owner_key(owner_key).map_err(HttpError::OwnerKey)?;
         let mcp = McpHandler::new(product, version, self.mcp_tools())
             .map_err(|error| HttpError::Schema(error.to_string()))?;
+        let routes = all_routes();
+        let openapi = spec::document(
+            &routes,
+            Some(&mcp.listing()),
+            spec::About {
+                title: product,
+                version,
+                server: "/",
+                license: None,
+            },
+        )
+        .map_err(HttpError::Schema)?;
         let app = App {
             runtime: self.clone(),
             model_id: Arc::from(product),
             mcp: Arc::new(mcp),
+            openapi: Arc::new(openapi),
             transport: Arc::new(StoreTransport(Arc::clone(&self.workflows.store))),
             permits: Arc::new(Semaphore::new(
                 self.config.server.max_concurrent_requests as usize,
@@ -351,27 +369,74 @@ impl Runtime {
             hold_request: validator::<harness::HoldRequest>()?,
             feedback_request: validator::<::harness::FeedbackRequest>()?,
         };
-        let metrics = Router::new().route("/metrics", get(metrics_page));
-        let (open, keyed) = if self.config.server.open_metrics {
-            (metrics, Router::new())
-        } else {
-            (Router::new(), metrics)
-        };
-        let guarded = Router::new()
-            .merge(mcp::routes())
-            .merge(openai::routes())
-            .merge(rest::routes())
-            .merge(runs::routes())
-            .merge(harness::routes())
-            .merge(keyed)
+        let (mut open, mut guarded) = (Router::new(), Router::new());
+        for route in routes {
+            let open_route = match route.access {
+                spec::Access::Open => true,
+                spec::Access::Metrics => self.config.server.open_metrics,
+                spec::Access::Keyed => false,
+            };
+            if open_route {
+                open = open.route(route.path, route.handler);
+            } else {
+                guarded = guarded.route(route.path, route.handler);
+            }
+        }
+        let guarded = guarded
             .fallback(nowhere)
             .layer(middleware::from_fn_with_state(app.clone(), guard));
         Ok(Router::new()
-            .route("/health", get(health))
             .merge(open)
             .merge(guarded)
             .layer(DefaultBodyLimit::max(MAX_BODY_BYTES))
             .layer(middleware::from_fn_with_state(app.clone(), timing))
             .with_state(app))
     }
+}
+
+/// Every route the server has, each with how the document describes it.
+fn all_routes() -> Vec<spec::Route> {
+    let mut routes = vec![
+        spec::Route::get("health", "/health", "Whether the server is up", get(health))
+            .access(spec::Access::Open)
+            .reply(
+                200,
+                "It's up.",
+                spec::Body::Described("{\"status\": \"ok\"}"),
+            ),
+        spec::Route::get(
+            "metrics",
+            "/metrics",
+            "Metrics, in the OpenMetrics text format",
+            get(metrics_page),
+        )
+        .access(spec::Access::Metrics)
+        .reply(200, "The metrics.", spec::Body::Empty),
+    ];
+    routes.extend(mcp::routes());
+    routes.extend(openai::routes());
+    routes.extend(rest::routes());
+    routes.extend(runs::routes());
+    routes.extend(harness::routes());
+    routes.extend(tools::routes());
+    routes
+}
+
+/// The `OpenAPI` document for the core's routes, with the tool route as one
+/// generic path: what's checked into the repository.
+///
+/// # Errors
+///
+/// Why, if two different schemas would take the same name.
+pub fn openapi_document() -> Result<Value, String> {
+    spec::document(
+        &all_routes(),
+        None,
+        spec::About {
+            title: "HTTP API",
+            version: "1",
+            server: "http://127.0.0.1:8080",
+            license: Some(env!("CARGO_PKG_LICENSE")),
+        },
+    )
 }

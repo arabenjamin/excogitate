@@ -323,6 +323,78 @@ async fn mcp_arguments_are_checked() {
     assert_eq!(running.model.served().len(), 0);
 }
 
+// Tools over REST, and the document that lists them.
+
+#[tokio::test]
+async fn a_tool_is_called_over_rest_as_over_mcp() {
+    let running = quiet("resttool", vec![ChaosStep::Text("Hello.".to_owned())]).await;
+    let chat = running
+        .post("/api/v1/tools/chat", &json!({ "message": "hi" }))
+        .await;
+    assert_eq!(chat.status(), StatusCode::OK);
+    let chat = body_of(chat).await;
+    assert_eq!(chat["answer"], "Hello.");
+    assert_eq!(chat["receipt"]["outcome"], "answered");
+
+    // It ran and failed: still a call that ran, so not an error reply.
+    let failed = running
+        .post("/api/v1/tools/calculate", &json!({ "expression": "1/0" }))
+        .await;
+    assert_eq!(failed.status(), StatusCode::OK);
+    let failed = body_of(failed).await;
+    assert_eq!(failed["is_error"], true);
+    assert!(
+        failed["message"]
+            .as_str()
+            .unwrap()
+            .contains("division by zero"),
+        "{failed}"
+    );
+}
+
+#[tokio::test]
+async fn a_rest_tool_call_is_refused_before_it_runs() {
+    let running = quiet("resttoolbad", vec![]).await;
+    let unknown = running.post("/api/v1/tools/nothing", &json!({})).await;
+    assert_eq!(unknown.status(), StatusCode::NOT_FOUND);
+    let wrong = running
+        .post("/api/v1/tools/chat", &json!({ "wrong": 1 }))
+        .await;
+    assert_eq!(wrong.status(), StatusCode::BAD_REQUEST);
+    assert_ne!(body_of(wrong).await["problems"], json!([]));
+    assert_eq!(running.model.served().len(), 0);
+}
+
+#[tokio::test]
+async fn the_served_document_lists_every_tool_mcp_offers() {
+    let running = quiet("openapi", vec![]).await;
+    let without_key = running
+        .client
+        .get(format!("{}/api/v1/openapi.json", running.url))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(without_key.status(), StatusCode::UNAUTHORIZED);
+
+    let document = body_of(running.get("/api/v1/openapi.json").await).await;
+    assert_eq!(document["openapi"], "3.1.0");
+    assert_eq!(document["info"]["title"], "test");
+    assert_eq!(document["servers"][0]["url"], running.url);
+    let paths = document["paths"].as_object().unwrap();
+    assert!(!paths.contains_key("/api/v1/tools/{name}"));
+    let listed = body_of(
+        running
+            .post("/mcp", &rpc(1, "tools/list", &json!({})))
+            .await,
+    )
+    .await;
+    for tool in listed["result"]["tools"].as_array().unwrap() {
+        let path = format!("/api/v1/tools/{}", tool["name"].as_str().unwrap());
+        assert!(paths.contains_key(&path), "{path} isn't in the document");
+    }
+    assert!(paths.contains_key("/api/v1/jobs"));
+}
+
 #[tokio::test]
 async fn malformed_mcp_is_refused() {
     let running = quiet("mcpbad", vec![]).await;
