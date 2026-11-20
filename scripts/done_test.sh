@@ -31,6 +31,11 @@ cleanup() {
   compose logs --no-color --tail 20 >"$work/logs" 2>&1 || true
   [[ ${passed:-0} == 1 ]] || cat "$work/logs" >&2
   compose down --volumes --remove-orphans >/dev/null 2>&1 || true
+  # What the containers wrote into $work belongs to the image's user, which
+  # may not be this one (a CI runner isn't uid 1000), so it goes the way it
+  # came: from the image, as that user. What's left is this user's.
+  docker run --rm --entrypoint sh -v "$work:/work" excogitate:local \
+    -c 'rm -rf /work/* 2>/dev/null; true' >/dev/null 2>&1 || true
   rm -rf "$work"
 }
 trap cleanup EXIT
