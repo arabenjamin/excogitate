@@ -3,6 +3,16 @@
 All notable changes are listed here. The file is generated from the
 Conventional Commits by [git-cliff](https://git-cliff.org) (`cliff.toml`).
 
+## [0.25.0] - 2026-11-20
+
+### Features
+
+- Run subjects and session configs are made with constructors (breaking)
+
+### Fixed
+
+- A plugin stamped from the template compiles again
+
 ## [0.24.0] - 2026-11-20
 
 ### Features
