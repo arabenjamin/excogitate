@@ -3,6 +3,12 @@
 All notable changes are listed here. The file is generated from the
 Conventional Commits by [git-cliff](https://git-cliff.org) (`cliff.toml`).
 
+## [0.23.0] - 2026-11-20
+
+### Features
+
+- People, keys, roles and scopes
+
 ## [0.22.0] - 2026-11-19
 
 ### Fixed
