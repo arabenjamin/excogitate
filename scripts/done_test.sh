@@ -32,10 +32,11 @@ cleanup() {
   [[ ${passed:-0} == 1 ]] || cat "$work/logs" >&2
   compose down --volumes --remove-orphans >/dev/null 2>&1 || true
   # What the containers wrote into $work belongs to the image's user, which
-  # may not be this one (a CI runner isn't uid 1000), so it goes the way it
-  # came: from the image, as that user. What's left is this user's.
-  docker run --rm --entrypoint sh -v "$work:/work" excogitate:local \
-    -c 'rm -rf /work/* 2>/dev/null; true' >/dev/null 2>&1 || true
+  # may not be this one (a CI runner isn't uid 1000), and $work itself isn't
+  # readable by that user. So what's in it goes from a container as root,
+  # which ownership doesn't stop; the empty directory is this user's to remove.
+  docker run --rm --user 0 --entrypoint find -v "$work:/work" excogitate:local \
+    /work -mindepth 1 -delete >/dev/null 2>&1 || true
   rm -rf "$work"
 }
 trap cleanup EXIT
