@@ -393,11 +393,8 @@ impl Runtime {
             budget,
             purpose,
             self.config.max_result_chars,
-            dispatch::RunSubject {
-                agent: subject.to_owned(),
-                harness,
-                requested_by: input.requested_by.clone(),
-            },
+            dispatch::RunSubject::new(subject.to_owned(), harness)
+                .requested_by(input.requested_by.clone()),
             probe,
         )?;
         let question = input.question;

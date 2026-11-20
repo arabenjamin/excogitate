@@ -8,7 +8,7 @@ use dispatch::{
 };
 use model::{Message, ToolCall};
 use plugin_api::{Effect, Tool, ToolContext, ToolDefinition, ToolFailure, ToolOutput};
-use protocol::{DataClass, RunId, Trust};
+use protocol::{RunId, Trust};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -64,16 +64,11 @@ pub(crate) fn session_with(
     Session::new(
         Arc::clone(&runtime.registry),
         Arc::clone(&runtime.sink),
-        SessionConfig {
-            run: RunId::generate(),
-            offered,
-            budget,
-            data_class: DataClass::Private,
-            purpose: purpose.to_owned(),
-            max_result_chars,
-            subject,
-            probe,
-        },
+        SessionConfig::new(RunId::generate(), subject, budget)
+            .offering(offered)
+            .with_purpose(purpose.to_owned())
+            .with_max_result_chars(max_result_chars)
+            .with_probe(probe),
     )
     .map(|session| session.with_stop(runtime.workflows.stop.clone()))
     .map_err(|error| setup_failed(&error))
@@ -273,11 +268,11 @@ impl Tool for DispatchedTool {
 
     async fn run(&self, arguments: Value, _: ToolContext) -> Result<ToolOutput, ToolFailure> {
         let name = self.definition.name.clone();
-        let subject = RunSubject {
-            requested_by: caller(),
-            agent: format!("tool:{name}"),
-            harness: harness_id(&json!({ "tool": name, "budget": self.runtime.config.budget })),
-        };
+        let subject = RunSubject::new(
+            format!("tool:{name}"),
+            harness_id(&json!({ "tool": name, "budget": self.runtime.config.budget })),
+        )
+        .requested_by(caller());
         let mut session = session_for(
             &self.runtime,
             vec![name.clone()],

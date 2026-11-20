@@ -39,8 +39,15 @@ const MAX_RECORDED_NAME_CHARS: usize = 64;
 /// How much of arguments or a reply goes in a trajectory event.
 const MAX_EVENT_CHARS: usize = 16_000;
 
+/// How many characters of a result go back to the model unless a config
+/// says otherwise.
+pub const DEFAULT_RESULT_CHARS: usize = 20_000;
+
 /// How one run is set up. All of it comes from the runtime, none from a model.
+/// Made with [`SessionConfig::new`], so a field added later doesn't break code
+/// that makes one.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct SessionConfig {
     /// The run.
     pub run: RunId,
@@ -58,6 +65,60 @@ pub struct SessionConfig {
     pub subject: RunSubject,
     /// Set for a Harness² probe: a run with no side effects.
     pub probe: Option<Probe>,
+}
+
+impl SessionConfig {
+    /// A run of `subject` within `budget`, offered no tools, private, for no
+    /// purpose (so it may not pay), returning [`DEFAULT_RESULT_CHARS`] of a
+    /// result, and not a probe.
+    #[must_use]
+    pub fn new(run: RunId, subject: RunSubject, budget: Budget) -> Self {
+        Self {
+            run,
+            offered: Vec::new(),
+            budget,
+            data_class: DataClass::Private,
+            purpose: String::new(),
+            max_result_chars: DEFAULT_RESULT_CHARS,
+            subject,
+            probe: None,
+        }
+    }
+
+    /// The same config, offering these tools.
+    #[must_use]
+    pub fn offering<T: Into<String>>(mut self, tools: impl IntoIterator<Item = T>) -> Self {
+        self.offered = tools.into_iter().map(Into::into).collect();
+        self
+    }
+
+    /// The same config, with this privacy class.
+    #[must_use]
+    pub const fn with_data_class(mut self, data_class: DataClass) -> Self {
+        self.data_class = data_class;
+        self
+    }
+
+    /// The same config, for this purpose.
+    #[must_use]
+    pub fn with_purpose(mut self, purpose: impl Into<String>) -> Self {
+        self.purpose = purpose.into();
+        self
+    }
+
+    /// The same config, returning at most this much of a result.
+    #[must_use]
+    pub const fn with_max_result_chars(mut self, chars: usize) -> Self {
+        self.max_result_chars = chars;
+        self
+    }
+
+    /// The same config, as a probe or not.
+    #[must_use]
+    pub fn with_probe(mut self, probe: Option<Probe>) -> Self {
+        self.probe = probe;
+        self
+    }
 }
 
 /// How a probe runs: every call is checked as usual, but writes never run, and

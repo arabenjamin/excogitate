@@ -20,8 +20,8 @@ pub use guardrail::{ArgumentMatch, Guardrail, MAX_GUARDRAILS, check_guardrails, 
 pub use plugin_api::{Effect, Tool, ToolContext, ToolDefinition, ToolFailure, ToolOutput};
 pub use receipt::{CallStatus, ModelEntry, Outcome, Receipt, RefusalKind, ToolEntry, Totals};
 pub use session::{
-    ChatResult, Conversation, ModelStop, Probe, Session, SessionConfig, SessionError, ToolReply,
-    parse_arguments,
+    ChatResult, Conversation, DEFAULT_RESULT_CHARS, ModelStop, Probe, Session, SessionConfig,
+    SessionError, ToolReply, parse_arguments,
 };
 pub use stop::StopSignal;
 pub use tool::{RegistryError, ToolRegistry};

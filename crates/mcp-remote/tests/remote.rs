@@ -168,14 +168,14 @@ async fn installed(
 }
 
 fn session(registry: ToolRegistry, data_class: DataClass) -> Session {
-    let offered = registry.definitions().into_iter().map(|d| d.name).collect();
+    let offered: Vec<String> = registry.definitions().into_iter().map(|d| d.name).collect();
     Session::new(
         Arc::new(registry),
         Arc::new(MemorySink::new()),
-        SessionConfig {
-            run: RunId::generate(),
-            offered,
-            budget: Budget {
+        SessionConfig::new(
+            RunId::generate(),
+            RunSubject::new("test".to_owned(), "test".to_owned()),
+            Budget {
                 max_rounds: 3,
                 max_tool_calls: 20,
                 max_writes: 10,
@@ -184,16 +184,11 @@ fn session(registry: ToolRegistry, data_class: DataClass) -> Session {
                 max_request_bytes: 100_000,
                 max_duration_ms: 20_000,
             },
-            data_class,
-            purpose: "test".to_owned(),
-            max_result_chars: 20_000,
-            subject: RunSubject {
-                agent: "test".to_owned(),
-                harness: "test".to_owned(),
-                requested_by: None,
-            },
-            probe: None,
-        },
+        )
+        .offering(offered)
+        .with_data_class(data_class)
+        .with_purpose("test".to_owned())
+        .with_max_result_chars(20_000),
     )
     .unwrap()
 }

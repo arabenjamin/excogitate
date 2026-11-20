@@ -38,20 +38,14 @@ fn session(registry: ToolRegistry, offered: &[&str]) -> Session {
     Session::new(
         Arc::new(registry),
         Arc::new(MemorySink::new()),
-        SessionConfig {
-            run: RunId::generate(),
-            offered: offered.iter().map(|s| (*s).to_owned()).collect(),
-            budget: BUDGET,
-            data_class: DataClass::Private,
-            purpose: "test".to_owned(),
-            max_result_chars: 2000,
-            subject: dispatch::RunSubject {
-                agent: "test".to_owned(),
-                harness: "test".to_owned(),
-                requested_by: None,
-            },
-            probe: None,
-        },
+        SessionConfig::new(
+            RunId::generate(),
+            dispatch::RunSubject::new("test".to_owned(), "test".to_owned()),
+            BUDGET,
+        )
+        .offering(offered.iter().map(|s| (*s).to_owned()))
+        .with_purpose("test".to_owned())
+        .with_max_result_chars(2000),
     )
     .unwrap()
 }

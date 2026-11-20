@@ -12,7 +12,7 @@ use dispatch::{
 };
 use events::MemorySink;
 use model::{Catalog, ChatRequest, Gateway, MemoryLedger, Message, OpenAiClient};
-use protocol::{DataClass, RunId, Trust};
+use protocol::{RunId, Trust};
 use schema::Validator;
 use schemars::JsonSchema;
 use serde::Deserialize;
@@ -125,20 +125,14 @@ async fn run_seed(seed: u64, budget: Budget) -> Ran {
     let session = Session::new(
         Arc::new(registry),
         Arc::new(MemorySink::new()),
-        SessionConfig {
-            run: RunId::generate(),
-            offered: vec!["reader".to_owned(), "writer".to_owned()],
+        SessionConfig::new(
+            RunId::generate(),
+            dispatch::RunSubject::new("test".to_owned(), "test".to_owned()),
             budget,
-            data_class: DataClass::Private,
-            purpose: "test".to_owned(),
-            max_result_chars: 2000,
-            subject: dispatch::RunSubject {
-                agent: "test".to_owned(),
-                harness: "test".to_owned(),
-                requested_by: None,
-            },
-            probe: None,
-        },
+        )
+        .offering(vec!["reader".to_owned(), "writer".to_owned()])
+        .with_purpose("test".to_owned())
+        .with_max_result_chars(2000),
     )
     .unwrap();
     let result = session
@@ -311,20 +305,13 @@ async fn a_lying_token_count_ends_the_run_at_the_token_budget() {
     let mut session = Session::new(
         Arc::new(ToolRegistry::new()),
         Arc::new(MemorySink::new()),
-        SessionConfig {
-            run: RunId::generate(),
-            offered: vec![],
-            budget: BUDGET,
-            data_class: DataClass::Private,
-            purpose: "test".to_owned(),
-            max_result_chars: 2000,
-            subject: dispatch::RunSubject {
-                agent: "test".to_owned(),
-                harness: "test".to_owned(),
-                requested_by: None,
-            },
-            probe: None,
-        },
+        SessionConfig::new(
+            RunId::generate(),
+            dispatch::RunSubject::new("test".to_owned(), "test".to_owned()),
+            BUDGET,
+        )
+        .with_purpose("test".to_owned())
+        .with_max_result_chars(2000),
     )
     .unwrap();
     let request = ChatRequest {

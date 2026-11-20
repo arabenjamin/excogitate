@@ -10,7 +10,7 @@ use dispatch::{Budget, CallStatus, Session, SessionConfig, ToolRegistry};
 use events::MemorySink;
 use model::ToolCall;
 use plugin_api::{
-    CapabilityError, DataClass, HttpCapability, HttpRequest, HttpResponse, JobStarted, JobState,
+    CapabilityError, HttpCapability, HttpRequest, HttpResponse, JobStarted, JobState,
     JobsCapability, MemoryCapability, ModelCapability, ModelReply, NoteStored, NoteToStore, RunId,
     RunWorkflow, ToolContext,
 };
@@ -137,20 +137,14 @@ fn session(registry: ToolRegistry, offered: &[&str]) -> Session {
     Session::new(
         Arc::new(registry),
         Arc::new(MemorySink::new()),
-        SessionConfig {
-            run: RunId::generate(),
-            offered: offered.iter().map(|name| (*name).to_owned()).collect(),
-            budget: BUDGET,
-            data_class: DataClass::Private,
-            purpose: "test".to_owned(),
-            max_result_chars: 20_000,
-            subject: dispatch::RunSubject {
-                agent: "test".to_owned(),
-                harness: "test".to_owned(),
-                requested_by: None,
-            },
-            probe: None,
-        },
+        SessionConfig::new(
+            RunId::generate(),
+            dispatch::RunSubject::new("test".to_owned(), "test".to_owned()),
+            BUDGET,
+        )
+        .offering(offered.iter().map(|name| (*name).to_owned()))
+        .with_purpose("test".to_owned())
+        .with_max_result_chars(20_000),
     )
     .unwrap()
 }

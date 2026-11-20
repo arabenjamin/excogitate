@@ -1,6 +1,6 @@
 {
   "template": "templates/plugin",
-  "tree": "7d9e7dcffedda4cfb93c60c09fb9fddc6b74ab5e",
+  "tree": "d6a57562a2fb569a6fa6b594db58f8d4409daeb4",
   "answers": {"name": "search", "description": "Web search through TinyFish, the starting example of a plugin that calls an outside API.", "capabilities": "http", "tools": "web", "records": "", "crates": "path"},
   "skip": ["README.md"]
 }

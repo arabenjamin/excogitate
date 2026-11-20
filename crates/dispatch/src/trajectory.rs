@@ -21,8 +21,11 @@ const HARNESS_ID_CHARS: usize = 16;
 /// The longest calls line, in characters.
 const MAX_CALLS_LINE: usize = 4096;
 
-/// What a run is, for the record: what ran, and under which harness.
+/// What a run is, for the record: what ran, under which harness, and who
+/// asked. Made with [`RunSubject::new`], so a field added later doesn't break
+/// code that makes one.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct RunSubject {
     /// `chat`, `agent:<name>` or `tool:<name>`.
     pub agent: String,
@@ -31,6 +34,25 @@ pub struct RunSubject {
     /// Who asked for the run, when it's known: `owner`, a person, or a
     /// schedule.
     pub requested_by: Option<String>,
+}
+
+impl RunSubject {
+    /// `agent` running under `harness`, with no one recorded as asking.
+    #[must_use]
+    pub fn new(agent: impl Into<String>, harness: impl Into<String>) -> Self {
+        Self {
+            agent: agent.into(),
+            harness: harness.into(),
+            requested_by: None,
+        }
+    }
+
+    /// The same subject, with who asked for the run.
+    #[must_use]
+    pub fn requested_by(mut self, requested_by: Option<String>) -> Self {
+        self.requested_by = requested_by;
+        self
+    }
 }
 
 /// An id for a harness: anything that decides how a run behaves, such as its

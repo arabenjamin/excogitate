@@ -10,7 +10,7 @@ use dispatch::{
 use events::EventSink;
 use memory::{ChoiceHeld, SourceChoices};
 use model::{Gateway, Message, ToolCall};
-use protocol::{DataClass, RunId};
+use protocol::RunId;
 use schema::{Validator, bounded};
 use schemars::JsonSchema;
 use serde::Serialize;
@@ -332,21 +332,18 @@ impl Engine {
         Session::new(
             Arc::clone(&self.registry),
             Arc::clone(&self.sink),
-            SessionConfig {
-                run: RunId::generate(),
-                offered,
-                budget,
-                data_class: DataClass::Private,
-                purpose: if probe.is_some() {
-                    PROBE_PURPOSE
-                } else {
-                    PURPOSE
-                }
-                .to_owned(),
-                max_result_chars: chars,
-                subject,
-                probe,
-            },
+            SessionConfig::new(RunId::generate(), subject, budget)
+                .offering(offered)
+                .with_purpose(
+                    if probe.is_some() {
+                        PROBE_PURPOSE
+                    } else {
+                        PURPOSE
+                    }
+                    .to_owned(),
+                )
+                .with_max_result_chars(chars)
+                .with_probe(probe),
         )
         .map(|session| session.with_stop(self.stop.clone()))
         .map_err(|error| bounded(&error.to_string()))
@@ -640,11 +637,11 @@ impl Engine {
         };
         // A probe's runs are kept apart from real ones.
         let prefix = if probe.is_some() { "probe:" } else { "" };
-        let subject = RunSubject {
-            agent: format!("{prefix}tool:{tool}"),
-            harness: harness_id(&json!({ "tool": tool, "result_chars": STEP_RESULT_CHARS })),
-            requested_by: self.requested_by.clone(),
-        };
+        let subject = RunSubject::new(
+            format!("{prefix}tool:{tool}"),
+            harness_id(&json!({ "tool": tool, "result_chars": STEP_RESULT_CHARS })),
+        )
+        .requested_by(self.requested_by.clone());
         let mut session = self.session(
             vec![tool.to_owned()],
             budget,
@@ -754,11 +751,8 @@ impl Engine {
     ) -> Result<ChatResult, String> {
         let instructions = crate::instructions(agent, &question);
         let own = agent.budget.unwrap_or(self.limits.agent_budget);
-        let subject = RunSubject {
-            agent: subject.to_owned(),
-            harness: self.agent_harness(agent),
-            requested_by: self.requested_by.clone(),
-        };
+        let subject = RunSubject::new(subject.to_owned(), self.agent_harness(agent))
+            .requested_by(self.requested_by.clone());
         let session = self.session(
             agent.tools.clone(),
             left.clip(own),

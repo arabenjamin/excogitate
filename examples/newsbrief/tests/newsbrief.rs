@@ -8,7 +8,7 @@ use std::sync::Arc;
 use dispatch::{Budget, CallStatus, Session, SessionConfig, ToolRegistry};
 use events::MemorySink;
 use model::ToolCall;
-use plugin_api::{DataClass, PageRequest, RecordQuery, RunId};
+use plugin_api::{PageRequest, RecordQuery, RunId};
 use plugin_host::{HostError, PluginHost, PluginsConfig};
 use plugin_newsbrief::NewsbriefPlugin;
 use serde_json::{Value, json};
@@ -39,20 +39,14 @@ fn session(registry: ToolRegistry, offered: &[&str]) -> Session {
     Session::new(
         Arc::new(registry),
         Arc::new(MemorySink::new()),
-        SessionConfig {
-            run: RunId::generate(),
-            offered: offered.iter().map(|name| (*name).to_owned()).collect(),
-            budget: BUDGET,
-            data_class: DataClass::Private,
-            purpose: "test".to_owned(),
-            max_result_chars: 20_000,
-            subject: dispatch::RunSubject {
-                agent: "test".to_owned(),
-                harness: "test".to_owned(),
-                requested_by: None,
-            },
-            probe: None,
-        },
+        SessionConfig::new(
+            RunId::generate(),
+            dispatch::RunSubject::new("test".to_owned(), "test".to_owned()),
+            BUDGET,
+        )
+        .offering(offered.iter().map(|name| (*name).to_owned()))
+        .with_purpose("test".to_owned())
+        .with_max_result_chars(20_000),
     )
     .unwrap()
 }
