@@ -3,6 +3,21 @@
 All notable changes are listed here. The file is generated from the
 Conventional Commits by [git-cliff](https://git-cliff.org) (`cliff.toml`).
 
+## [0.26.0] - 2026-11-20
+
+### Features
+
+- A person can keep a run to themselves
+- What a private run stores is private too (breaking for store
+  implementations: `ClassFilter` is a struct, and `find_note_by_hash` takes
+  the note's privacy; the plugin contract only gains fields)
+
+### Fixed
+
+- The private-pick test takes its one line without indexing
+- The front door's documented 502 is allowed in the contract check, and its
+  image is rebuilt every run
+
 ## [0.25.0] - 2026-11-20
 
 ### Features
