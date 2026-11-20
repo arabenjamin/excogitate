@@ -216,6 +216,11 @@ sam_tools="$work/sam_tools"
 as_sam "$base/mcp" -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}' >"$sam_tools"
 check "MCP lists only the tools the key may call" "$sam_tools" \
   '.[0].result.tools | map(.name) | (index("chat") != null) and (index("memory") != null)'
+as_sam "$base/mcp" -d "$(call 7 calculate '{"expression":"6 * 7"}')" >/dev/null
+sams_runs="$work/sams_runs"
+as_sam "$base/api/v1/runs?requested_by=person:sam" >"$sams_runs"
+check "a run names who asked for it" "$sams_runs" \
+  '.[0].items | length == 1 and .[0].agent == "tool:calculate" and .[0].requested_by == "person:sam"'
 refused=$(as_sam --output /dev/null --write-out '%{http_code}' "$base/api/v1/workflows/nothing/runs" -d '{"inputs":{}}')
 [[ $refused == 403 ]] || fail "a key without the run scope started a run ($refused)"
 ok "a key without the run scope can't start a run"

@@ -38,6 +38,11 @@ pub struct RunView {
     /// instructions, tools and limits.
     #[schemars(length(max = 64))]
     pub harness: String,
+    /// Who asked for it: `owner`, a person such as `person:sam`, a schedule,
+    /// or `harness`. None for a run from before this was kept, or one
+    /// started where no one asked, such as over stdio.
+    #[schemars(length(max = 128))]
+    pub requested_by: Option<String>,
     /// When it started.
     pub started_at: DateTime<Utc>,
     /// When it ended. None while it runs, or if it was cut short.
@@ -53,6 +58,7 @@ impl From<RunSummary> for RunView {
             run: run.run.to_string(),
             agent: run.agent,
             harness: run.harness,
+            requested_by: run.requested_by,
             started_at: run.started_at,
             ended_at: run.ended_at,
             outcome: run.outcome,
@@ -89,7 +95,10 @@ async fn list_runs(
     State(app): State<App>,
     Query(params): Params,
 ) -> Result<Json<RunList>, ApiError> {
-    only(&params, &["agent", "harness", "limit", "offset"])?;
+    only(
+        &params,
+        &["agent", "harness", "requested_by", "limit", "offset"],
+    )?;
     let limit = number(&params, "limit", DEFAULT_LIMIT)?;
     if limit == 0 || limit > MAX_LIMIT {
         return Err(ApiError::invalid(&format!(
@@ -99,6 +108,7 @@ async fn list_runs(
     let query = RunQuery {
         agent: filter(&params, "agent")?,
         harness: filter(&params, "harness")?,
+        requested_by: filter(&params, "requested_by")?,
         offset: usize::try_from(number(&params, "offset", 0)?).unwrap_or(usize::MAX),
         limit: usize::try_from(limit).unwrap_or(usize::MAX),
     };
@@ -166,6 +176,11 @@ const HARNESS: Param = Param {
     about: "Only runs under this harness id.",
     kind: Kind::Text(128),
 };
+const REQUESTED_BY: Param = Param {
+    name: "requested_by",
+    about: "Only runs this actor asked for, such as owner or person:sam.",
+    kind: Kind::Text(128),
+};
 
 pub(super) fn routes() -> Vec<Route> {
     vec![
@@ -175,7 +190,7 @@ pub(super) fn routes() -> Vec<Route> {
             "The runs, newest first",
             get(list_runs),
         )
-        .query(&[AGENT, HARNESS, LIMIT, OFFSET])
+        .query(&[AGENT, HARNESS, REQUESTED_BY, LIMIT, OFFSET])
         .reply(200, "A page of runs.", Body::Typed(schema_of::<RunList>)),
         Route::get(
             "get_run",

@@ -124,6 +124,7 @@ fn config(offered: &[&str], budget: Budget) -> SessionConfig {
         subject: crate::RunSubject {
             agent: "test".to_owned(),
             harness: "test".to_owned(),
+            requested_by: None,
         },
         probe: None,
     }

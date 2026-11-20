@@ -187,10 +187,16 @@ is what it produced. For a workflow, that's the
 Every chat, agent step and tool call is a run, with a receipt and a
 [trajectory](dispatch.md#trajectories).
 
-`GET /api/v1/runs?agent=&harness=&limit=&offset=`
+`GET /api/v1/runs?agent=&harness=&requested_by=&limit=&offset=`
 ([schema](../schemas/v1/run_list.schema.json)) lists runs, newest first. `agent`
 is `chat`, `agent:<name>` or `tool:<name>`. `harness` is a harness id: runs with
 the same one had the same instructions, tools and limits.
+
+`requested_by` is who asked for the run: `owner` for the owner key, a person
+such as `person:sam` for [their key](#people-and-keys), a job's requester
+(`schedule:<name>` for a schedule's), or `harness` for Harness²'s probes.
+Every run a workflow starts carries its job's. A run from before 0.24, or one
+started where no key is sent, such as over stdio, has none.
 
 `GET /api/v1/runs/{id}` is the run's
 [trajectory](../schemas/v1/trajectory.schema.json). The id is a receipt's `run`.

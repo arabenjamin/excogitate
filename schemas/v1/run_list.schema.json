@@ -30,6 +30,14 @@
             "null"
           ]
         },
+        "requested_by": {
+          "description": "Who asked for it: `owner`, a person such as `person:sam`, a schedule,\nor `harness`. None for a run from before this was kept, or one\nstarted where no one asked, such as over stdio.",
+          "maxLength": 128,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "run": {
           "description": "Its id, which `GET /api/v1/runs/{id}` takes.",
           "maxLength": 36,

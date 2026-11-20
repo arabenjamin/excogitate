@@ -247,3 +247,49 @@ async fn a_made_up_key_is_refused_without_saying_why() {
     assert_eq!(owner["role"], "owner");
     assert_eq!(owner["key"], Value::Null);
 }
+
+#[tokio::test]
+async fn a_run_names_who_asked_for_it() {
+    let server = serve().await;
+    server.person("sam", "member").await;
+    let (_, reader) = server.key("person:sam", &["read"]).await;
+    let sum = json!({ "name": "calculate", "arguments": { "expression": "2 * 3" } });
+    let ran = server.mcp(&reader, "tools/call", sum).await;
+    assert_eq!(ran["result"]["isError"], false, "{ran}");
+    let (status, _) = server
+        .call(
+            Method::POST,
+            "/api/v1/tools/calculate",
+            OWNER_KEY,
+            Some(json!({ "expression": "1 + 1" })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK);
+
+    let (_, sams) = server
+        .call(
+            Method::GET,
+            "/api/v1/runs?requested_by=person:sam",
+            &reader,
+            None,
+        )
+        .await;
+    let items = sams["items"].as_array().unwrap();
+    assert_eq!(items.len(), 1, "{sams}");
+    assert_eq!(items[0]["agent"], "tool:calculate");
+    assert_eq!(items[0]["requested_by"], "person:sam");
+    let (_, owners) = server
+        .call(
+            Method::GET,
+            "/api/v1/runs?requested_by=owner",
+            OWNER_KEY,
+            None,
+        )
+        .await;
+    assert_eq!(owners["items"].as_array().unwrap().len(), 1, "{owners}");
+
+    let path = format!("/api/v1/runs/{}", items[0]["run"].as_str().unwrap());
+    let (_, trajectory) = server.call(Method::GET, &path, &reader, None).await;
+    assert_eq!(trajectory["requested_by"], "person:sam");
+    assert_eq!(trajectory["steps"][0]["step"]["requested_by"], "person:sam");
+}

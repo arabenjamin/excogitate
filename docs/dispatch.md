@@ -86,6 +86,10 @@ trajectories, and a person can read one over [REST](api.md#runs).
   same harness.
 - **What ran** is `chat`, `agent:<name>`, `tool:<name>`, or `probe:<name>` for
   a Harness² probe of an agent, so probes are never mixed up with real runs.
+- **Who asked** is the start's `requested_by`: `owner`, a person such as
+  `person:sam`, a job's requester such as `schedule:<name>`, or `harness`. It
+  comes from the key a client sent, or the job the run belongs to, never from
+  a model. It's left out when it isn't known, such as over stdio.
 - **The calls line** sums a run up in one line, such as
   `memory ran (harness) → http_request refused → answered`. Read it first: it
   keeps runs from being confused with each other.

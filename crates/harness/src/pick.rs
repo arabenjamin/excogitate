@@ -427,6 +427,7 @@ mod tests {
                     max_duration_ms: 10,
                 },
                 skills: vec![],
+                requested_by: None,
             }),
             timed(Step::Message {
                 role: Speaker::User,
@@ -456,6 +457,7 @@ mod tests {
             run: "r".to_owned(),
             agent: Some("agent:helper".to_owned()),
             harness: Some("h".to_owned()),
+            requested_by: None,
             calls: "calls".to_owned(),
             steps,
             unreadable: 0,

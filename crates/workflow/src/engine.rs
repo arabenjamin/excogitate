@@ -264,6 +264,9 @@ pub struct Engine {
     pub stop: StopSignal,
     /// The sources each agent's run may read, as its definition says.
     pub sources: SourceChoices,
+    /// Who asked for the runs this engine starts, if it's known. Set per run
+    /// with [`Engine::for_requester`].
+    pub requested_by: Option<String>,
 }
 
 /// The workflow named, once `inputs` are checked against it.
@@ -358,6 +361,16 @@ impl Engine {
     pub async fn run(&self, name: &str, inputs: Value) -> Result<WorkflowRun, WorkflowError> {
         let workflow = self.checked(name, &inputs).await?;
         Ok(self.run_steps(name, &workflow, inputs, None).await)
+    }
+
+    /// The same engine, recording `requested_by` as who asked for each run it
+    /// starts.
+    #[must_use]
+    pub fn for_requester(&self, requested_by: Option<String>) -> Self {
+        Self {
+            requested_by,
+            ..self.clone()
+        }
     }
 
     /// The workflow, if it exists and `inputs` fit it.
@@ -630,6 +643,7 @@ impl Engine {
         let subject = RunSubject {
             agent: format!("{prefix}tool:{tool}"),
             harness: harness_id(&json!({ "tool": tool, "result_chars": STEP_RESULT_CHARS })),
+            requested_by: self.requested_by.clone(),
         };
         let mut session = self.session(
             vec![tool.to_owned()],
@@ -743,6 +757,7 @@ impl Engine {
         let subject = RunSubject {
             agent: subject.to_owned(),
             harness: self.agent_harness(agent),
+            requested_by: self.requested_by.clone(),
         };
         let session = self.session(
             agent.tools.clone(),

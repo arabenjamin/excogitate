@@ -5,6 +5,7 @@ use std::convert::Infallible;
 use std::sync::Arc;
 use std::time::Duration;
 
+use axum::Extension;
 use axum::body::Bytes;
 use axum::extract::State;
 use axum::http::{HeaderMap, StatusCode};
@@ -24,6 +25,7 @@ use schema::schema_of;
 
 use super::spec::{Body, Errors, Route};
 use super::{ApiError, App, json_body};
+use crate::auth::Caller;
 use crate::mcp::ChatInput;
 
 /// The one model a client sees.
@@ -322,6 +324,7 @@ fn chat_input(
         temperature: request.temperature,
         max_output_tokens,
         time_cap_ms: None,
+        requested_by: None,
     })
 }
 
@@ -443,7 +446,12 @@ async fn list_models(State(app): State<App>) -> axum::Json<Value> {
     }))
 }
 
-async fn chat_completions(State(app): State<App>, headers: HeaderMap, body: Bytes) -> Response {
+async fn chat_completions(
+    State(app): State<App>,
+    Extension(caller): Extension<Caller>,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Response {
     let raw = match json_body(&headers, &body) {
         Ok(raw) => raw,
         Err(error) => return from_api(&error),
@@ -454,10 +462,11 @@ async fn chat_completions(State(app): State<App>, headers: HeaderMap, body: Byte
     };
     let streaming = request.stream.unwrap_or(false);
     let server_limit = app.runtime.config.max_output_tokens;
-    let input = match chat_input(request, &app.model_id, server_limit) {
+    let mut input = match chat_input(request, &app.model_id, server_limit) {
         Ok(input) => input,
         Err(why) => return invalid(&why),
     };
+    input.requested_by = Some(caller.actor.to_string());
     let permit = match app.permit() {
         Ok(permit) => permit,
         Err(error) => return from_api(&error),

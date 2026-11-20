@@ -290,6 +290,14 @@
               "maxLength": 128,
               "type": "string"
             },
+            "requested_by": {
+              "description": "Who asked for it: `owner`, a person such as `person:sam`, or a\nschedule. Left out when it isn't known, as in runs from before it\nwas kept.",
+              "maxLength": 128,
+              "type": [
+                "string",
+                "null"
+              ]
+            },
             "skills": {
               "description": "The skills its instructions include.",
               "items": {
@@ -741,6 +749,14 @@
     "harness": {
       "description": "The harness it ran under.",
       "maxLength": 64,
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "requested_by": {
+      "description": "Who asked for the run, if it's known.",
+      "maxLength": 128,
       "type": [
         "string",
         "null"

@@ -88,9 +88,8 @@ impl Runtime {
             .sink
             .list_runs(&RunQuery {
                 agent: Some("chat".to_owned()),
-                harness: None,
-                offset: 0,
                 limit: MAX_LOOKED_AT,
+                ..RunQuery::default()
             })
             .await
             .map_err(|error| error.to_string())?;

@@ -70,7 +70,10 @@ impl DuckDbSink {
                  CREATE TABLE IF NOT EXISTS runs (
                      sequence BIGINT NOT NULL, run VARCHAR NOT NULL, agent VARCHAR NOT NULL,
                      harness VARCHAR NOT NULL, started_at TIMESTAMP NOT NULL,
-                     ended_at TIMESTAMP, outcome VARCHAR);",
+                     ended_at TIMESTAMP, outcome VARCHAR);
+                 -- Who asked for a run, kept since 0.24; a log from before
+                 -- gains the column, and its runs have none.
+                 ALTER TABLE runs ADD COLUMN IF NOT EXISTS requested_by VARCHAR;",
             )
             .map_err(sink_error)?;
         let next_sequence = connection
@@ -135,10 +138,22 @@ fn append_all(inner: &mut Inner, events: &[Event]) -> Result<(), EventError> {
 /// Keeps the run index, in the same transaction as the event.
 fn index(connection: &Connection, sequence: i64, event: &Event) -> duckdb::Result<()> {
     match event.index_entry() {
-        Some(IndexEntry::Started { agent, harness }) => connection
+        Some(IndexEntry::Started {
+            agent,
+            harness,
+            requested_by,
+        }) => connection
             .execute(
-                "INSERT INTO runs VALUES (?, ?, ?, ?, ?, NULL, NULL)",
-                params![sequence, event.run.to_string(), agent, harness, event.at],
+                "INSERT INTO runs (sequence, run, agent, harness, started_at, requested_by)
+                 VALUES (?, ?, ?, ?, ?, ?)",
+                params![
+                    sequence,
+                    event.run.to_string(),
+                    agent,
+                    harness,
+                    event.at,
+                    requested_by
+                ],
             )
             .map(|_| ()),
         Some(IndexEntry::Ended { outcome }) => connection
@@ -157,8 +172,9 @@ fn list_page(inner: &Inner, query: &RunQuery) -> Result<RunPage, EventError> {
     let mut statement = inner
         .connection
         .prepare(
-            "SELECT run, agent, harness, started_at, ended_at, outcome FROM runs
+            "SELECT run, agent, harness, started_at, ended_at, outcome, requested_by FROM runs
              WHERE (?::VARCHAR IS NULL OR agent = ?) AND (?::VARCHAR IS NULL OR harness = ?)
+               AND (?::VARCHAR IS NULL OR requested_by = ?)
              ORDER BY sequence DESC LIMIT ? OFFSET ?",
         )
         .map_err(sink_error)?;
@@ -169,6 +185,8 @@ fn list_page(inner: &Inner, query: &RunQuery) -> Result<RunPage, EventError> {
                 query.agent,
                 query.harness,
                 query.harness,
+                query.requested_by,
+                query.requested_by,
                 limit + 1,
                 offset
             ],
@@ -180,17 +198,20 @@ fn list_page(inner: &Inner, query: &RunQuery) -> Result<RunPage, EventError> {
                     row.get::<_, DateTime<Utc>>(3)?,
                     row.get::<_, Option<DateTime<Utc>>>(4)?,
                     row.get::<_, Option<String>>(5)?,
+                    row.get::<_, Option<String>>(6)?,
                 ))
             },
         )
         .map_err(sink_error)?;
     let mut runs = Vec::new();
     for row in rows {
-        let (run, agent, harness, started_at, ended_at, outcome) = row.map_err(sink_error)?;
+        let (run, agent, harness, started_at, ended_at, outcome, requested_by) =
+            row.map_err(sink_error)?;
         runs.push(RunSummary {
             run: run.parse().map_err(sink_error)?,
             agent,
             harness,
+            requested_by,
             started_at,
             ended_at,
             outcome,
@@ -471,6 +492,69 @@ mod tests {
             .await
             .unwrap();
         assert!(first.has_more);
+        std::fs::remove_dir_all(&directory).unwrap();
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn who_asked_is_kept_and_filtered_and_an_older_log_gains_it() {
+        let directory = std::env::temp_dir().join(format!("sink-{}", RunId::generate()));
+        std::fs::create_dir_all(&directory).unwrap();
+        let path = directory.join("events.duckdb");
+        // A log as 0.23 made it: the run index has no requested_by.
+        let old = RunId::generate();
+        {
+            let connection = Connection::open(&path).unwrap();
+            connection
+                .execute_batch(
+                    "CREATE TABLE events (
+                         sequence BIGINT NOT NULL, run VARCHAR NOT NULL,
+                         occurred_at TIMESTAMP NOT NULL, kind VARCHAR NOT NULL,
+                         data_class VARCHAR NOT NULL, body VARCHAR NOT NULL);
+                     CREATE TABLE runs (
+                         sequence BIGINT NOT NULL, run VARCHAR NOT NULL, agent VARCHAR NOT NULL,
+                         harness VARCHAR NOT NULL, started_at TIMESTAMP NOT NULL,
+                         ended_at TIMESTAMP, outcome VARCHAR);",
+                )
+                .unwrap();
+            connection
+                .execute(
+                    "INSERT INTO runs VALUES (1, ?, 'chat', 'h1', '2027-01-15 08:00:00', NULL, NULL)",
+                    params![old.to_string()],
+                )
+                .unwrap();
+        }
+        let sink = DuckDbSink::open(Some(&path)).unwrap();
+        let asked = RunId::generate();
+        sink.append(vec![marker(
+            asked,
+            EventKind::RunStarted,
+            1_900_000_000,
+            json!({ "agent": "chat", "harness": "h1", "requested_by": "person:sam" }),
+        )])
+        .await
+        .unwrap();
+        let all = sink
+            .list_runs(&RunQuery {
+                limit: 10,
+                ..RunQuery::default()
+            })
+            .await
+            .unwrap();
+        let seen: Vec<(RunId, Option<&str>)> = all
+            .runs
+            .iter()
+            .map(|run| (run.run, run.requested_by.as_deref()))
+            .collect();
+        assert_eq!(seen, vec![(asked, Some("person:sam")), (old, None)]);
+        let sams = sink
+            .list_runs(&RunQuery {
+                requested_by: Some("person:sam".to_owned()),
+                limit: 10,
+                ..RunQuery::default()
+            })
+            .await
+            .unwrap();
+        assert_eq!(sams.runs.len(), 1);
         std::fs::remove_dir_all(&directory).unwrap();
     }
 

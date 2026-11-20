@@ -95,6 +95,21 @@ pub(crate) struct ChatInput {
     /// The most time the run may take, when something outside it, such as
     /// a job's limit, would stop it sooner than its own budget.
     pub(crate) time_cap_ms: Option<u64>,
+    /// Who asked, if it's known: the actor recorded on the run.
+    pub(crate) requested_by: Option<String>,
+}
+
+tokio::task_local! {
+    /// Who's calling a core tool over HTTP. A tool's signature can't carry
+    /// it (a plugin's `ToolContext` is `Copy`), so the HTTP layer sets it
+    /// around one call, and the core's own tools read it as they start and
+    /// put it on the run. Nothing deeper reads it.
+    pub(crate) static CALLER: String;
+}
+
+/// Who's calling, if the HTTP layer said.
+fn caller() -> Option<String> {
+    CALLER.try_with(Clone::clone).ok()
 }
 
 /// What a client asks.
@@ -149,7 +164,10 @@ impl Tool for ChatTool {
     async fn run(&self, arguments: Value, _: ToolContext) -> Result<ToolOutput, ToolFailure> {
         let args: ChatArgs = serde_json::from_value(arguments)
             .map_err(|error| ToolFailure::new(schema::bounded(&error.to_string())))?;
-        let result = self.0.chat(args.message, CHAT_PURPOSE, None).await?;
+        let result = self
+            .0
+            .chat(args.message, CHAT_PURPOSE, None, caller())
+            .await?;
         let cost_usd_micros = result.receipt.totals.cost_usd_micros;
         let reply = ChatReply::from(result);
         let value = serde_json::to_value(reply)
@@ -161,12 +179,13 @@ impl Tool for ChatTool {
 
 impl Runtime {
     /// Runs one chat, as its own run, on behalf of `purpose`, in at most
-    /// `time_cap_ms` if that's given.
+    /// `time_cap_ms` if that's given, for `requested_by` if it's known.
     pub(crate) async fn chat(
         &self,
         question: String,
         purpose: &str,
         time_cap_ms: Option<u64>,
+        requested_by: Option<String>,
     ) -> Result<ChatResult, ToolFailure> {
         let input = ChatInput {
             extra_system: None,
@@ -175,6 +194,7 @@ impl Runtime {
             temperature: None,
             max_output_tokens: self.config.max_output_tokens,
             time_cap_ms,
+            requested_by,
         };
         self.chat_with(input, purpose).await
     }
@@ -254,6 +274,7 @@ impl Tool for DispatchedTool {
     async fn run(&self, arguments: Value, _: ToolContext) -> Result<ToolOutput, ToolFailure> {
         let name = self.definition.name.clone();
         let subject = RunSubject {
+            requested_by: caller(),
             agent: format!("tool:{name}"),
             harness: harness_id(&json!({ "tool": name, "budget": self.runtime.config.budget })),
         };

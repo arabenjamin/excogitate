@@ -68,6 +68,7 @@ impl RouteProbe for Runtime {
             temperature: None,
             max_output_tokens: self.config.max_output_tokens,
             time_cap_ms: None,
+            requested_by: Some("harness".to_owned()),
         };
         let result = self
             .routed_as(

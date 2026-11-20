@@ -116,6 +116,7 @@ async fn setup_agent(body: Value, script: Vec<ChaosStep>) -> Setup {
         },
         stop: dispatch::StopSignal::new(),
         sources: workflow::SourceChoices::default(),
+        requested_by: None,
     };
     Setup {
         engine,

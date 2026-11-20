@@ -132,6 +132,7 @@ async fn harness(script: Vec<ChaosStep>, extra: Vec<Arc<Fake>>, log: Arc<Recorde
         },
         stop: dispatch::StopSignal::new(),
         sources: workflow::SourceChoices::default(),
+        requested_by: None,
     };
     Harness {
         engine,
@@ -192,6 +193,38 @@ async fn define(harness: &Harness, steps: Value, extra: Value) {
 
 fn subject() -> Value {
     json!({ "subject": "otters" })
+}
+
+#[tokio::test]
+async fn every_step_of_a_run_names_who_asked_for_it() {
+    let log = Arc::new(Recorder::default());
+    let fake = tool("fake", Ok(json!({ "text": "fetched" })), 0, &log);
+    let harness = harness(vec![ChaosStep::Text("thought".to_owned())], vec![fake], log).await;
+    let steps = json!([
+        tool_step("fetch", "fake", &json!({ "text": "{{inputs.subject}}" })),
+        agent_step(),
+    ]);
+    define(&harness, steps, json!({})).await;
+    let asking = harness
+        .engine
+        .for_requester(Some("schedule:daily".to_owned()));
+    let run = asking.run("flow", subject()).await.unwrap();
+    assert_eq!(run.outcome, RunOutcome::Completed, "{run:?}");
+    let listed = harness
+        .engine
+        .sink
+        .list_runs(&events::RunQuery {
+            limit: 10,
+            ..events::RunQuery::default()
+        })
+        .await
+        .unwrap();
+    let asked: Vec<Option<&str>> = listed
+        .runs
+        .iter()
+        .map(|run| run.requested_by.as_deref())
+        .collect();
+    assert_eq!(asked, vec![Some("schedule:daily"); 2], "{listed:?}");
 }
 
 #[tokio::test]

@@ -190,6 +190,7 @@ fn session(registry: ToolRegistry, data_class: DataClass) -> Session {
             subject: RunSubject {
                 agent: "test".to_owned(),
                 harness: "test".to_owned(),
+                requested_by: None,
             },
             probe: None,
         },

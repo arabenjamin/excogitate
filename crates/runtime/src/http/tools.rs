@@ -54,9 +54,13 @@ async fn call_tool(
     let handler = Arc::clone(&app.mcp);
     // A caller from outside, as over MCP: private, and the call's own run.
     let context = ToolContext::new(RunId::generate(), DataClass::Private, 0);
-    let outcome = detached(permit, async move {
-        handler.call(&name, arguments, context).await
-    })
+    let asking = caller.actor.to_string();
+    let outcome = detached(
+        permit,
+        crate::mcp::CALLER.scope(asking, async move {
+            handler.call(&name, arguments, context).await
+        }),
+    )
     .await?;
     match outcome {
         Called::Ran(value) => Ok(Json(value).into_response()),

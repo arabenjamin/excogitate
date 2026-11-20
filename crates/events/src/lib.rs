@@ -17,7 +17,8 @@ use serde_json::Value;
 ///
 /// Two kinds feed the run index, so their bodies have fields a sink reads: a
 /// [`EventKind::RunStarted`] body has string `agent` and `harness` fields, and
-/// a [`EventKind::RunEnded`] body has a string `outcome`.
+/// a string `requested_by` when who asked is known, and a
+/// [`EventKind::RunEnded`] body has a string `outcome`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum EventKind {
     /// Who is running, under which harness, with what.
@@ -69,6 +70,9 @@ pub struct RunSummary {
     /// The harness it ran under, as an id: two runs with the same id had the
     /// same instructions, tools and limits.
     pub harness: String,
+    /// Who asked for it, if that's known: `owner`, a person such as
+    /// `person:sam`, or a schedule.
+    pub requested_by: Option<String>,
     /// When it started.
     pub started_at: DateTime<Utc>,
     /// When it ended. A run with none is still going, or was cut short.
@@ -84,6 +88,8 @@ pub struct RunQuery {
     pub agent: Option<String>,
     /// Only runs under this harness.
     pub harness: Option<String>,
+    /// Only runs this actor asked for.
+    pub requested_by: Option<String>,
     /// How many to skip.
     pub offset: usize,
     /// The most to return.
@@ -108,6 +114,8 @@ pub enum IndexEntry {
         agent: String,
         /// Its harness id.
         harness: String,
+        /// Who asked for it, if that's known.
+        requested_by: Option<String>,
     },
     /// A run ended.
     Ended {
@@ -131,6 +139,7 @@ impl Event {
             EventKind::RunStarted => Some(IndexEntry::Started {
                 agent: text("agent")?,
                 harness: text("harness")?,
+                requested_by: text("requested_by"),
             }),
             EventKind::RunEnded => Some(IndexEntry::Ended {
                 outcome: text("outcome")?,
@@ -226,10 +235,15 @@ impl EventSink for MemorySink {
         let mut runs: Vec<RunSummary> = Vec::new();
         for event in all.iter() {
             match event.index_entry() {
-                Some(IndexEntry::Started { agent, harness }) => runs.push(RunSummary {
+                Some(IndexEntry::Started {
+                    agent,
+                    harness,
+                    requested_by,
+                }) => runs.push(RunSummary {
                     run: event.run,
                     agent,
                     harness,
+                    requested_by,
                     started_at: event.at,
                     ended_at: None,
                     outcome: None,
@@ -252,6 +266,12 @@ impl EventSink for MemorySink {
                     .harness
                     .as_ref()
                     .is_none_or(|harness| *harness == run.harness)
+            })
+            .filter(|run| {
+                query
+                    .requested_by
+                    .as_ref()
+                    .is_none_or(|asked| run.requested_by.as_ref() == Some(asked))
             })
             .skip(query.offset);
         let runs: Vec<RunSummary> = matching.by_ref().take(query.limit).collect();

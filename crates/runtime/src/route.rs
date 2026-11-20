@@ -396,6 +396,7 @@ impl Runtime {
             dispatch::RunSubject {
                 agent: subject.to_owned(),
                 harness,
+                requested_by: input.requested_by.clone(),
             },
             probe,
         )?;

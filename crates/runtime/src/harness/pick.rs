@@ -139,6 +139,7 @@ impl Runtime {
                 harness: None,
                 offset: 0,
                 limit: RECENT_RUNS,
+                requested_by: None,
             })
             .await
             .map_err(|error| error.to_string())?;
@@ -173,6 +174,7 @@ impl Runtime {
                 harness: None,
                 offset: 0,
                 limit: RECENT_CHATS,
+                requested_by: None,
             })
             .await
             .map_err(|error| error.to_string())?;

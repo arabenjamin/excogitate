@@ -99,7 +99,12 @@ impl JobHandler for ChatJob {
         let cap = self.0.config.budget.max_duration_ms;
         let result = self
             .0
-            .chat(args.message, SCHEDULE_PURPOSE, Some(cap))
+            .chat(
+                args.message,
+                SCHEDULE_PURPOSE,
+                Some(cap),
+                Some(job.requested_by.to_string()),
+            )
             .await
             .map_err(|failure| failure.message().to_owned())?;
         let answered = result.receipt.outcome == Outcome::Answered;
@@ -145,6 +150,7 @@ impl JobHandler for WorkflowJob {
         let run = self
             .0
             .workflows
+            .for_requester(Some(job.requested_by.to_string()))
             .run(&args.workflow, args.inputs)
             .await
             .map_err(|error| error.to_string())?;

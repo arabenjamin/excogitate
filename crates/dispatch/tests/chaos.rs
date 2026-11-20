@@ -135,6 +135,7 @@ async fn run_seed(seed: u64, budget: Budget) -> Ran {
             subject: dispatch::RunSubject {
                 agent: "test".to_owned(),
                 harness: "test".to_owned(),
+                requested_by: None,
             },
             probe: None,
         },
@@ -320,6 +321,7 @@ async fn a_lying_token_count_ends_the_run_at_the_token_budget() {
             subject: dispatch::RunSubject {
                 agent: "test".to_owned(),
                 harness: "test".to_owned(),
+                requested_by: None,
             },
             probe: None,
         },

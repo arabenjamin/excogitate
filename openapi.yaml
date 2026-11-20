@@ -1739,6 +1739,15 @@ components:
           type:
           - string
           - "null"
+        requested_by:
+          description: |-
+            Who asked for it: `owner`, a person such as `person:sam`, a schedule,
+            or `harness`. None for a run from before this was kept, or one
+            started where no one asked, such as over stdio.
+          maxLength: 128
+          type:
+          - string
+          - "null"
         run:
           description: Its id, which `GET /api/v1/runs/{id}` takes.
           maxLength: 36
@@ -1847,6 +1856,15 @@ components:
             description: What the work was for.
             maxLength: 128
             type: string
+          requested_by:
+            description: |-
+              Who asked for it: `owner`, a person such as `person:sam`, or a
+              schedule. Left out when it isn't known, as in runs from before it
+              was kept.
+            maxLength: 128
+            type:
+            - string
+            - "null"
           skills:
             description: The skills its instructions include.
             items:
@@ -2330,6 +2348,12 @@ components:
         harness:
           description: The harness it ran under.
           maxLength: 64
+          type:
+          - string
+          - "null"
+        requested_by:
+          description: Who asked for the run, if it's known.
+          maxLength: 128
           type:
           - string
           - "null"
@@ -3437,6 +3461,14 @@ paths:
       - description: Only runs under this harness id.
         in: query
         name: harness
+        required: false
+        schema:
+          maxLength: 128
+          minLength: 1
+          type: string
+      - description: Only runs this actor asked for, such as owner or person:sam.
+        in: query
+        name: requested_by
         required: false
         schema:
           maxLength: 128

@@ -393,6 +393,7 @@ impl Runtime {
             limits,
             stop,
             sources: choices,
+            requested_by: None,
         };
         Ok(Self {
             registry,

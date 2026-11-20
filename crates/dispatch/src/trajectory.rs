@@ -28,6 +28,9 @@ pub struct RunSubject {
     pub agent: String,
     /// The harness's id, from [`harness_id`].
     pub harness: String,
+    /// Who asked for the run, when it's known: `owner`, a person, or a
+    /// schedule.
+    pub requested_by: Option<String>,
 }
 
 /// An id for a harness: anything that decides how a run behaves, such as its
@@ -110,6 +113,12 @@ pub enum Step {
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         #[schemars(length(max = 16), inner(length(max = 64)))]
         skills: Vec<String>,
+        /// Who asked for it: `owner`, a person such as `person:sam`, or a
+        /// schedule. Left out when it isn't known, as in runs from before it
+        /// was kept.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[schemars(length(max = 128))]
+        requested_by: Option<String>,
     },
     /// A message the model was given: at the start, such as its instructions
     /// or the question, or later by the harness, such as a guardrail's
@@ -314,6 +323,9 @@ pub struct Trajectory {
     /// The harness it ran under.
     #[schemars(length(max = 64))]
     pub harness: Option<String>,
+    /// Who asked for the run, if it's known.
+    #[schemars(length(max = 128))]
+    pub requested_by: Option<String>,
     /// The run in one line: each tool call and how it went, then how the run
     /// ended. Read this first; it keeps runs from being confused.
     #[schemars(length(max = 4200))]
@@ -416,17 +428,24 @@ pub async fn read_trajectory(
     if seen == 0 {
         return Ok(None);
     }
-    let (agent, harness) = steps
-        .iter()
-        .find_map(|timed| match &timed.step {
-            Step::Started { agent, harness, .. } => Some((agent.clone(), harness.clone())),
-            _ => None,
-        })
-        .unzip();
+    let started = steps.iter().find_map(|timed| match &timed.step {
+        Step::Started {
+            agent,
+            harness,
+            requested_by,
+            ..
+        } => Some((agent.clone(), harness.clone(), requested_by.clone())),
+        _ => None,
+    });
+    let (agent, harness, requested_by) = match started {
+        Some((agent, harness, requested_by)) => (Some(agent), Some(harness), requested_by),
+        None => (None, None, None),
+    };
     Ok(Some(Trajectory {
         run: run.to_string(),
         agent,
         harness,
+        requested_by,
         calls: calls_line(&steps, complete),
         steps,
         unreadable,
@@ -503,6 +522,7 @@ mod tests {
                 offered: vec!["memory".to_owned()],
                 budget: budget(),
                 skills: Vec::new(),
+                requested_by: Some("person:sam".to_owned()),
             },
             tool(0, "memory", CallStatus::Ran, true),
             Step::Message {

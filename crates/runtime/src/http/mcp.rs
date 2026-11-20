@@ -111,7 +111,9 @@ async fn post_message(
             Err(error) => return error.into_response(),
         };
         let handler = Arc::clone(&app.mcp);
-        match detached(permit, async move { handler.handle(&message).await }).await {
+        let asking = caller.actor.to_string();
+        let call = crate::mcp::CALLER.scope(asking, async move { handler.handle(&message).await });
+        match detached(permit, call).await {
             Ok(reply) => reply,
             Err(error) => return error.into_response(),
         }

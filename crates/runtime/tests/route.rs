@@ -625,6 +625,7 @@ async fn a_routed_probe_swaps_in_the_candidate_and_stubs_its_writes() {
             harness: None,
             offset: 0,
             limit: 10,
+            requested_by: None,
         })
         .await
         .unwrap();
