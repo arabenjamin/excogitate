@@ -130,6 +130,7 @@ fn session(registry: ToolRegistry, offered: &[&str]) -> Session {
             subject: dispatch::RunSubject {
                 agent: "test".to_owned(),
                 harness: "test".to_owned(),
+                requested_by: None,
             },
             probe: None,
         },
