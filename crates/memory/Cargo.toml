@@ -15,7 +15,7 @@ model = { path = "../model" }
 plugin-api = { path = "../plugin-api" }
 protocol = { path = "../protocol" }
 schema = { path = "../schema" }
-sha2 = "0.10"
+sha2 = "0.11"
 store = { path = "../store" }
 thiserror.workspace = true
 tokio = { workspace = true, features = ["time"] }
