@@ -31,6 +31,27 @@ const MAX_TASK_CHARS: usize = 8000;
 /// What to improve.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
+// What `check` refuses, said in the schema too: a workflow is improved on
+// inputs and never routed; an agent on a task that says something, and
+// never on inputs.
+#[schemars(extend("allOf" = [{
+    "if": {
+        "properties": { "target": { "const": "workflow" } },
+        "required": ["target"]
+    },
+    "then": {
+        "required": ["inputs"],
+        "properties": {
+            "inputs": { "type": "object" },
+            "routed": { "const": false },
+            "task": { "maxLength": 0 }
+        }
+    },
+    "else": {
+        "required": ["task"],
+        "properties": { "task": { "pattern": "\\S" }, "inputs": false }
+    }
+}]))]
 pub struct Request {
     /// The agent, or the workflow when `target` is `workflow`.
     #[schemars(length(min = 1, max = 64), regex(pattern = r"^[a-z0-9_-]{1,64}$"))]

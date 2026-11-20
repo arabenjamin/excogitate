@@ -148,7 +148,9 @@ impl Walk<'_> {
         };
         let wider = flatten_all_of(wider);
         let narrower = flatten_all_of(narrower);
-        if wider.contains_key(EXTENSION_KEY) || is_open(&wider) {
+        // An extension marks what a place leaves open, beside what it
+        // declares; only a place that declares nothing else is open through.
+        if is_open(&wider) {
             return;
         }
         if self.choices(&wider, &narrower, path) {
@@ -406,7 +408,9 @@ fn flatten_all_of(schema: &Map<String, Value>) -> Map<String, Value> {
 
 /// A schema with no constraint at all.
 fn is_open(schema: &Map<String, Value>) -> bool {
-    schema.keys().all(|key| NOTES.contains(&key.as_str()))
+    schema
+        .keys()
+        .all(|key| NOTES.contains(&key.as_str()) || key == EXTENSION_KEY)
 }
 
 fn choices_of(schema: &Map<String, Value>) -> Option<&Vec<Value>> {

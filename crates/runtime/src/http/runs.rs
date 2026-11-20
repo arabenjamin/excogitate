@@ -15,7 +15,7 @@ use serde::Serialize;
 use super::rest::{DEFAULT_LIMIT, MAX_LIMIT, Params, number, only};
 use schema::schema_of;
 
-use super::spec::{Body, LIMIT, OFFSET, Param, Route};
+use super::spec::{Body, ID, Kind, LIMIT, OFFSET, Param, Route};
 use super::{ApiError, App, json_body};
 
 /// The most steps of one trajectory served. A run's budget caps its calls at
@@ -159,14 +159,12 @@ async fn put_feedback(
 const AGENT: Param = Param {
     name: "agent",
     about: "Only runs of this agent.",
-    values: &[],
-    number: false,
+    kind: Kind::Text(128),
 };
 const HARNESS: Param = Param {
     name: "harness",
     about: "Only runs under this harness id.",
-    values: &[],
-    number: false,
+    kind: Kind::Text(128),
 };
 
 pub(super) fn routes() -> Vec<Route> {
@@ -185,6 +183,7 @@ pub(super) fn routes() -> Vec<Route> {
             "One run's trajectory",
             get(get_run),
         )
+        .path(&[ID])
         .reply(200, "Its trajectory.", Body::Typed(schema_of::<Trajectory>)),
         Route::put(
             "put_feedback",
@@ -192,6 +191,7 @@ pub(super) fn routes() -> Vec<Route> {
             "Mark a run good or bad, for Harness²",
             put(put_feedback),
         )
+        .path(&[ID])
         .body(Body::Typed(schema_of::<harness::FeedbackRequest>))
         .reply(
             200,

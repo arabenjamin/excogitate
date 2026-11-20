@@ -37,8 +37,17 @@
           "description": "Who wrote it."
         },
         "tool_calls": {
-          "description": "Refused if it holds anything: this server runs its own tools.",
-          "x-extension": "refused unless empty"
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "maxItems": 0,
+              "type": "array"
+            }
+          ],
+          "default": null,
+          "description": "Must be empty or left out: this server runs its own tools."
         }
       },
       "required": [
@@ -88,11 +97,6 @@
         {
           "const": "assistant",
           "description": "The model.",
-          "type": "string"
-        },
-        {
-          "const": "tool",
-          "description": "A tool's result, which this server refuses: its tools are its own.",
           "type": "string"
         }
       ]
@@ -144,8 +148,25 @@
       ]
     },
     "response_format": {
-      "description": "Refused unless it asks for plain text.",
-      "x-extension": "only {\"type\": \"text\"} is accepted"
+      "anyOf": [
+        {
+          "type": "null"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "type": {
+              "const": "text"
+            }
+          },
+          "required": [
+            "type"
+          ],
+          "type": "object"
+        }
+      ],
+      "default": null,
+      "description": "Only plain text replies: `{\"type\": \"text\"}`, or left out."
     },
     "stream": {
       "description": "Send the reply as server-sent events.",
@@ -164,8 +185,17 @@
       ]
     },
     "tools": {
-      "description": "Refused if it holds anything: this server runs its own tools.",
-      "x-extension": "refused unless empty"
+      "anyOf": [
+        {
+          "type": "null"
+        },
+        {
+          "maxItems": 0,
+          "type": "array"
+        }
+      ],
+      "default": null,
+      "description": "Must be empty or left out: this server runs its own tools."
     }
   },
   "required": [

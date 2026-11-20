@@ -202,3 +202,16 @@ fn a_format_json_schema_doesnt_define_is_no_change_but_a_real_one_is() {
     assert_eq!(found.len(), 1, "{found:?}");
     assert!(found[0].path.contains("at"), "{found:?}");
 }
+
+#[test]
+fn an_extension_beside_declared_properties_doesnt_hide_their_changes() {
+    let old = json!({ "type": "object", "x-extension": "other fields are ignored",
+        "properties": { "role": { "enum": ["user", "tool"] } } });
+    let narrowed = json!({ "type": "object", "x-extension": "other fields are ignored",
+        "properties": { "role": { "enum": ["user"] } } });
+    assert_ne!(breaking_changes(&old, &narrowed, Role::Input).len(), 0);
+    // A place that's only an extension is still open through.
+    let open = json!({ "x-extension": "anything" });
+    let typed = json!({ "x-extension": "anything", "type": "string" });
+    assert_eq!(breaking_changes(&open, &typed, Role::Output).len(), 0);
+}

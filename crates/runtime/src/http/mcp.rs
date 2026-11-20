@@ -10,17 +10,13 @@ use axum::response::{IntoResponse, Response};
 use axum::routing::post;
 use plugin_api::MCP_VERSION;
 use plugin_api::rpc::{INVALID_REQUEST, PARSE_ERROR, failure};
-use serde_json::Value;
+use serde_json::{Value, json};
 
-use super::spec::{Body, Route};
+use super::spec::{Body, Errors, Kind, Param, Route};
 use super::{ApiError, App, detached, json_body};
 
 fn rpc_error(status: StatusCode, code: i64, message: &str) -> Response {
     (status, axum::Json(failure(&Value::Null, code, message))).into_response()
-}
-
-fn well_formed(message: &Value) -> bool {
-    message.is_object() && message.get("jsonrpc").and_then(Value::as_str) == Some("2.0")
 }
 
 async fn post_message(State(app): State<App>, headers: HeaderMap, body: Bytes) -> Response {
@@ -37,7 +33,8 @@ async fn post_message(State(app): State<App>, headers: HeaderMap, body: Bytes) -
         }
         Err(error) => return error.into_response(),
     };
-    if !well_formed(&message) {
+    // The schema the document gives is the one a message is held to.
+    if app.mcp_message.check(&message).is_err() {
         let detail = "a request is one JSON-RPC 2.0 object";
         return rpc_error(StatusCode::BAD_REQUEST, INVALID_REQUEST, detail);
     }
@@ -64,6 +61,70 @@ async fn post_message(State(app): State<App>, headers: HeaderMap, body: Bytes) -
     }
 }
 
+/// The JSON-RPC error object.
+fn error_object() -> Value {
+    json!({
+        "type": "object",
+        "required": ["code", "message"],
+        "properties": {
+            "code": { "type": "integer" },
+            "message": { "type": "string" },
+            "data": {}
+        }
+    })
+}
+
+/// What a client sends: one JSON-RPC 2.0 request, notification or reply.
+pub(super) fn message_schema() -> Value {
+    json!({
+        "type": "object",
+        "required": ["jsonrpc"],
+        "properties": {
+            "jsonrpc": { "const": "2.0" },
+            "id": { "type": ["string", "number", "null"] },
+            "method": { "type": "string",
+                        "description": "initialize, ping, tools/list or tools/call; \
+                                        anything else is method-not-found." },
+            "params": { "type": ["object", "array"] },
+            "result": {},
+            "error": error_object()
+        }
+    })
+}
+
+/// The reply to a request: a result, or an error the call came to.
+fn reply_schema() -> Value {
+    json!({
+        "type": "object",
+        "required": ["jsonrpc", "id"],
+        "properties": {
+            "jsonrpc": { "const": "2.0" },
+            "id": { "type": ["string", "number", "null"] },
+            "result": { "type": "object" },
+            "error": error_object()
+        }
+    })
+}
+
+/// The JSON-RPC error a malformed message gets.
+pub(super) fn error_schema() -> Value {
+    json!({
+        "type": "object",
+        "required": ["jsonrpc", "id", "error"],
+        "properties": {
+            "jsonrpc": { "const": "2.0" },
+            "id": { "type": "null" },
+            "error": error_object()
+        }
+    })
+}
+
+const PROTOCOL: Param = Param {
+    name: "mcp-protocol-version",
+    about: "The protocol version; any other is refused.",
+    kind: Kind::OneOf(&[MCP_VERSION]),
+};
+
 pub(super) fn routes() -> Vec<Route> {
     vec![
         Route::post(
@@ -72,12 +133,14 @@ pub(super) fn routes() -> Vec<Route> {
             "MCP over HTTP: one JSON-RPC 2.0 message per request, protocol 2025-06-18",
             post(post_message),
         )
-        .body(Body::Described("A JSON-RPC 2.0 message."))
+        .headers(&[PROTOCOL])
+        .body(Body::Inline(message_schema))
+        .reply(200, "The JSON-RPC reply.", Body::Inline(reply_schema))
         .reply(
-            200,
-            "The JSON-RPC reply.",
-            Body::Described("A JSON-RPC 2.0 reply."),
+            202,
+            "A notification or a client's reply: nothing to answer.",
+            Body::Empty,
         )
-        .reply(202, "A notification: nothing to answer.", Body::Empty),
+        .errors(Errors::JsonRpc),
     ]
 }

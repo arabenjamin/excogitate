@@ -1,6 +1,47 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "additionalProperties": false,
+  "allOf": [
+    {
+      "else": {
+        "properties": {
+          "inputs": false,
+          "task": {
+            "pattern": "\\S"
+          }
+        },
+        "required": [
+          "task"
+        ]
+      },
+      "if": {
+        "properties": {
+          "target": {
+            "const": "workflow"
+          }
+        },
+        "required": [
+          "target"
+        ]
+      },
+      "then": {
+        "properties": {
+          "inputs": {
+            "type": "object"
+          },
+          "routed": {
+            "const": false
+          },
+          "task": {
+            "maxLength": 0
+          }
+        },
+        "required": [
+          "inputs"
+        ]
+      }
+    }
+  ],
   "description": "What to improve.",
   "properties": {
     "agent": {

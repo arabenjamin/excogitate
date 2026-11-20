@@ -32,13 +32,24 @@ answers 503 with `Retry-After`, and doesn't queue. Once a chat or tool call
 starts, it runs to the end of its budget even if the client hangs up, so it's
 always recorded.
 
-Requests are checked against [`schemas/v1`](../schemas/v1).
+Requests are checked against [`schemas/v1`](../schemas/v1). A whole number
+sent with a point, such as `2.0`, counts as an integer, as JSON Schema says.
+
+**Every error is JSON.** The REST API, a refusal by the key check, and the
+router's own refusals (a method a path doesn't take is a 405 with `Allow`, a
+body over the limit a 413, an unknown path a 404) are
+`{"kind", "message", "problems"}`
+([schema](../schemas/v1/api_error.schema.json)). The front door's own errors
+are in OpenAI's shape, and a malformed MCP message gets a JSON-RPC error; see
+below.
 
 ## MCP
 
 `POST /mcp`, one JSON-RPC message per request, answered with JSON. It offers the
 same tools as stdio: [`chat`, `http_request`, `memory`, `job_history` and `calculate`](mcp.md). It keeps no
-session and opens no event stream, so `GET` answers 405.
+session and opens no event stream, so `GET` answers 405. A message that isn't
+one JSON-RPC 2.0 object, or a `mcp-protocol-version` header other than
+2025-06-18, is a 400 with a JSON-RPC error.
 
 ## The front door
 
@@ -56,8 +67,16 @@ models that actually answer are the ones in `models.yaml`.
   receipt. While streaming, it's an `error` event.
 
 Anything it can't honor is refused, not ignored: another `model`, `n` over 1,
-non-empty `tools`, a tool message, a `response_format` other than text, and
-content that isn't text. Other fields, such as `top_p`, are ignored.
+non-empty `tools` or `tool_calls`, a tool message, a `response_format` other
+than text, and content that isn't text. The request's schema says all of these
+but the model, which the server's own document names. Other fields, such as
+`top_p`, are ignored.
+
+Its errors are OpenAI's: `{"error": {"message", "type", "param", "code"},
+"receipt"}`, with `type` `invalid_request_error` for a request it refuses,
+`run_stopped` (a 502, with the receipt) for a run that ended without an
+answer, and `server_error` for its own failure. A request the key check or
+the router refuses first gets the REST error.
 
 ## OpenAPI
 
@@ -73,6 +92,14 @@ input and output schemas, plugins' tools included. Its server URL is the host
 it was asked on (and `X-Forwarded-Proto` if a proxy sets it). A REST client
 such as Postman or Insomnia imports it from that URL. Import it again after
 plugins change.
+
+A test calls every route, its error replies included, and checks each reply's
+status, content type and body against the server's own document.
+Schemathesis (4.32.7, `--checks all`, 50 examples an operation) finds two
+things a document can't say, and nothing else: a body over 8 MiB is refused
+with a 413 before its schema is read, and the front door's last message must
+be the user's, which no JSON Schema can state; both replies are declared. An
+MCP message is held to the very schema the document gives it.
 
 A schema's own parts (`$defs`) become components of the document, with their
 references pointed there. Two different parts with one name are told apart by

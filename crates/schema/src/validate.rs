@@ -101,13 +101,16 @@ impl Validator {
         }
     }
 
-    /// Checks `value`, then converts it to `T`.
+    /// Checks `value`, then converts it to `T`. A number with nothing after
+    /// its point, such as `2.0`, is an integer in JSON Schema, so it's read
+    /// as one.
     ///
     /// # Errors
     ///
     /// [`Refusal`] if the value fails the schema or the conversion.
-    pub fn parse<T: DeserializeOwned>(&self, value: Value) -> Result<T, Refusal> {
+    pub fn parse<T: DeserializeOwned>(&self, mut value: Value) -> Result<T, Refusal> {
         self.check(&value)?;
+        whole_numbers(&mut value);
         serde_json::from_value(value).map_err(|error| Refusal {
             problems: vec![Problem {
                 path: String::new(),
@@ -115,6 +118,32 @@ impl Validator {
             }],
             truncated: false,
         })
+    }
+}
+
+/// Within ±2^53 a float holds every whole number exactly.
+const EXACT_WHOLE: f64 = 9_007_199_254_740_992.0;
+
+/// Writes every number with nothing after its point as an integer, so a
+/// whole number sent as `2.0` reads into an integer field.
+fn whole_numbers(value: &mut Value) {
+    match value {
+        Value::Number(number) if number.is_f64() => {
+            let Some(float) = number.as_f64() else {
+                return;
+            };
+            if float.fract() != 0.0 {
+                return;
+            }
+            if float.abs() <= EXACT_WHOLE {
+                #[allow(clippy::cast_possible_truncation, reason = "whole and within ±2^53")]
+                let whole = float as i64;
+                *value = Value::from(whole);
+            }
+        }
+        Value::Array(items) => items.iter_mut().for_each(whole_numbers),
+        Value::Object(map) => map.values_mut().for_each(whole_numbers),
+        _ => {}
     }
 }
 
@@ -131,6 +160,28 @@ pub fn bounded(message: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn a_whole_number_written_with_a_point_reads_as_an_integer() {
+        #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+        #[allow(dead_code)]
+        struct Counted {
+            count: i32,
+            share: f64,
+        }
+        let validator = Validator::for_type::<Counted>().unwrap();
+        let counted: Counted = validator
+            .parse(serde_json::json!({ "count": -194.0, "share": 2.0 }))
+            .unwrap();
+        assert_eq!(counted.count, -194);
+        assert!((counted.share - 2.0).abs() < f64::EPSILON);
+        assert!(
+            validator
+                .parse::<Counted>(serde_json::json!({ "count": 1.5, "share": 1 }))
+                .is_err()
+        );
+    }
+
     use super::*;
     use serde::Deserialize;
     use serde_json::json;

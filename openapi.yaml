@@ -1014,6 +1014,48 @@ components:
       - const: good
         description: It went right. Kept, and not yet used.
         type: string
+    ModelEntry:
+      additionalProperties: false
+      description: One model call, as it really went.
+      properties:
+        cost_usd_micros:
+          description: What it cost, in millionths of a dollar.
+          minimum: 0
+          type: integer
+        detail:
+          description: What went wrong, when nothing answered.
+          maxLength: 512
+          type:
+          - string
+          - "null"
+        failed_attempts:
+          description: How many models failed before this one, or failed altogether.
+          minimum: 0
+          type: integer
+        input_tokens:
+          description: Tokens read.
+          minimum: 0
+          type: integer
+        model:
+          description: The model that answered; absent if none did.
+          maxLength: 64
+          type:
+          - string
+          - "null"
+        output_tokens:
+          description: Tokens written.
+          minimum: 0
+          type: integer
+        tokens_estimated:
+          description: True if the server didn't report usage, so these are estimates.
+          type: boolean
+      required:
+      - input_tokens
+      - output_tokens
+      - tokens_estimated
+      - cost_usd_micros
+      - failed_attempts
+      type: object
     OpenAiRequest:
       description: |-
         What an `OpenAI` client sends. Being someone else's format, fields it
@@ -1054,8 +1096,17 @@ components:
           - integer
           - "null"
         response_format:
-          description: Refused unless it asks for plain text.
-          x-extension: "only {\"type\": \"text\"} is accepted"
+          anyOf:
+          - type: "null"
+          - additionalProperties: false
+            properties:
+              type:
+                const: text
+            required:
+            - type
+            type: object
+          default: null
+          description: "Only plain text replies: `{\"type\": \"text\"}`, or left out."
         stream:
           description: Send the reply as server-sent events.
           type:
@@ -1069,8 +1120,12 @@ components:
           - number
           - "null"
         tools:
-          description: "Refused if it holds anything: this server runs its own tools."
-          x-extension: refused unless empty
+          anyOf:
+          - type: "null"
+          - maxItems: 0
+            type: array
+          default: null
+          description: "Must be empty or left out: this server runs its own tools."
       required:
       - model
       - messages
@@ -1146,6 +1201,68 @@ components:
       required:
       - path
       - message
+      type: object
+    Receipt:
+      additionalProperties: false
+      description: What a run did. It goes out with the answer.
+      properties:
+        answer_cut_off:
+          description: True if the answer was cut off at the output limit.
+          type: boolean
+        budget_hit:
+          anyOf:
+          - $ref: "#/components/schemas/BudgetKind"
+          - type: "null"
+          description: Which limit it hit, if it hit one.
+        calls_not_recorded:
+          description: Calls made after a budget ran out. Refused, and only counted here.
+          minimum: 0
+          type: integer
+        events_lost:
+          description: How many events the sink lost. The trajectory is incomplete if not 0.
+          minimum: 0
+          type: integer
+        guardrails_unmet:
+          description: |-
+            Guardrails the answer came without: required ones whose tool never
+            ran for the agent, and claimed ones whose claim the answer made
+            without the call.
+          items:
+            maxLength: 64
+            type: string
+          maxItems: 16
+          type: array
+        model_calls:
+          description: Every model call.
+          items:
+            $ref: "#/components/schemas/ModelEntry"
+          maxItems: 512
+          type: array
+        outcome:
+          $ref: "#/components/schemas/Outcome"
+          description: How it ended.
+        run:
+          description: The run.
+          maxLength: 64
+          type: string
+        tool_calls:
+          description: Every tool call, up to the budget.
+          items:
+            $ref: "#/components/schemas/ToolEntry"
+          maxItems: 512
+          type: array
+        totals:
+          $ref: "#/components/schemas/Totals"
+          description: What it used.
+      required:
+      - run
+      - outcome
+      - answer_cut_off
+      - model_calls
+      - tool_calls
+      - calls_not_recorded
+      - events_lost
+      - totals
       type: object
     RefusalKind:
       description: Why a call was refused. A closed list.
@@ -1223,6 +1340,30 @@ components:
       type: object
     Request:
       additionalProperties: false
+      allOf:
+      - else:
+          properties:
+            inputs: false
+            task:
+              pattern: \S
+          required:
+          - task
+        if:
+          properties:
+            target:
+              const: workflow
+          required:
+          - target
+        then:
+          properties:
+            inputs:
+              type: object
+            routed:
+              const: false
+            task:
+              maxLength: 0
+          required:
+          - inputs
       description: What to improve.
       properties:
         agent:
@@ -1795,6 +1936,111 @@ components:
       - at
       - step
       type: object
+    ToolEntry:
+      additionalProperties: false
+      description: One tool call, as it really went.
+      properties:
+        by_harness:
+          description: True if the harness made this call, and the model didn't ask for it.
+          type: boolean
+        capability_calls:
+          default: 0
+          description: |-
+            How many calls a plugin's tool made through its capabilities. Each
+            counts as a tool call, and each is on the trajectory.
+          minimum: 0
+          type: integer
+        cost_usd_micros:
+          description: What it spent, in millionths of a dollar.
+          minimum: 0
+          type: integer
+        detail:
+          description: What went wrong, when something did.
+          maxLength: 512
+          type:
+          - string
+          - "null"
+        duration_ms:
+          description: How long it ran.
+          minimum: 0
+          type: integer
+        effect:
+          anyOf:
+          - $ref: "#/components/schemas/Effect"
+          - type: "null"
+          description: What the tool can do, when the tool exists.
+        guardrail:
+          description: |-
+            The guardrail that refused it, if one did. Its refusal is
+            `arguments_invalid` for an argument it denies and `budget` for a call
+            past its limit.
+          maxLength: 64
+          type:
+          - string
+          - "null"
+        refusal:
+          anyOf:
+          - $ref: "#/components/schemas/RefusalKind"
+          - type: "null"
+          description: Why it was refused.
+        status:
+          $ref: "#/components/schemas/CallStatus"
+          description: What became of it.
+        tool:
+          description: The tool named. A model can invent this, so it's cut to length.
+          maxLength: 64
+          type: string
+        truncated:
+          description: Whether the result was cut to fit the channel.
+          type: boolean
+        untrusted:
+          description: Whether the result came from outside and is labelled untrusted.
+          type: boolean
+      required:
+      - tool
+      - status
+      - truncated
+      - untrusted
+      - by_harness
+      - duration_ms
+      - cost_usd_micros
+      type: object
+    Totals:
+      additionalProperties: false
+      description: What the run used.
+      properties:
+        cost_usd_micros:
+          description: Money, in millionths of a dollar.
+          minimum: 0
+          type: integer
+        duration_ms:
+          description: Wall-clock time.
+          minimum: 0
+          type: integer
+        rounds:
+          description: Model calls.
+          minimum: 0
+          type: integer
+        tokens:
+          description: Tokens read and written.
+          minimum: 0
+          type: integer
+        tool_calls:
+          description: Tool calls, including the ones refused.
+          minimum: 0
+          type: integer
+        writes:
+          description: Writes started.
+          minimum: 0
+          type: integer
+      required:
+      - rounds
+      - tool_calls
+      - writes
+      - tokens
+      - cost_usd_micros
+      - duration_ms
+      type: object
     Trajectory:
       additionalProperties: false
       description: A run's trajectory.
@@ -1886,8 +2132,12 @@ components:
           $ref: "#/components/schemas/WireRole"
           description: Who wrote it.
         tool_calls:
-          description: "Refused if it holds anything: this server runs its own tools."
-          x-extension: refused unless empty
+          anyOf:
+          - type: "null"
+          - maxItems: 0
+            type: array
+          default: null
+          description: "Must be empty or left out: this server runs its own tools."
       required:
       - role
       type: object
@@ -1922,9 +2172,6 @@ components:
       - const: assistant
         description: The model.
         type: string
-      - const: tool
-        description: "A tool's result, which this server refuses: its tools are its own."
-        type: string
   securitySchemes:
     bearer:
       description: The owner key.
@@ -1942,23 +2189,30 @@ paths:
     get:
       operationId: list_definitions
       parameters:
-      - in: path
+      - description: Which kind of definition.
+        in: path
         name: kind
         required: true
         schema:
+          enum:
+          - agent
+          - workflow
+          - schedule
           type: string
       - description: How many to return, 1 to 200. 50 if left out.
         in: query
         name: limit
         required: false
         schema:
-          minimum: 0
+          maximum: 200
+          minimum: 1
           type: integer
       - description: How many to skip first.
         in: query
         name: offset
         required: false
         schema:
+          maximum: 4294967295
           minimum: 0
           type: integer
       responses:
@@ -1985,15 +2239,23 @@ paths:
     get:
       operationId: get_definition
       parameters:
-      - in: path
+      - description: Which kind of definition.
+        in: path
         name: kind
         required: true
         schema:
+          enum:
+          - agent
+          - workflow
+          - schedule
           type: string
-      - in: path
+      - description: ""
+        in: path
         name: name
         required: true
         schema:
+          maxLength: 256
+          minLength: 1
           type: string
       responses:
         "200":
@@ -2034,13 +2296,15 @@ paths:
         name: limit
         required: false
         schema:
-          minimum: 0
+          maximum: 200
+          minimum: 1
           type: integer
       - description: How many to skip first.
         in: query
         name: offset
         required: false
         schema:
+          maximum: 4294967295
           minimum: 0
           type: integer
       responses:
@@ -2078,6 +2342,12 @@ paths:
               schema:
                 $ref: "#/components/schemas/RunStarted"
           description: The job was queued.
+        "413":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+          description: The body is over 8 MiB.
         4XX:
           content:
             application/json:
@@ -2095,10 +2365,12 @@ paths:
     get:
       operationId: get_attempt
       parameters:
-      - in: path
+      - description: Its id, a UUID.
+        in: path
         name: id
         required: true
         schema:
+          format: uuid
           type: string
       responses:
         "200":
@@ -2129,6 +2401,7 @@ paths:
         name: agent
         required: false
         schema:
+          pattern: ^[a-z0-9_-]{1,64}$
           type: string
       - description: Only changes in this state.
         in: query
@@ -2147,13 +2420,15 @@ paths:
         name: limit
         required: false
         schema:
-          minimum: 0
+          maximum: 200
+          minimum: 1
           type: integer
       - description: How many to skip first.
         in: query
         name: offset
         required: false
         schema:
+          maximum: 4294967295
           minimum: 0
           type: integer
       responses:
@@ -2180,10 +2455,12 @@ paths:
     get:
       operationId: get_change
       parameters:
-      - in: path
+      - description: Its id, a UUID.
+        in: path
         name: id
         required: true
         schema:
+          format: uuid
           type: string
       responses:
         "200":
@@ -2209,10 +2486,12 @@ paths:
     post:
       operationId: revert_change
       parameters:
-      - in: path
+      - description: Its id, a UUID.
+        in: path
         name: id
         required: true
         schema:
+          format: uuid
           type: string
       responses:
         "200":
@@ -2243,13 +2522,15 @@ paths:
         name: limit
         required: false
         schema:
-          minimum: 0
+          maximum: 200
+          minimum: 1
           type: integer
       - description: How many to skip first.
         in: query
         name: offset
         required: false
         schema:
+          maximum: 4294967295
           minimum: 0
           type: integer
       responses:
@@ -2276,10 +2557,12 @@ paths:
     delete:
       operationId: release
       parameters:
-      - in: path
+      - description: The agent, or the workflow when target is workflow.
+        in: path
         name: agent
         required: true
         schema:
+          pattern: ^[a-z0-9_-]{1,64}$
           type: string
       - description: Whether the name is an agent's or a workflow's. agent if left out.
         in: query
@@ -2309,10 +2592,12 @@ paths:
     put:
       operationId: hold
       parameters:
-      - in: path
+      - description: The agent, or the workflow when target is workflow.
+        in: path
         name: agent
         required: true
         schema:
+          pattern: ^[a-z0-9_-]{1,64}$
           type: string
       - description: Whether the name is an agent's or a workflow's. agent if left out.
         in: query
@@ -2336,6 +2621,12 @@ paths:
               schema:
                 $ref: "#/components/schemas/Hold"
           description: The hold, as kept.
+        "413":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+          description: The body is over 8 MiB.
         4XX:
           content:
             application/json:
@@ -2358,6 +2649,7 @@ paths:
         name: agent
         required: false
         schema:
+          pattern: ^[a-z0-9_-]{1,64}$
           type: string
       - description: Only lessons in this state.
         in: query
@@ -2373,13 +2665,15 @@ paths:
         name: limit
         required: false
         schema:
-          minimum: 0
+          maximum: 200
+          minimum: 1
           type: integer
       - description: How many to skip first.
         in: query
         name: offset
         required: false
         schema:
+          maximum: 4294967295
           minimum: 0
           type: integer
       responses:
@@ -2422,13 +2716,15 @@ paths:
         name: limit
         required: false
         schema:
-          minimum: 0
+          maximum: 200
+          minimum: 1
           type: integer
       - description: How many to skip first.
         in: query
         name: offset
         required: false
         schema:
+          maximum: 4294967295
           minimum: 0
           type: integer
       responses:
@@ -2455,10 +2751,12 @@ paths:
     get:
       operationId: get_job
       parameters:
-      - in: path
+      - description: Its id, a UUID.
+        in: path
         name: id
         required: true
         schema:
+          format: uuid
           type: string
       responses:
         "200":
@@ -2513,25 +2811,31 @@ paths:
         name: agent
         required: false
         schema:
+          maxLength: 128
+          minLength: 1
           type: string
       - description: Only runs under this harness id.
         in: query
         name: harness
         required: false
         schema:
+          maxLength: 128
+          minLength: 1
           type: string
       - description: How many to return, 1 to 200. 50 if left out.
         in: query
         name: limit
         required: false
         schema:
-          minimum: 0
+          maximum: 200
+          minimum: 1
           type: integer
       - description: How many to skip first.
         in: query
         name: offset
         required: false
         schema:
+          maximum: 4294967295
           minimum: 0
           type: integer
       responses:
@@ -2558,10 +2862,12 @@ paths:
     get:
       operationId: get_run
       parameters:
-      - in: path
+      - description: Its id, a UUID.
+        in: path
         name: id
         required: true
         schema:
+          format: uuid
           type: string
       responses:
         "200":
@@ -2587,10 +2893,12 @@ paths:
     put:
       operationId: put_feedback
       parameters:
-      - in: path
+      - description: Its id, a UUID.
+        in: path
         name: id
         required: true
         schema:
+          format: uuid
           type: string
       requestBody:
         content:
@@ -2605,6 +2913,12 @@ paths:
               schema:
                 $ref: "#/components/schemas/Feedback"
           description: The feedback, as kept.
+        "413":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+          description: The body is over 8 MiB.
         4XX:
           content:
             application/json:
@@ -2622,10 +2936,13 @@ paths:
     post:
       operationId: call_tool
       parameters:
-      - in: path
+      - description: ""
+        in: path
         name: name
         required: true
         schema:
+          maxLength: 256
+          minLength: 1
           type: string
       requestBody:
         content:
@@ -2642,6 +2959,12 @@ paths:
                 description: The tool's output.
                 type: object
           description: What the tool returned, or a ToolFailureView if it ran and failed.
+        "413":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+          description: The body is over 8 MiB.
         4XX:
           content:
             application/json:
@@ -2659,10 +2982,13 @@ paths:
     post:
       operationId: start_run
       parameters:
-      - in: path
+      - description: ""
+        in: path
         name: name
         required: true
         schema:
+          maxLength: 256
+          minLength: 1
           type: string
       requestBody:
         content:
@@ -2683,6 +3009,18 @@ paths:
               schema:
                 $ref: "#/components/schemas/RunStarted"
           description: The job was queued.
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+          description: The inputs don't meet the workflow's own inputs schema. The body says where.
+        "413":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+          description: The body is over 8 MiB.
         4XX:
           content:
             application/json:
@@ -2704,7 +3042,12 @@ paths:
           content:
             application/json:
               schema:
-                description: "{\"status\": \"ok\"}"
+                additionalProperties: false
+                properties:
+                  status:
+                    const: ok
+                required:
+                - status
                 type: object
           description: It's up.
         4XX:
@@ -2724,11 +3067,48 @@ paths:
   /mcp:
     post:
       operationId: mcp
+      parameters:
+      - description: The protocol version; any other is refused.
+        in: header
+        name: mcp-protocol-version
+        required: false
+        schema:
+          enum:
+          - "2025-06-18"
+          type: string
       requestBody:
         content:
           application/json:
             schema:
-              description: A JSON-RPC 2.0 message.
+              properties:
+                error:
+                  properties:
+                    code:
+                      type: integer
+                    data: {}
+                    message:
+                      type: string
+                  required:
+                  - code
+                  - message
+                  type: object
+                id:
+                  type:
+                  - string
+                  - number
+                  - "null"
+                jsonrpc:
+                  const: "2.0"
+                method:
+                  description: initialize, ping, tools/list or tools/call; anything else is method-not-found.
+                  type: string
+                params:
+                  type:
+                  - object
+                  - array
+                result: {}
+              required:
+              - jsonrpc
               type: object
         required: true
       responses:
@@ -2736,11 +3116,66 @@ paths:
           content:
             application/json:
               schema:
-                description: A JSON-RPC 2.0 reply.
+                properties:
+                  error:
+                    properties:
+                      code:
+                        type: integer
+                      data: {}
+                      message:
+                        type: string
+                    required:
+                    - code
+                    - message
+                    type: object
+                  id:
+                    type:
+                    - string
+                    - number
+                    - "null"
+                  jsonrpc:
+                    const: "2.0"
+                  result:
+                    type: object
+                required:
+                - jsonrpc
+                - id
                 type: object
           description: The JSON-RPC reply.
         "202":
-          description: "A notification: nothing to answer."
+          description: "A notification or a client's reply: nothing to answer."
+        "400":
+          content:
+            application/json:
+              schema:
+                properties:
+                  error:
+                    properties:
+                      code:
+                        type: integer
+                      data: {}
+                      message:
+                        type: string
+                    required:
+                    - code
+                    - message
+                    type: object
+                  id:
+                    type: "null"
+                  jsonrpc:
+                    const: "2.0"
+                required:
+                - jsonrpc
+                - id
+                - error
+                type: object
+          description: Not a JSON-RPC 2.0 message, or a protocol version it doesn't speak.
+        "413":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+          description: The body is over 8 MiB.
         4XX:
           content:
             application/json:
@@ -2760,7 +3195,11 @@ paths:
       operationId: metrics
       responses:
         "200":
-          description: The metrics.
+          content:
+            application/openmetrics-text:
+              schema:
+                type: string
+          description: The metrics, in the OpenMetrics text format.
         4XX:
           content:
             application/json:
@@ -2788,24 +3227,225 @@ paths:
           content:
             application/json:
               schema:
-                description: An OpenAI chat.completion.
+                properties:
+                  choices:
+                    items:
+                      properties:
+                        finish_reason:
+                          enum:
+                          - stop
+                          - length
+                          type: string
+                        index:
+                          const: 0
+                        message:
+                          properties:
+                            content:
+                              type: string
+                            role:
+                              const: assistant
+                          required:
+                          - role
+                          - content
+                          type: object
+                      required:
+                      - index
+                      - message
+                      - finish_reason
+                      type: object
+                    maxItems: 1
+                    minItems: 1
+                    type: array
+                  created:
+                    type: integer
+                  id:
+                    type: string
+                  model:
+                    type: string
+                  object:
+                    const: chat.completion
+                  receipt:
+                    $ref: "#/components/schemas/Receipt"
+                  usage:
+                    properties:
+                      completion_tokens:
+                        minimum: 0
+                        type: integer
+                      prompt_tokens:
+                        minimum: 0
+                        type: integer
+                      total_tokens:
+                        minimum: 0
+                        type: integer
+                    required:
+                    - prompt_tokens
+                    - completion_tokens
+                    - total_tokens
+                    type: object
+                required:
+                - id
+                - object
+                - created
+                - model
+                - choices
+                - usage
+                - receipt
                 type: object
-          description: >-
-            An OpenAI chat.completion, or with stream set, a text/event-stream of
-            chat.completion.chunk events. Both carry the run's receipt.
+            text/event-stream:
+              schema:
+                type: string
+          description: "A chat.completion with the run's receipt; or, with stream set, server-sent events: a chat.completion.chunk with the answer, one with the finish reason, usage and receipt, then [DONE]."
+        "400":
+          content:
+            application/json:
+              schema:
+                properties:
+                  error:
+                    properties:
+                      code:
+                        type: "null"
+                      message:
+                        type: string
+                      param:
+                        type: "null"
+                      type:
+                        enum:
+                        - invalid_request_error
+                        - server_error
+                        - run_stopped
+                        type: string
+                    required:
+                    - message
+                    - type
+                    - param
+                    - code
+                    type: object
+                  receipt:
+                    anyOf:
+                    - type: "null"
+                    - $ref: "#/components/schemas/Receipt"
+                required:
+                - error
+                - receipt
+                type: object
+          description: The request can't be a chat here. The body says why.
+        "413":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+          description: The body is over 8 MiB.
+        "415":
+          content:
+            application/json:
+              schema:
+                properties:
+                  error:
+                    properties:
+                      code:
+                        type: "null"
+                      message:
+                        type: string
+                      param:
+                        type: "null"
+                      type:
+                        enum:
+                        - invalid_request_error
+                        - server_error
+                        - run_stopped
+                        type: string
+                    required:
+                    - message
+                    - type
+                    - param
+                    - code
+                    type: object
+                  receipt:
+                    anyOf:
+                    - type: "null"
+                    - $ref: "#/components/schemas/Receipt"
+                required:
+                - error
+                - receipt
+                type: object
+          description: The body isn't JSON.
         4XX:
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/ApiError"
-          description: "Refused: the request, the key, or what it names. The body says why."
+          description: "Refused before the front door: the key, the size or the method."
+        "502":
+          content:
+            application/json:
+              schema:
+                properties:
+                  error:
+                    properties:
+                      code:
+                        type: "null"
+                      message:
+                        type: string
+                      param:
+                        type: "null"
+                      type:
+                        enum:
+                        - invalid_request_error
+                        - server_error
+                        - run_stopped
+                        type: string
+                    required:
+                    - message
+                    - type
+                    - param
+                    - code
+                    type: object
+                  receipt:
+                    anyOf:
+                    - type: "null"
+                    - $ref: "#/components/schemas/Receipt"
+                required:
+                - error
+                - receipt
+                type: object
+          description: The run stopped without an answer. The body has its receipt.
         5XX:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/ApiError"
+                properties:
+                  error:
+                    properties:
+                      code:
+                        type: "null"
+                      message:
+                        type: string
+                      param:
+                        type: "null"
+                      type:
+                        enum:
+                        - invalid_request_error
+                        - server_error
+                        - run_stopped
+                        type: string
+                    required:
+                    - message
+                    - type
+                    - param
+                    - code
+                    type: object
+                  receipt:
+                    anyOf:
+                    - type: "null"
+                    - $ref: "#/components/schemas/Receipt"
+                required:
+                - error
+                - receipt
+                type: object
           description: The server failed, or is busy. The body says which.
-      summary: Chat, as the OpenAI chat completions API
+      summary: >-
+        Chat, as the OpenAI chat completions API. The last message must be the user's,
+        and say something.
   /v1/models:
     get:
       operationId: list_models
@@ -2814,7 +3454,32 @@ paths:
           content:
             application/json:
               schema:
-                description: An OpenAI model list.
+                properties:
+                  data:
+                    items:
+                      properties:
+                        created:
+                          type: integer
+                        id:
+                          type: string
+                        object:
+                          const: model
+                        owned_by:
+                          type: string
+                      required:
+                      - id
+                      - object
+                      - created
+                      - owned_by
+                      type: object
+                    maxItems: 1
+                    minItems: 1
+                    type: array
+                  object:
+                    const: list
+                required:
+                - object
+                - data
                 type: object
           description: An OpenAI model list.
         4XX:

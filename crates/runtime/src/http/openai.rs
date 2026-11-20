@@ -22,7 +22,7 @@ use serde_json::{Value, json};
 
 use schema::schema_of;
 
-use super::spec::{Body, Route};
+use super::spec::{Body, Errors, Route};
 use super::{ApiError, App, json_body};
 use crate::mcp::ChatInput;
 
@@ -42,8 +42,6 @@ pub enum WireRole {
     User,
     /// The model.
     Assistant,
-    /// A tool's result, which this server refuses: its tools are its own.
-    Tool,
 }
 
 /// One part of a message's content.
@@ -87,8 +85,9 @@ pub struct WireMessage {
     pub role: WireRole,
     /// What it says.
     pub content: Option<WireContent>,
-    /// Refused if it holds anything: this server runs its own tools.
-    #[schemars(extend("x-extension" = "refused unless empty"))]
+    /// Must be empty or left out: this server runs its own tools.
+    #[serde(default)]
+    #[schemars(schema_with = "nothing_listed")]
     pub tool_calls: Option<Value>,
 }
 
@@ -118,12 +117,119 @@ pub struct OpenAiRequest {
     /// How many replies. Only 1.
     #[schemars(range(min = 1, max = 1))]
     pub n: Option<u32>,
-    /// Refused if it holds anything: this server runs its own tools.
-    #[schemars(extend("x-extension" = "refused unless empty"))]
+    /// Must be empty or left out: this server runs its own tools.
+    #[serde(default)]
+    #[schemars(schema_with = "nothing_listed")]
     pub tools: Option<Value>,
-    /// Refused unless it asks for plain text.
-    #[schemars(extend("x-extension" = "only {\"type\": \"text\"} is accepted"))]
+    /// Only plain text replies: `{"type": "text"}`, or left out.
+    #[serde(default)]
+    #[schemars(schema_with = "plain_text")]
     pub response_format: Option<Value>,
+}
+
+/// A list that must be empty, or null.
+fn nothing_listed(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
+    schemars::json_schema!({
+        "anyOf": [{ "type": "null" }, { "type": "array", "maxItems": 0 }]
+    })
+}
+
+/// A reply format that must be plain text, or null.
+fn plain_text(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
+    schemars::json_schema!({
+        "anyOf": [
+            { "type": "null" },
+            {
+                "type": "object",
+                "properties": { "type": { "const": "text" } },
+                "required": ["type"],
+                "additionalProperties": false
+            }
+        ]
+    })
+}
+
+/// An `OpenAI` error, as this front door sends one.
+pub(super) fn error_schema() -> Value {
+    json!({
+        "type": "object",
+        "required": ["error", "receipt"],
+        "properties": {
+            "error": {
+                "type": "object",
+                "required": ["message", "type", "param", "code"],
+                "properties": {
+                    "message": { "type": "string" },
+                    "type": { "type": "string",
+                              "enum": ["invalid_request_error", "server_error", "run_stopped"] },
+                    "param": { "type": "null" },
+                    "code": { "type": "null" }
+                }
+            },
+            "receipt": { "anyOf": [{ "type": "null" }, { "$ref": "#/components/schemas/Receipt" }] }
+        }
+    })
+}
+
+/// The model list.
+fn models_schema() -> Value {
+    json!({
+        "type": "object",
+        "required": ["object", "data"],
+        "properties": {
+            "object": { "const": "list" },
+            "data": { "type": "array", "minItems": 1, "maxItems": 1, "items": {
+                "type": "object",
+                "required": ["id", "object", "created", "owned_by"],
+                "properties": {
+                    "id": { "type": "string" },
+                    "object": { "const": "model" },
+                    "created": { "type": "integer" },
+                    "owned_by": { "type": "string" }
+                }
+            } }
+        }
+    })
+}
+
+/// A whole `chat.completion`.
+fn completion_schema() -> Value {
+    json!({
+        "type": "object",
+        "required": ["id", "object", "created", "model", "choices", "usage", "receipt"],
+        "properties": {
+            "id": { "type": "string" },
+            "object": { "const": "chat.completion" },
+            "created": { "type": "integer" },
+            "model": { "type": "string" },
+            "choices": { "type": "array", "minItems": 1, "maxItems": 1, "items": {
+                "type": "object",
+                "required": ["index", "message", "finish_reason"],
+                "properties": {
+                    "index": { "const": 0 },
+                    "message": {
+                        "type": "object",
+                        "required": ["role", "content"],
+                        "properties": {
+                            "role": { "const": "assistant" },
+                            "content": { "type": "string" }
+                        }
+                    },
+                    "finish_reason": { "type": "string", "enum": ["stop", "length"] }
+                }
+            } },
+            "usage": {
+                "type": "object",
+                "required": ["prompt_tokens", "completion_tokens", "total_tokens"],
+                "properties": {
+                    "prompt_tokens": { "type": "integer", "minimum": 0 },
+                    "completion_tokens": { "type": "integer", "minimum": 0 },
+                    "total_tokens": { "type": "integer", "minimum": 0 }
+                }
+            },
+            "receipt": { "$ref": "#/components/schemas/Receipt" }
+        }
+    })
 }
 
 fn invalid(message: &str) -> Response {
@@ -152,7 +258,12 @@ fn error_body(kind: &str, message: &str, receipt: Option<&Receipt>) -> Value {
 }
 
 fn from_api(error: &ApiError) -> Response {
-    wire_error(error.status(), "server_error", error.message(), None)
+    let kind = if error.status().is_client_error() {
+        "invalid_request_error"
+    } else {
+        "server_error"
+    };
+    wire_error(error.status(), kind, error.message(), None)
 }
 
 fn holds_something(field: Option<&Value>) -> bool {
@@ -196,11 +307,6 @@ fn chat_input(
         let text = turn.content.map(WireContent::text).unwrap_or_default();
         match turn.role {
             WireRole::System | WireRole::Developer => extra.push(text),
-            WireRole::Tool => {
-                return Err(
-                    "this server runs its own tools, so a message can't be a tool's".to_owned(),
-                );
-            }
             WireRole::Assistant => history.push(Message::assistant(text)),
             WireRole::User if turns.peek().is_none() => question = Some(text),
             WireRole::User => history.push(Message::user(text)),
@@ -399,24 +505,24 @@ pub(super) fn routes() -> Vec<Route> {
             "The one model the OpenAI-compatible front door offers",
             get(list_models),
         )
-        .reply(
-            200,
-            "An OpenAI model list.",
-            Body::Described("An OpenAI model list."),
-        ),
+        .reply(200, "An OpenAI model list.", Body::Inline(models_schema)),
         Route::post(
             "chat_completions",
             "/v1/chat/completions",
-            "Chat, as the OpenAI chat completions API",
+            "Chat, as the OpenAI chat completions API. The last message must be \
+             the user's, and say something.",
             post(chat_completions),
         )
         .body(Body::Typed(schema_of::<OpenAiRequest>))
         .reply(
             200,
-            "An OpenAI chat.completion, or with stream set, a text/event-stream of \
-             chat.completion.chunk events. Both carry the run's receipt.",
-            Body::Described("An OpenAI chat.completion."),
-        ),
+            "A chat.completion with the run's receipt; or, with stream set, \
+             server-sent events: a chat.completion.chunk with the answer, one \
+             with the finish reason, usage and receipt, then [DONE].",
+            Body::Inline(completion_schema),
+        )
+        .reply(200, "", Body::Text("text/event-stream"))
+        .errors(Errors::OpenAi),
     ]
 }
 
@@ -489,10 +595,16 @@ mod tests {
             { "role": "user", "content": "a" }, { "role": "assistant", "content": "b" }
         ] });
         assert!(refused(&last_is_model).contains("last message"));
-        let tool_turn = json!({ "messages": [
+        // A tool's message never gets this far: the schema has no tool role.
+        let tool_turn = json!({ "model": MODEL_ID, "messages": [
             { "role": "tool", "content": "a" }, { "role": "user", "content": "b" }
         ] });
-        assert!(refused(&tool_turn).contains("tool"));
+        let validator = schema::Validator::for_type::<OpenAiRequest>().unwrap();
+        let problems = validator.check(&tool_turn).unwrap_err();
+        assert!(
+            problems.to_string().contains("/messages/0/role"),
+            "{problems}"
+        );
         let tool_calls = json!({ "messages": [
             { "role": "assistant", "content": null, "tool_calls": [{ "id": "x" }] },
             { "role": "user", "content": "b" }
@@ -511,11 +623,11 @@ mod tests {
     proptest! {
         #[test]
         fn any_conversation_is_turned_into_a_chat_or_refused(
-            roles in proptest::collection::vec(0..5_u8, 1..12),
+            roles in proptest::collection::vec(0..4_u8, 1..12),
             text in ".{0,40}",
         ) {
             let messages: Vec<Value> = roles.iter().map(|role| {
-                let name = ["system", "developer", "user", "assistant", "tool"]
+                let name = ["system", "developer", "user", "assistant"]
                     .get(usize::from(*role)).copied().unwrap_or("user");
                 json!({ "role": name, "content": text })
             }).collect();

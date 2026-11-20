@@ -17,7 +17,7 @@ use uuid::Uuid;
 use super::rest::{DEFAULT_LIMIT, MAX_LIMIT, Params, RunStarted, number, only};
 use schema::schema_of;
 
-use super::spec::{Body, LIMIT, OFFSET, Param, Route};
+use super::spec::{Body, ID, Kind, LIMIT, OFFSET, Param, Route};
 use super::{ApiError, App, json_body};
 use crate::harness::{ChangeError, HARNESS_KIND};
 
@@ -59,10 +59,20 @@ async fn start(
     body: Bytes,
 ) -> Result<Response, ApiError> {
     let raw = json_body(&headers, &body)?;
-    let request: Request = app
-        .improve_request
-        .parse(raw)
-        .map_err(|refusal| ApiError::refused(&refusal))?;
+    let request: Request = match app.improve_request.parse(raw.clone()) {
+        Ok(request) => request,
+        Err(refusal) => {
+            // The schema states the rules `check` does; when one of them is
+            // what's broken, its sentence says it better than a pointer.
+            let mut refused = ApiError::refused(&refusal);
+            if let Ok(request) = serde_json::from_value::<Request>(raw)
+                && let Err(why) = request.check()
+            {
+                refused.message = schema::bounded(&why);
+            }
+            return Err(refused);
+        }
+    };
     request.check().map_err(|why| ApiError::invalid(&why))?;
     let engine = &app.runtime.workflows;
     let known = match request.target {
@@ -400,14 +410,17 @@ async fn release(
 const AGENT: Param = Param {
     name: "agent",
     about: "Only this agent's.",
-    values: &[],
-    number: false,
+    kind: Kind::Name,
+};
+const AGENT_PATH: Param = Param {
+    name: "agent",
+    about: "The agent, or the workflow when target is workflow.",
+    kind: Kind::Name,
 };
 const TARGET: Param = Param {
     name: "target",
     about: "Whether the name is an agent's or a workflow's. agent if left out.",
-    values: &["agent", "workflow"],
-    number: false,
+    kind: Kind::OneOf(&["agent", "workflow"]),
 };
 
 pub(super) fn routes() -> Vec<Route> {
@@ -434,8 +447,7 @@ pub(super) fn routes() -> Vec<Route> {
             Param {
                 name: "status",
                 about: "Only attempts that ended this way.",
-                values: &["kept", "supported", "failed"],
-                number: false,
+                kind: Kind::OneOf(&["kept", "supported", "failed"]),
             },
             LIMIT,
             OFFSET,
@@ -451,6 +463,7 @@ pub(super) fn routes() -> Vec<Route> {
             "One attempt",
             get(get_one),
         )
+        .path(&[ID])
         .reply(200, "The attempt.", Body::Typed(schema_of::<AttemptView>)),
     ];
     routes.extend(change_routes());
@@ -470,8 +483,7 @@ fn change_routes() -> Vec<Route> {
             Param {
                 name: "status",
                 about: "Only changes in this state.",
-                values: &["pending", "abandoned", "live", "reverted", "replaced"],
-                number: false,
+                kind: Kind::OneOf(&["pending", "abandoned", "live", "reverted", "replaced"]),
             },
             LIMIT,
             OFFSET,
@@ -487,6 +499,7 @@ fn change_routes() -> Vec<Route> {
             "One change",
             get(get_change),
         )
+        .path(&[ID])
         .reply(200, "The change.", Body::Typed(schema_of::<ChangeView>)),
         Route::post(
             "revert_change",
@@ -494,6 +507,7 @@ fn change_routes() -> Vec<Route> {
             "Revert a change",
             post(revert),
         )
+        .path(&[ID])
         .reply(
             200,
             "The change, reverted.",
@@ -510,8 +524,7 @@ fn change_routes() -> Vec<Route> {
             Param {
                 name: "status",
                 about: "Only lessons in this state.",
-                values: &["active", "retired"],
-                number: false,
+                kind: Kind::OneOf(&["active", "retired"]),
             },
             LIMIT,
             OFFSET,
@@ -535,6 +548,7 @@ fn change_routes() -> Vec<Route> {
             "Have Harness² leave an agent or workflow alone",
             put(hold),
         )
+        .path(&[AGENT_PATH])
         .query(&[TARGET])
         .body(Body::Typed(schema_of::<HoldRequest>))
         .reply(200, "The hold, as kept.", Body::Typed(schema_of::<Hold>)),
@@ -544,6 +558,7 @@ fn change_routes() -> Vec<Route> {
             "Release a hold",
             delete(release),
         )
+        .path(&[AGENT_PATH])
         .query(&[TARGET])
         .reply(204, "Released.", Body::Empty),
     ]

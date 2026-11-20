@@ -36,38 +36,86 @@ impl Method {
     }
 }
 
-/// A query parameter.
+/// What a parameter holds.
+#[derive(Debug, Clone, Copy)]
+pub(super) enum Kind {
+    /// Any text up to this many characters.
+    Text(u32),
+    /// A UUID.
+    Uuid,
+    /// An agent's or a workflow's name: 1 to 64 of a-z, 0-9, _ and -.
+    Name,
+    /// One of these.
+    OneOf(&'static [&'static str]),
+    /// A whole number in this range.
+    Count(u32, u32),
+}
+
+impl Kind {
+    fn schema(self) -> Value {
+        match self {
+            Self::Text(most) => json!({ "type": "string", "minLength": 1, "maxLength": most }),
+            Self::Uuid => json!({ "type": "string", "format": "uuid" }),
+            Self::Name => json!({ "type": "string", "pattern": NAME_PATTERN }),
+            Self::OneOf(values) => json!({ "type": "string", "enum": values }),
+            Self::Count(least, most) => {
+                json!({ "type": "integer", "minimum": least, "maximum": most })
+            }
+        }
+    }
+}
+
+/// What an agent's or a workflow's name may be.
+pub(super) const NAME_PATTERN: &str = "^[a-z0-9_-]{1,64}$";
+
+/// A parameter in the path, the query or a header.
 #[derive(Debug, Clone, Copy)]
 pub(super) struct Param {
     pub(super) name: &'static str,
     pub(super) about: &'static str,
-    /// The values it takes, if it's one of a few.
-    pub(super) values: &'static [&'static str],
-    pub(super) number: bool,
+    pub(super) kind: Kind,
 }
 
 /// The page size, which every list takes.
 pub(super) const LIMIT: Param = Param {
     name: "limit",
     about: "How many to return, 1 to 200. 50 if left out.",
-    values: &[],
-    number: true,
+    kind: Kind::Count(1, 200),
 };
 /// Where the page starts, which every list takes.
 pub(super) const OFFSET: Param = Param {
     name: "offset",
     about: "How many to skip first.",
-    values: &[],
-    number: true,
+    kind: Kind::Count(0, u32::MAX),
+};
+/// A path's `{id}`.
+pub(super) const ID: Param = Param {
+    name: "id",
+    about: "Its id, a UUID.",
+    kind: Kind::Uuid,
 };
 
-/// A body: none, one with a schema of its own, or one the document only
-/// describes.
+/// A body: none, one with a schema of its own, one with a schema written
+/// here, text of a media type, or one the document only describes.
 #[derive(Debug, Clone, Copy)]
 pub(super) enum Body {
     Empty,
     Typed(fn() -> Value),
+    Inline(fn() -> Value),
+    Text(&'static str),
     Described(&'static str),
+}
+
+/// What shape a route's error replies take.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum Errors {
+    /// The REST error, `ApiError`.
+    Api,
+    /// `OpenAI`'s error, from the handler; the key and the router's own
+    /// refusals are still `ApiError`s.
+    OpenAi,
+    /// A JSON-RPC error for a 400; everything else is an `ApiError`.
+    JsonRpc,
 }
 
 /// One reply a route can make.
@@ -95,9 +143,12 @@ pub(super) struct Route {
     pub(super) method: Method,
     pub(super) path: &'static str,
     summary: &'static str,
+    path_params: &'static [Param],
     query: &'static [Param],
+    headers: &'static [Param],
     request: Body,
     replies: Vec<Reply>,
+    errors: Errors,
     pub(super) access: Access,
     pub(super) handler: MethodRouter<App>,
 }
@@ -115,9 +166,12 @@ impl Route {
             method,
             path,
             summary,
+            path_params: &[],
             query: &[],
+            headers: &[],
             request: Body::Empty,
             replies: Vec::new(),
+            errors: Errors::Api,
             access: Access::Keyed,
             handler,
         }
@@ -159,6 +213,22 @@ impl Route {
         Self::new(Method::Delete, id, path, summary, handler)
     }
 
+    /// What its path's parameters hold. One left out is any text.
+    pub(super) const fn path(mut self, params: &'static [Param]) -> Self {
+        self.path_params = params;
+        self
+    }
+
+    pub(super) const fn headers(mut self, headers: &'static [Param]) -> Self {
+        self.headers = headers;
+        self
+    }
+
+    pub(super) const fn errors(mut self, errors: Errors) -> Self {
+        self.errors = errors;
+        self
+    }
+
     pub(super) const fn query(mut self, query: &'static [Param]) -> Self {
         self.query = query;
         self
@@ -184,11 +254,24 @@ impl Route {
     }
 
     /// The names in braces in its path.
-    fn path_params(&self) -> impl Iterator<Item = &'static str> {
+    fn path_names(&self) -> impl Iterator<Item = &'static str> {
         self.path.split('/').filter_map(|part| {
             part.strip_prefix('{')
                 .and_then(|part| part.strip_suffix('}'))
         })
+    }
+
+    /// Each of its path's parameters, as declared or as any text.
+    fn path_param(&self, name: &'static str) -> Param {
+        self.path_params
+            .iter()
+            .find(|param| param.name == name)
+            .copied()
+            .unwrap_or(Param {
+                name,
+                about: "",
+                kind: Kind::Text(256),
+            })
     }
 }
 
@@ -200,6 +283,8 @@ pub(crate) struct About<'a> {
     pub(crate) server: &'a str,
     /// The license, as an SPDX expression, if it has one.
     pub(crate) license: Option<&'a str>,
+    /// The one model the front door takes, if it's known.
+    pub(crate) model: Option<&'a str>,
 }
 
 /// The document for `routes`, and for each of `tools` (a `tools/list`
@@ -216,6 +301,8 @@ pub(super) fn document(
     let mut components = Components::default();
     let mut paths: BTreeMap<String, Map<String, Value>> = BTreeMap::new();
     let error = components.add("ApiError", schema::schema_of::<super::ApiError>())?;
+    // Written-out replies refer to the receipt by name.
+    components.add("Receipt", schema::schema_of::<dispatch::Receipt>())?;
     for route in routes {
         if tools.is_some() && route.id == super::tools::CALL_TOOL {
             continue;
@@ -239,6 +326,15 @@ pub(super) fn document(
                 .or_default()
                 .insert("post".to_owned(), Value::Object(operation));
         }
+    }
+    if let Some(model) = about.model
+        && let Some(property) = components
+            .schemas
+            .get_mut("OpenAiRequest")
+            .and_then(|request| request.pointer_mut("/properties/model"))
+    {
+        *property = json!({ "type": "string", "enum": [model],
+                            "description": "The one model /v1/models lists." });
     }
     let mut info = json!({ "title": about.title, "version": about.version });
     if let (Some(license), Some(object)) = (about.license, info.as_object_mut()) {
@@ -365,6 +461,10 @@ impl Components {
                     .to_owned();
                 Some(json!({ "application/json": { "schema": self.add(&name, schema)? } }))
             }
+            Body::Inline(schema_of) => {
+                Some(json!({ "application/json": { "schema": schema_of() } }))
+            }
+            Body::Text(media) => Some(json!({ media: { "schema": { "type": "string" } } })),
             Body::Described(about) => Some(json!({
                 "application/json": { "schema": { "type": "object", "description": about } }
             })),
@@ -372,29 +472,26 @@ impl Components {
     }
 
     fn operation(&mut self, route: &Route, error: &Value) -> Result<Map<String, Value>, String> {
+        let described = |param: Param, place: &str, required: bool| {
+            json!({ "name": param.name, "in": place, "required": required,
+                    "description": param.about, "schema": param.kind.schema() })
+        };
         let mut parameters: Vec<Value> = route
-            .path_params()
-            .map(|name| {
-                json!({ "name": name, "in": "path", "required": true,
-                        "schema": { "type": "string" } })
-            })
+            .path_names()
+            .map(|name| described(route.path_param(name), "path", true))
             .collect();
-        for param in route.query {
-            let mut schema = if param.number {
-                json!({ "type": "integer", "minimum": 0 })
-            } else {
-                json!({ "type": "string" })
-            };
-            if !param.values.is_empty()
-                && let Some(object) = schema.as_object_mut()
-            {
-                object.insert("enum".to_owned(), json!(param.values));
-            }
-            parameters.push(
-                json!({ "name": param.name, "in": "query", "required": false,
-                                    "description": param.about, "schema": schema }),
-            );
-        }
+        parameters.extend(
+            route
+                .query
+                .iter()
+                .map(|param| described(*param, "query", false)),
+        );
+        parameters.extend(
+            route
+                .headers
+                .iter()
+                .map(|param| described(*param, "header", false)),
+        );
         let mut operation = Map::new();
         operation.insert("operationId".to_owned(), json!(route.id));
         operation.insert("summary".to_owned(), json!(route.summary));
@@ -409,15 +506,22 @@ impl Components {
         }
         let mut responses = Map::new();
         for reply in &route.replies {
-            let mut response = json!({ "description": reply.about });
-            if let Some(content) = self.content(reply.body, &format!("{}_reply", route.id))?
-                && let Some(object) = response.as_object_mut()
-            {
-                object.insert("content".to_owned(), content);
+            let content = self.content(reply.body, &format!("{}_reply", route.id))?;
+            let response = responses
+                .entry(reply.status.to_string())
+                .or_insert_with(|| json!({ "description": reply.about }));
+            // A second reply with the same status is another media type.
+            if let (Some(Value::Object(more)), Some(object)) = (content, response.as_object_mut()) {
+                let all = object
+                    .entry("content")
+                    .or_insert_with(|| Value::Object(Map::new()));
+                if let Some(all) = all.as_object_mut() {
+                    all.extend(more);
+                }
             }
-            responses.insert(reply.status.to_string(), response);
         }
-        errors(&mut responses, error);
+        let takes_body = !matches!(route.request, Body::Empty);
+        errors(&mut responses, error, route.errors, takes_body);
         operation.insert("responses".to_owned(), Value::Object(responses));
         match route.access {
             Access::Open => {
@@ -488,26 +592,68 @@ impl Components {
             .get_mut("responses")
             .and_then(Value::as_object_mut)
         {
-            errors(responses, error);
+            errors(responses, error, Errors::Api, true);
         }
         Ok((format!("/api/v1/tools/{name}"), operation))
     }
 }
 
-/// The error replies every operation can make.
-fn errors(responses: &mut Map<String, Value>, error: &Value) {
-    for (status, about) in [
-        (
-            "4XX",
-            "Refused: the request, the key, or what it names. The body says why.",
-        ),
-        ("5XX", "The server failed, or is busy. The body says which."),
-    ] {
+/// The error replies an operation can make, in the shape its route uses.
+fn errors(responses: &mut Map<String, Value>, error: &Value, shape: Errors, takes_body: bool) {
+    let reply = |about: &str, schema: Value| {
+        json!({ "description": about,
+                "content": { "application/json": { "schema": schema } } })
+    };
+    if takes_body {
+        // No schema can say how big a whole body may be, so the document
+        // says it here.
         responses.insert(
-            status.to_owned(),
-            json!({ "description": about,
-                    "content": { "application/json": { "schema": error } } }),
+            "413".to_owned(),
+            reply("The body is over 8 MiB.", error.clone()),
         );
+    }
+    let refused = "Refused: the request, the key, or what it names. The body says why.";
+    let failed = "The server failed, or is busy. The body says which.";
+    match shape {
+        Errors::Api => {
+            responses.insert("4XX".to_owned(), reply(refused, error.clone()));
+            responses.insert("5XX".to_owned(), reply(failed, error.clone()));
+        }
+        Errors::OpenAi => {
+            let wire = super::openai::error_schema();
+            for (status, about) in [
+                (
+                    "400",
+                    "The request can't be a chat here. The body says why.",
+                ),
+                ("415", "The body isn't JSON."),
+                (
+                    "502",
+                    "The run stopped without an answer. The body has its receipt.",
+                ),
+            ] {
+                responses.insert(status.to_owned(), reply(about, wire.clone()));
+            }
+            responses.insert(
+                "4XX".to_owned(),
+                reply(
+                    "Refused before the front door: the key, the size or the method.",
+                    error.clone(),
+                ),
+            );
+            responses.insert("5XX".to_owned(), reply(failed, wire));
+        }
+        Errors::JsonRpc => {
+            responses.insert(
+                "400".to_owned(),
+                reply(
+                    "Not a JSON-RPC 2.0 message, or a protocol version it doesn't speak.",
+                    super::mcp::error_schema(),
+                ),
+            );
+            responses.insert("4XX".to_owned(), reply(refused, error.clone()));
+            responses.insert("5XX".to_owned(), reply(failed, error.clone()));
+        }
     }
 }
 
@@ -575,6 +721,7 @@ mod tests {
         version: "1",
         server: "/",
         license: None,
+        model: None,
     };
 
     #[test]
@@ -587,7 +734,7 @@ mod tests {
             assert!(ids.insert(route.id), "{} is used twice", route.id);
             let operation = &document["paths"][route.path][route.method.name()];
             assert_eq!(operation["operationId"], route.id, "{}", route.path);
-            for name in route.path_params() {
+            for name in route.path_names() {
                 let declared = operation["parameters"]
                     .as_array()
                     .unwrap()

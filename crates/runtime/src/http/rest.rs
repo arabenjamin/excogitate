@@ -20,7 +20,7 @@ use workflow::WorkflowError;
 
 use schema::schema_of;
 
-use super::spec::{Body, LIMIT, OFFSET, Param, Route};
+use super::spec::{Body, ID, Kind, LIMIT, OFFSET, Param, Route};
 use super::{ApiError, App, json_body};
 use crate::jobs::workflow_job;
 
@@ -367,8 +367,12 @@ async fn start_run(
 const JOB_STATUS: Param = Param {
     name: "status",
     about: "Only jobs in this state.",
-    values: &["queued", "claimed", "succeeded", "dead"],
-    number: false,
+    kind: Kind::OneOf(&["queued", "claimed", "succeeded", "dead"]),
+};
+const KIND: Param = Param {
+    name: "kind",
+    about: "Which kind of definition.",
+    kind: Kind::OneOf(&["agent", "workflow", "schedule"]),
 };
 
 pub(super) fn routes() -> Vec<Route> {
@@ -381,17 +385,16 @@ pub(super) fn routes() -> Vec<Route> {
         )
         .query(&[JOB_STATUS, LIMIT, OFFSET])
         .reply(200, "A page of jobs.", Body::Typed(schema_of::<JobList>)),
-        Route::get("get_job", "/api/v1/jobs/{id}", "One job", get(get_job)).reply(
-            200,
-            "The job.",
-            Body::Typed(schema_of::<JobView>),
-        ),
+        Route::get("get_job", "/api/v1/jobs/{id}", "One job", get(get_job))
+            .path(&[ID])
+            .reply(200, "The job.", Body::Typed(schema_of::<JobView>)),
         Route::get(
             "list_definitions",
             "/api/v1/definitions/{kind}",
             "The definitions of one kind: agent, workflow or schedule",
             get(list_definitions),
         )
+        .path(&[KIND])
         .query(&[LIMIT, OFFSET])
         .reply(
             200,
@@ -404,6 +407,7 @@ pub(super) fn routes() -> Vec<Route> {
             "One definition",
             get(get_definition),
         )
+        .path(&[KIND])
         .reply(
             200,
             "The definition.",
@@ -414,6 +418,11 @@ pub(super) fn routes() -> Vec<Route> {
             "/api/v1/workflows/{name}/runs",
             "Start a workflow run, as a job",
             post(start_run),
+        )
+        .reply(
+            400,
+            "The inputs don't meet the workflow's own inputs schema. The body says where.",
+            Body::Typed(schema_of::<ApiError>),
         )
         .body(Body::Typed(schema_of::<RunRequest>))
         .reply(

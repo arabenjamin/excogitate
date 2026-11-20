@@ -2036,3 +2036,296 @@ async fn metrics_count_a_chat_and_need_the_key_unless_opened() {
         "the rest stays keyed"
     );
 }
+
+// The document matches what the server does.
+
+/// Checks one reply against the document: its status is listed, its
+/// content type is one the document gives, and a JSON body meets the schema
+/// given for it.
+async fn conforms(document: &Value, method: &str, path: &str, response: Response) -> u16 {
+    let status = response.status().as_u16();
+    let media = response
+        .headers()
+        .get("content-type")
+        .map(|value| value.to_str().unwrap().to_owned())
+        .unwrap_or_default();
+    let body = response.text().await.unwrap();
+    let operation = &document["paths"][path][method];
+    assert!(
+        operation.is_object(),
+        "{method} {path} isn't in the document"
+    );
+    let responses = &operation["responses"];
+    let range = format!("{}XX", status / 100);
+    let declared = responses
+        .get(status.to_string())
+        .or_else(|| responses.get(&range))
+        .unwrap_or_else(|| panic!("{method} {path}: {status} isn't declared: {body}"));
+    let Some(content) = declared.get("content").and_then(Value::as_object) else {
+        assert!(
+            body.is_empty(),
+            "{method} {path}: {status} declares no body: {body}"
+        );
+        return status;
+    };
+    let base = media.split(';').next().unwrap_or("").trim();
+    let schema = content
+        .get(base)
+        .unwrap_or_else(|| panic!("{method} {path}: {status} isn't declared as {media}"))
+        .get("schema")
+        .unwrap();
+    if base == "application/json" {
+        let value: Value = serde_json::from_str(&body).unwrap();
+        let whole = json!({ "allOf": [schema], "components": document["components"] });
+        let validator = Validator::from_schema(&whole).unwrap();
+        if let Err(refusal) = validator.check(&value) {
+            panic!(
+                "{method} {path}: the {status} body doesn't meet the document: {refusal}\n{body}"
+            );
+        }
+    }
+    status
+}
+
+/// The replies checked so far, against one document.
+struct Contract<'a> {
+    running: &'a Running,
+    document: Value,
+    seen: Vec<(String, String, u16)>,
+}
+
+impl Contract<'_> {
+    async fn check(&mut self, method: &str, path: &str, response: Response) {
+        let status = conforms(&self.document, method, path, response).await;
+        self.seen.push((method.to_owned(), path.to_owned(), status));
+    }
+
+    fn url(&self, path: &str) -> String {
+        format!("{}{path}", self.running.url)
+    }
+
+    fn raw(&self, method: reqwest::Method, path: &str) -> reqwest::RequestBuilder {
+        self.running
+            .client
+            .request(method, self.url(path))
+            .bearer_auth(KEY)
+    }
+
+    async fn put(&self, path: &str, body: &Value) -> Response {
+        self.raw(reqwest::Method::PUT, path)
+            .header("content-type", "application/json")
+            .body(body.to_string())
+            .send()
+            .await
+            .unwrap()
+    }
+}
+
+/// `/health`, `/metrics`, the document itself, the front door and MCP.
+async fn the_server_and_its_front_doors(contract: &mut Contract<'_>) {
+    let running = contract.running;
+    let health = running
+        .client
+        .get(contract.url("/health"))
+        .send()
+        .await
+        .unwrap();
+    contract.check("get", "/health", health).await;
+    contract
+        .check("get", "/metrics", running.get("/metrics").await)
+        .await;
+    let document = running.get("/api/v1/openapi.json").await;
+    contract
+        .check("get", "/api/v1/openapi.json", document)
+        .await;
+    contract
+        .check("get", "/v1/models", running.get("/v1/models").await)
+        .await;
+    let ask = json!({ "model": "test", "messages": [{ "role": "user", "content": "hi" }] });
+    let chat = "/v1/chat/completions";
+    contract
+        .check("post", chat, running.post(chat, &ask).await)
+        .await;
+    let mut streamed = ask.clone();
+    streamed["stream"] = json!(true);
+    contract
+        .check("post", chat, running.post(chat, &streamed).await)
+        .await;
+    let other = json!({ "model": "other", "messages": [{ "role": "user", "content": "hi" }] });
+    contract
+        .check("post", chat, running.post(chat, &other).await)
+        .await;
+    let not_json = contract
+        .raw(reqwest::Method::POST, chat)
+        .body("hi")
+        .send()
+        .await
+        .unwrap();
+    contract.check("post", chat, not_json).await;
+    let listed = running
+        .post("/mcp", &rpc(1, "tools/list", &json!({})))
+        .await;
+    contract.check("post", "/mcp", listed).await;
+    let note = json!({ "jsonrpc": "2.0", "method": "notifications/initialized" });
+    contract
+        .check("post", "/mcp", running.post("/mcp", &note).await)
+        .await;
+    contract
+        .check("post", "/mcp", running.post("/mcp", &json!([1])).await)
+        .await;
+    for malformed in [
+        json!({ "jsonrpc": "2.0", "id": 1, "method": "ping", "params": "x" }),
+        json!({ "jsonrpc": "2.0", "id": 1, "method": {} }),
+        json!({ "jsonrpc": "2.0", "id": [1], "method": "ping" }),
+    ] {
+        let refused = running.post("/mcp", &malformed).await;
+        assert_eq!(refused.status(), StatusCode::BAD_REQUEST, "{malformed}");
+        contract.check("post", "/mcp", refused).await;
+    }
+    let tool = "/api/v1/tools/calculate";
+    for arguments in [
+        json!({ "expression": "6*7" }),
+        json!({ "expression": "1/0" }),
+        json!({ "wrong": 1 }),
+    ] {
+        contract
+            .check("post", tool, running.post(tool, &arguments).await)
+            .await;
+    }
+}
+
+/// Jobs, runs, definitions and Harness², with what they're about to hold.
+async fn the_rest_api(contract: &mut Contract<'_>) {
+    let running = contract.running;
+    let started = running.post("/api/v1/workflows/flow/runs", &inputs()).await;
+    let job = body_of(started).await["job_id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    contract
+        .check("get", "/api/v1/jobs", running.get("/api/v1/jobs").await)
+        .await;
+    let one = "/api/v1/jobs/{id}";
+    contract
+        .check(
+            "get",
+            one,
+            running.get(&format!("/api/v1/jobs/{job}")).await,
+        )
+        .await;
+    let missing = "/api/v1/jobs/00000000-0000-4000-8000-000000000000";
+    contract.check("get", one, running.get(missing).await).await;
+    contract
+        .check("get", one, running.get("/api/v1/jobs/not-a-uuid").await)
+        .await;
+    contract
+        .check(
+            "get",
+            "/api/v1/jobs",
+            running.get("/api/v1/jobs?limit=0").await,
+        )
+        .await;
+    let runs = body_of(running.get("/api/v1/runs").await).await;
+    contract
+        .check("get", "/api/v1/runs", running.get("/api/v1/runs").await)
+        .await;
+    let run = runs["items"][0]["run"].as_str().unwrap().to_owned();
+    let trajectory = running.get(&format!("/api/v1/runs/{run}")).await;
+    contract.check("get", "/api/v1/runs/{id}", trajectory).await;
+    let mark = json!({ "mark": "bad", "note": "wrong" });
+    let marked = contract
+        .put(&format!("/api/v1/runs/{run}/feedback"), &mark)
+        .await;
+    contract
+        .check("put", "/api/v1/runs/{id}/feedback", marked)
+        .await;
+    let agents = running.get("/api/v1/definitions/agent").await;
+    contract
+        .check("get", "/api/v1/definitions/{kind}", agents)
+        .await;
+    let helper = running.get("/api/v1/definitions/agent/helper").await;
+    contract
+        .check("get", "/api/v1/definitions/{kind}/{name}", helper)
+        .await;
+    for path in [
+        "/api/v1/harness/attempts",
+        "/api/v1/harness/changes",
+        "/api/v1/harness/lessons",
+        "/api/v1/harness/holds",
+    ] {
+        contract.check("get", path, running.get(path).await).await;
+    }
+    let holds = "/api/v1/harness/holds/{agent}";
+    let held = contract
+        .put(
+            "/api/v1/harness/holds/helper",
+            &json!({ "reason": "testing" }),
+        )
+        .await;
+    contract.check("put", holds, held).await;
+    let released = contract
+        .raw(reqwest::Method::DELETE, "/api/v1/harness/holds/helper")
+        .send()
+        .await
+        .unwrap();
+    contract.check("delete", holds, released).await;
+}
+
+/// The router's own refusals: no key, a method it doesn't take, too big.
+async fn the_routers_refusals(contract: &mut Contract<'_>) {
+    let running = contract.running;
+    let unkeyed = running
+        .client
+        .get(contract.url("/api/v1/jobs"))
+        .send()
+        .await
+        .unwrap();
+    contract.check("get", "/api/v1/jobs", unkeyed).await;
+    let wrong_method = contract
+        .raw(reqwest::Method::PATCH, "/v1/models")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(wrong_method.status(), StatusCode::METHOD_NOT_ALLOWED);
+    assert!(wrong_method.headers().contains_key("allow"));
+    contract.check("get", "/v1/models", wrong_method).await;
+    let huge = "x".repeat(9 * 1024 * 1024);
+    let too_big = contract
+        .raw(reqwest::Method::POST, "/api/v1/tools/calculate")
+        .header("content-type", "application/json")
+        .body(format!("{{\"expression\": \"{huge}\"}}"))
+        .send()
+        .await
+        .unwrap();
+    contract
+        .check("post", "/api/v1/tools/calculate", too_big)
+        .await;
+}
+
+#[tokio::test]
+async fn every_reply_matches_the_document() {
+    let script = vec![
+        ChaosStep::Text("Hello.".to_owned()),
+        ChaosStep::Text("Hello again.".to_owned()),
+    ];
+    let running = with_workflow("contract", script).await;
+    let document = body_of(running.get("/api/v1/openapi.json").await).await;
+    let mut contract = Contract {
+        running: &running,
+        document,
+        seen: Vec::new(),
+    };
+    the_server_and_its_front_doors(&mut contract).await;
+    the_rest_api(&mut contract).await;
+    the_routers_refusals(&mut contract).await;
+    // Every kind of reply was really made, not only declared.
+    let statuses: std::collections::BTreeSet<u16> =
+        contract.seen.iter().map(|(_, _, status)| *status).collect();
+    for status in [200, 202, 204, 400, 401, 404, 405, 413, 415] {
+        assert!(
+            statuses.contains(&status),
+            "no {status} was checked: {:?}",
+            contract.seen
+        );
+    }
+}

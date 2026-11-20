@@ -196,6 +196,8 @@ pub(super) struct App {
     improve_request: Arc<Validator>,
     hold_request: Arc<Validator>,
     feedback_request: Arc<Validator>,
+    /// What an MCP message is held to: the schema the document gives.
+    mcp_message: Arc<Validator>,
 }
 
 impl App {
@@ -290,6 +292,60 @@ async fn guard(State(app): State<App>, request: Request, next: Next) -> Response
     next.run(request).await
 }
 
+/// What `/health` says.
+fn health_schema() -> Value {
+    serde_json::json!({
+        "type": "object",
+        "required": ["status"],
+        "properties": { "status": { "const": "ok" } },
+        "additionalProperties": false
+    })
+}
+
+/// The longest refusal text kept from the router's own replies.
+const MAX_ROUTER_TEXT: usize = 2048;
+
+/// Rewrites any error reply that isn't JSON, such as the router's own
+/// refusal of a method or of a body that's too large, as an [`ApiError`],
+/// so every error a client sees has the one documented shape.
+async fn json_errors(request: Request, next: Next) -> Response {
+    let response = next.run(request).await;
+    let status = response.status();
+    let is_json = response
+        .headers()
+        .get(CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .is_some_and(|value| value.starts_with("application/json"));
+    if !(status.is_client_error() || status.is_server_error()) || is_json {
+        return response;
+    }
+    let (parts, body) = response.into_parts();
+    let text = axum::body::to_bytes(body, MAX_ROUTER_TEXT)
+        .await
+        .map(|bytes| String::from_utf8_lossy(&bytes).trim().to_owned())
+        .unwrap_or_default();
+    let kind = match status {
+        StatusCode::NOT_FOUND => "not_found",
+        StatusCode::METHOD_NOT_ALLOWED => "method_not_allowed",
+        StatusCode::PAYLOAD_TOO_LARGE => "too_large",
+        status if status.is_client_error() => "invalid_request",
+        _ => "internal",
+    };
+    let message = if text.is_empty() {
+        status.canonical_reason().unwrap_or("refused").to_owned()
+    } else {
+        text
+    };
+    let mut rewritten = ApiError::new(status, kind, &message).into_response();
+    // Keep what the router said beside it, such as which methods it allows.
+    for (name, value) in &parts.headers {
+        if name != CONTENT_TYPE && name != axum::http::header::CONTENT_LENGTH {
+            rewritten.headers_mut().insert(name.clone(), value.clone());
+        }
+    }
+    rewritten
+}
+
 async fn health() -> Json<Value> {
     Json(serde_json::json!({ "status": "ok" }))
 }
@@ -349,6 +405,7 @@ impl Runtime {
                 version,
                 server: "/",
                 license: None,
+                model: Some(product),
             },
         )
         .map_err(HttpError::Schema)?;
@@ -368,6 +425,10 @@ impl Runtime {
             improve_request: validator::<::harness::Request>()?,
             hold_request: validator::<harness::HoldRequest>()?,
             feedback_request: validator::<::harness::FeedbackRequest>()?,
+            mcp_message: Arc::new(
+                Validator::from_schema(&mcp::message_schema())
+                    .map_err(|error| HttpError::Schema(error.to_string()))?,
+            ),
         };
         let (mut open, mut guarded) = (Router::new(), Router::new());
         for route in routes {
@@ -389,6 +450,8 @@ impl Runtime {
             .merge(open)
             .merge(guarded)
             .layer(DefaultBodyLimit::max(MAX_BODY_BYTES))
+            // Inside the limit, so its refusal is rewritten too.
+            .layer(middleware::from_fn(json_errors))
             .layer(middleware::from_fn_with_state(app.clone(), timing))
             .with_state(app))
     }
@@ -399,11 +462,7 @@ fn all_routes() -> Vec<spec::Route> {
     let mut routes = vec![
         spec::Route::get("health", "/health", "Whether the server is up", get(health))
             .access(spec::Access::Open)
-            .reply(
-                200,
-                "It's up.",
-                spec::Body::Described("{\"status\": \"ok\"}"),
-            ),
+            .reply(200, "It's up.", spec::Body::Inline(health_schema)),
         spec::Route::get(
             "metrics",
             "/metrics",
@@ -411,7 +470,11 @@ fn all_routes() -> Vec<spec::Route> {
             get(metrics_page),
         )
         .access(spec::Access::Metrics)
-        .reply(200, "The metrics.", spec::Body::Empty),
+        .reply(
+            200,
+            "The metrics, in the OpenMetrics text format.",
+            spec::Body::Text("application/openmetrics-text"),
+        ),
     ];
     routes.extend(mcp::routes());
     routes.extend(openai::routes());
@@ -437,6 +500,7 @@ pub fn openapi_document() -> Result<Value, String> {
             version: "1",
             server: "http://127.0.0.1:8080",
             license: Some(env!("CARGO_PKG_LICENSE")),
+            model: None,
         },
     )
 }
