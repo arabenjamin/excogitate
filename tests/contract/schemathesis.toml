@@ -37,3 +37,8 @@ checks.positive_data_acceptance.expected-statuses = [
   "429",
   "5xx",
 ]
+# The contract server's model sits on a network with no way out, by design,
+# so a chat the front door takes ends without an answer: a 502 of type
+# run_stopped, with its receipt, as the document says. Any other server
+# error there still fails the check.
+checks.not_a_server_error.expected-statuses = ["2xx", "3xx", "4xx", "502"]

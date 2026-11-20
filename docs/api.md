@@ -165,9 +165,12 @@ against the document. The done-test runs it with the same requests every time
 the change's. A weekly workflow runs it with new requests and opens an issue
 with the seed that repeats them (`CONTRACT_RANDOM=1 CONTRACT_SEED=<seed>`).
 [`tests/contract/schemathesis.toml`](../tests/contract/schemathesis.toml)
-holds the only two things it's told beyond the document, each with why: a body
-over 8 MiB is refused with a 413 before its schema is read, and the front
-door's last message must be the user's, which no JSON Schema can state.
+holds the only three things it's told beyond the document, each with why: a
+body over 8 MiB is refused with a 413 before its schema is read, the front
+door's last message must be the user's, which no JSON Schema can state, and
+the front door's documented 502 (a run that stopped) is what a chat comes to
+on a test server whose model can't be reached. The image is built on every
+run, so a change to that file takes effect at once.
 
 A schema's own parts (`$defs`) become components of the document, with their
 references pointed there. Two different parts with one name are told apart by

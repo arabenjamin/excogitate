@@ -18,7 +18,9 @@ compose() {
 # needn't point anywhere real.
 export DONE_DEFINITIONS=${DONE_DEFINITIONS:-$(mktemp -d)}
 trap 'compose down --volumes --remove-orphans >/dev/null 2>&1 || true' EXIT
-docker image inspect excogitate-contract:local >/dev/null 2>&1 || compose build contract
+# Built every time: its config is copied in, so an image from before a change
+# to tests/contract would check against the old rules. The layers are cached.
+compose build --quiet contract
 mode=$([[ ${CONTRACT_RANDOM:-} == 1 ]] && echo "new requests${CONTRACT_SEED:+, seed $CONTRACT_SEED}" || echo "the fixed requests")
 echo "contract: $mode, ${CONTRACT_EXAMPLES:-25} examples an operation"
 compose run --rm contract
