@@ -28,6 +28,9 @@ jobs:
         env:
           # As scripts/done_test.sh builds it: the Neo4j store compiled in.
           FEATURES: app/neo4j
+          # The compose file requires it for the mounts; building doesn't
+          # read it, and the script sets its own when it runs.
+          DONE_DEFINITIONS: /tmp
         with:
           files: |
             compose.yaml

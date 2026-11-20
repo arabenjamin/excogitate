@@ -43,4 +43,11 @@ ignore = [
   { id = "RUSTSEC-2024-0384", reason = "instant, through backoff and neo4rs" },
   { id = "RUSTSEC-2024-0436", reason = "paste, through neo4rs" },
   { id = "RUSTSEC-2025-0134", reason = "rustls-pemfile, through neo4rs" },
+  # chrono and chrono-tz: unmaintained, not vulnerable, and every version is
+  # affected, so there's nothing to upgrade to. The core uses both (chrono-tz
+  # for schedules' time zones), and so do DuckDB's arrow and neo4rs. Moving
+  # the core to jiff is its own piece of work.
+  { id = "RUSTSEC-2026-0543", reason = "chrono, used by the core, arrow and neo4rs" },
+  { id = "RUSTSEC-2026-0555", reason = "chrono-tz, used by work and neo4rs" },
+  { id = "RUSTSEC-2026-0559", reason = "chrono-tz-build, chrono-tz's build step" },
 ]
