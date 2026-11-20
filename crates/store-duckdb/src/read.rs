@@ -65,9 +65,15 @@ fn hit_at(row: &Row<'_>) -> duckdb::Result<ChunkHit> {
     })
 }
 
-const fn public_only(classes: ClassFilter) -> bool {
-    matches!(classes, ClassFilter::PublicOnly)
+/// The reader a filter reads as, as stored, or NULL to read everything.
+pub(crate) fn reader_of(classes: ClassFilter) -> Option<String> {
+    classes.reader().map(|reader| reader.to_string())
 }
+
+/// What a filter's reader adds for a note aliased `n`: its two parameters
+/// are [`reader_of`], twice.
+pub(crate) const READER_SHOWS: &str =
+    "(?::VARCHAR IS NULL OR n.private_to IS NULL OR n.private_to = ?)";
 
 pub(crate) fn search_text(
     connection: &Connection,
@@ -79,13 +85,14 @@ pub(crate) fn search_text(
         "SELECT {CHUNK_COLUMNS}, {PROVENANCE}, c.score::FLOAT FROM
            (SELECT *, fts_main_chunks.match_bm25(id, ?) AS score FROM chunks) c
          JOIN notes n ON n.id = c.note_id
-         WHERE c.score IS NOT NULL AND (NOT ? OR n.data_class = 'public')
+         WHERE c.score IS NOT NULL AND (NOT ? OR n.data_class = 'public') AND {READER_SHOWS}
          ORDER BY c.score DESC, c.id"
     );
+    let reader = reader_of(classes);
     paged(
         connection,
         &sql,
-        params![query, public_only(classes)],
+        params![query, classes.public_only(), reader, reader],
         page,
         hit_at,
     )
@@ -106,13 +113,14 @@ pub(crate) fn search_vector(
                FROM chunk_vectors)) s
          JOIN chunks c ON c.id = s.chunk_id
          JOIN notes n ON n.id = c.note_id
-         WHERE NOT ? OR n.data_class = 'public'
+         WHERE (NOT ? OR n.data_class = 'public') AND {READER_SHOWS}
          ORDER BY s.score DESC, c.id"
     );
+    let reader = reader_of(classes);
     paged(
         connection,
         &sql,
-        params![vector, public_only(classes)],
+        params![vector, classes.public_only(), reader, reader],
         page,
         hit_at,
     )

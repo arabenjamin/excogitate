@@ -72,6 +72,9 @@ it.
 - **A private job is still listed,** since that it ran isn't private, but
   for anyone else its `payload`, `result` and `last_error` are null, and
   `private` is true. `job_history` never shows a private job's error.
+- **What a private run stores is private too.** A note it keeps is found
+  only by whoever asked for it and the owner, in every `memory` read and
+  every count (see [private notes](memory.md#private-notes)).
 - **Harness² never repeats its words.** A private run counts as evidence,
   by how it failed and the owner's mark, but its question is never an
   attempt's task or a replay, no judge is shown it, and the daily review

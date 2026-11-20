@@ -129,6 +129,11 @@ pub(crate) fn prepare(
     } else {
         check_existing(connection, dimension)?;
     }
+    // Added in place, so a file from before private notes opens as is: a
+    // NULL is a note no one keeps to themselves.
+    connection
+        .execute_batch("ALTER TABLE notes ADD COLUMN IF NOT EXISTS private_to VARCHAR;")
+        .map_err(|error| OpenError::Database(error.to_string()))?;
     connection
         .execute_batch(SPEND_TABLE)
         .map_err(|error| OpenError::Database(error.to_string()))

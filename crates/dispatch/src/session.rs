@@ -1027,6 +1027,15 @@ impl Session {
         )
         .with_time_left_ms(u64::try_from(self.time_left().as_millis()).unwrap_or(u64::MAX))
         .with_probing(self.config.probe.is_some())
+        .with_reader(
+            protocol::Reader::for_requester(self.config.subject.requested_by.as_deref()),
+            self.config
+                .subject
+                .requested_by
+                .as_deref()
+                .filter(|_| self.config.subject.private)
+                .map(protocol::Reader::of),
+        )
     }
 
     /// How a tool call that was waited for went.

@@ -3,7 +3,7 @@
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use neo4rs::query;
-use protocol::DataClass;
+use protocol::{DataClass, Reader};
 use store::{
     Chunk, ChunkHit, ClassFilter, Definition, DefinitionKey, DefinitionKind, DefinitionReader,
     Note, NoteId, NoteReader, NotesStored, Page, PageRequest, StoreError, StoredWindow, Task,
@@ -34,11 +34,20 @@ const OVERSAMPLE: u64 = 10;
 /// exact one.
 const INDEX_ROUNDING: f64 = 1e-5;
 
-/// The condition a search's class filter adds, for a note bound to `n`.
-const fn class_condition(classes: ClassFilter) -> &'static str {
-    match classes {
-        ClassFilter::Any => "true",
-        ClassFilter::PublicOnly => "n.data_class = 'public'",
+/// The condition a search's class filter adds, for a note bound to `n`. A
+/// reader is a UUID, so it's written in as one: hex digits and dashes only.
+fn class_condition(classes: ClassFilter) -> String {
+    let class = if classes.public_only() {
+        "n.data_class = 'public'"
+    } else {
+        "true"
+    };
+    match classes.reader() {
+        Some(reader) => format!(
+            "({class} AND (n.private_to IS NULL OR n.private_to = '{}'))",
+            reader.as_uuid().hyphenated()
+        ),
+        None => class.to_owned(),
     }
 }
 
@@ -76,16 +85,24 @@ impl NoteReader for Neo4jStore {
         &self,
         hash: &str,
         class: DataClass,
+        private_to: Option<Reader>,
     ) -> Result<Option<Note>, StoreError> {
         let rows = self
             .rows(
                 query(&format!(
                     "MATCH (n:Note {{content_hash: $hash, data_class: $class}}) \
+                     WHERE coalesce(n.private_to, '') = $private_to \
                      RETURN {} ORDER BY n.id LIMIT 1",
                     codec::note_columns()
                 ))
                 .param("hash", hash)
-                .param("class", data_class_name(class)),
+                .param("class", data_class_name(class))
+                .param(
+                    "private_to",
+                    private_to
+                        .map(|reader| reader.to_string())
+                        .unwrap_or_default(),
+                ),
             )
             .await?;
         rows.first().map(codec::note).transpose()

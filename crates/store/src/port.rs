@@ -3,7 +3,7 @@
 
 use async_trait::async_trait;
 use chrono::{DateTime, NaiveDate, Utc};
-use protocol::DataClass;
+use protocol::{DataClass, Reader};
 use serde_json::Value;
 
 use crate::{
@@ -28,7 +28,9 @@ pub trait NoteReader {
 
     /// The note of this privacy class with this content hash, if one
     /// exists; the lowest id when there are several. A note of the other
-    /// class never matches, so a lookup can't reveal that one exists.
+    /// class never matches, so a lookup can't reveal that one exists, and nor
+    /// does a note private to someone else, or private when `private_to` is
+    /// None.
     ///
     /// # Errors
     ///
@@ -37,6 +39,7 @@ pub trait NoteReader {
         &self,
         hash: &str,
         class: DataClass,
+        private_to: Option<Reader>,
     ) -> Result<Option<Note>, StoreError>;
 
     /// A note's chunks, in order.

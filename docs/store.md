@@ -31,7 +31,11 @@ and the published schemas are what's held stable.
    `RecordReader`, `SpendLog` and `Store`.
 2. Hold a `RecordCatalog` and call it to check records and filters, so what
    "valid" means is the same on every store.
-3. Pass the conformance suite, by adding this to the store's tests:
+3. Honour a `ClassFilter` in every note read: its class, and its reader,
+   which leaves out notes private to anyone else (`ClassFilter::shows` says
+   what's admitted). `find_note_by_hash` matches a note's class and its
+   `private_to` exactly.
+4. Pass the conformance suite, by adding this to the store's tests:
 
    ```rust
    store_conformance::store_conformance!(MyStore::new(store_conformance::DIMENSION));

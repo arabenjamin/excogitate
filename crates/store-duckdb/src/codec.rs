@@ -102,7 +102,7 @@ fn provenance_at(row: &Row<'_>, first: usize) -> duckdb::Result<Provenance> {
 
 /// The columns [`note_at`] reads.
 pub(crate) const NOTE_COLUMNS: &str = "id, title, body, tags, source_url, content_hash, \
-     data_class, trust, stored_by, stored_at, version, updated_at";
+     data_class, trust, stored_by, stored_at, version, updated_at, private_to";
 
 pub(crate) fn note_at(row: &Row<'_>) -> duckdb::Result<Note> {
     let tags: String = row.get(3)?;
@@ -116,6 +116,14 @@ pub(crate) fn note_at(row: &Row<'_>) -> duckdb::Result<Note> {
         provenance: provenance_at(row, 6)?,
         version: number_at(row, 10)?,
         updated_at: row.get(11)?,
+        private_to: row
+            .get::<_, Option<String>>(12)?
+            .map(|id| {
+                uuid::Uuid::parse_str(&id)
+                    .map(protocol::Reader::from_uuid)
+                    .map_err(|error| bad_column(12, error.to_string()))
+            })
+            .transpose()?,
     })
 }
 

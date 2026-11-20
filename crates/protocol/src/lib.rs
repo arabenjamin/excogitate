@@ -48,6 +48,52 @@ impl fmt::Display for Actor {
     }
 }
 
+/// Who a run reads and stores as, for private notes: the same id for the
+/// same actor, so a store compares ids and never needs the name. A run with
+/// no reader sees everything, as the owner's and a schedule's do.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct Reader(uuid::Uuid);
+
+impl Reader {
+    /// The reader for `actor`.
+    #[must_use]
+    pub fn of(actor: &str) -> Self {
+        let seed = format!("reader|{actor}");
+        Self(uuid::Uuid::new_v5(
+            &uuid::Uuid::NAMESPACE_OID,
+            seed.as_bytes(),
+        ))
+    }
+
+    /// Who a run asked for by `requested_by` reads as: only a person
+    /// (`person:<id>`) reads as themselves. The owner, a schedule and the
+    /// runtime read everything, so they have no reader.
+    #[must_use]
+    pub fn for_requester(requested_by: Option<&str>) -> Option<Self> {
+        requested_by
+            .filter(|actor| actor.starts_with("person:"))
+            .map(Self::of)
+    }
+
+    /// A reader from a stored id.
+    #[must_use]
+    pub const fn from_uuid(id: uuid::Uuid) -> Self {
+        Self(id)
+    }
+
+    /// The id, as it's stored.
+    #[must_use]
+    pub const fn as_uuid(&self) -> uuid::Uuid {
+        self.0
+    }
+}
+
+impl fmt::Display for Reader {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.0.fmt(f)
+    }
+}
+
 /// One agent run.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct RunId(uuid::Uuid);

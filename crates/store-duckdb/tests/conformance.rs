@@ -74,6 +74,7 @@ fn note_unit(text: &str) -> (store::Note, UnitOfWork) {
         },
         version: 1,
         updated_at: Utc::now(),
+        private_to: None,
     };
     let chunk = store::Chunk {
         id: store::ChunkId::generate(),
@@ -110,12 +111,12 @@ async fn notes_and_search_survive_a_reopen() {
         Some(note.body)
     );
     let hits = store
-        .search_text("durableword", ClassFilter::Any, page())
+        .search_text("durableword", ClassFilter::ANY, page())
         .await
         .unwrap();
     assert_eq!(hits.items.len(), 1);
     let vectors = store
-        .search_vector(&[1.0, 0.0, 0.0], ClassFilter::Any, page())
+        .search_vector(&[1.0, 0.0, 0.0], ClassFilter::ANY, page())
         .await
         .unwrap();
     assert_eq!(vectors.items.len(), 1);
@@ -124,7 +125,7 @@ async fn notes_and_search_survive_a_reopen() {
     let (_, later) = note_unit("laterword");
     store.apply(later).await.unwrap();
     let hits = store
-        .search_text("laterword", ClassFilter::Any, page())
+        .search_text("laterword", ClassFilter::ANY, page())
         .await
         .unwrap();
     assert_eq!(hits.items.len(), 1);
@@ -145,7 +146,7 @@ async fn a_dropped_store_has_let_go_of_its_file() {
     }
     let store = DuckDbStore::open(&config(Some(directory.file()), 3)).unwrap();
     let hits = store
-        .search_text("round", ClassFilter::Any, page())
+        .search_text("round", ClassFilter::ANY, page())
         .await
         .unwrap();
     assert_eq!(hits.items.len(), 10);
@@ -200,13 +201,13 @@ async fn committed_writes_survive_a_crash() {
     let store = DuckDbStore::open(&config(Some(directory.file()), 3)).unwrap();
     for word in ["crashone", "crashtwo"] {
         let hits = store
-            .search_text(word, ClassFilter::Any, page())
+            .search_text(word, ClassFilter::ANY, page())
             .await
             .unwrap();
         assert_eq!(hits.items.len(), 1, "{word}");
     }
     let vectors = store
-        .search_vector(&[1.0, 0.0, 0.0], ClassFilter::Any, page())
+        .search_vector(&[1.0, 0.0, 0.0], ClassFilter::ANY, page())
         .await
         .unwrap();
     assert_eq!(vectors.items.len(), 2);
@@ -216,7 +217,7 @@ async fn committed_writes_survive_a_crash() {
     // Search still follows new writes after the log was replayed.
     store.apply(note_unit("aftercrash").1).await.unwrap();
     let hits = store
-        .search_text("aftercrash", ClassFilter::Any, page())
+        .search_text("aftercrash", ClassFilter::ANY, page())
         .await
         .unwrap();
     assert_eq!(hits.items.len(), 1);
@@ -277,7 +278,7 @@ async fn concurrent_reads_and_writes_all_land() {
             let (note, unit) = note_unit(&format!("shared word{n}"));
             store.apply(unit).await.unwrap();
             store
-                .search_text("shared", ClassFilter::Any, page())
+                .search_text("shared", ClassFilter::ANY, page())
                 .await
                 .unwrap();
             assert!(store.get_note(note.id).await.unwrap().is_some());
@@ -289,7 +290,7 @@ async fn concurrent_reads_and_writes_all_land() {
     let hits = store
         .search_text(
             "shared",
-            ClassFilter::Any,
+            ClassFilter::ANY,
             PageRequest::new(100, 0).unwrap(),
         )
         .await

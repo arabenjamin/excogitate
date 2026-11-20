@@ -113,7 +113,7 @@ async fn too_many_words_are_refused_by_name() {
     let words: Vec<String> = (0..1025).map(|n| format!("w{n}")).collect();
     let page = PageRequest::new(5, 0).unwrap();
     let error = store
-        .search_text(&words.join(" "), ClassFilter::Any, page)
+        .search_text(&words.join(" "), ClassFilter::ANY, page)
         .await
         .unwrap_err();
     assert!(error.to_string().contains("1024"), "{error}");
@@ -121,7 +121,7 @@ async fn too_many_words_are_refused_by_name() {
     let repeated = vec!["otter"; 2000].join(" ");
     assert!(
         store
-            .search_text(&repeated, ClassFilter::Any, page)
+            .search_text(&repeated, ClassFilter::ANY, page)
             .await
             .is_ok()
     );
@@ -180,6 +180,7 @@ fn one_note(n: u32, class: protocol::DataClass, embedding: Vec<f32>) -> Vec<stor
         },
         version: 1,
         updated_at: chrono::Utc::now(),
+        private_to: None,
     };
     let chunk = Chunk {
         id: ChunkId::generate(),
@@ -239,10 +240,10 @@ async fn the_vector_index_answers_as_the_scan_would() {
     };
     let mut answered = 0;
     for (query, classes, limit, offset) in [
-        ([1.0, 0.0, 0.0], ClassFilter::Any, 10, 0),
-        ([0.0, 1.0, 0.2], ClassFilter::PublicOnly, 10, 0),
-        ([0.3, -0.5, 0.8], ClassFilter::Any, 5, 20),
-        ([-1.0, -1.0, -1.0], ClassFilter::PublicOnly, 20, 10),
+        ([1.0, 0.0, 0.0], ClassFilter::ANY, 10, 0),
+        ([0.0, 1.0, 0.2], ClassFilter::PUBLIC_ONLY, 10, 0),
+        ([0.3, -0.5, 0.8], ClassFilter::ANY, 5, 20),
+        ([-1.0, -1.0, -1.0], ClassFilter::PUBLIC_ONLY, 20, 10),
     ] {
         let values: Vec<f64> = query.into_iter().collect();
         let page = PageRequest::new(limit, offset).unwrap();
@@ -265,7 +266,7 @@ async fn the_vector_index_answers_as_the_scan_would() {
     // A page deeper than the index is asked for is scanned.
     let deep = PageRequest::new(50, 1990).unwrap();
     let found = store
-        .search_vector_index(&[1.0, 0.0, 0.0], ClassFilter::Any, deep)
+        .search_vector_index(&[1.0, 0.0, 0.0], ClassFilter::ANY, deep)
         .await
         .unwrap();
     assert!(found.is_none());
@@ -341,13 +342,13 @@ async fn vector_search_at_size() {
             let query_vector: Vec<f64> = vector().into_iter().map(f64::from).collect();
             let begun = std::time::Instant::now();
             let scanned = store
-                .search_vector_scan(&query_vector, false, ClassFilter::Any, page)
+                .search_vector_scan(&query_vector, false, ClassFilter::ANY, page)
                 .await
                 .unwrap();
             scan_ms += begun.elapsed().as_millis();
             let begun = std::time::Instant::now();
             let indexed = store
-                .search_vector_index(&query_vector, ClassFilter::Any, page)
+                .search_vector_index(&query_vector, ClassFilter::ANY, page)
                 .await
                 .unwrap();
             index_ms += begun.elapsed().as_millis();

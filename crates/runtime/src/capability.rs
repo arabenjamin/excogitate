@@ -247,6 +247,7 @@ impl MemoryCapability for PluginMemory {
             // What a plugin brings in may be anything, so it's never trusted.
             trust: Trust::Untrusted,
             stored_by: self.stored_by.clone(),
+            private_to: context.private_to,
         };
         let new = NewNote {
             title,
@@ -523,7 +524,7 @@ mod tests {
             .memory
             .search(
                 "otters",
-                ClassFilter::PublicOnly,
+                ClassFilter::PUBLIC_ONLY,
                 memory::EmbedScope {
                     data_class: DataClass::Public,
                     budget_usd_micros: None,

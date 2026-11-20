@@ -99,6 +99,7 @@ fn origin(data_class: DataClass, trust: Trust) -> NoteOrigin {
         data_class,
         trust,
         stored_by: Actor::new("tester"),
+        private_to: None,
     }
 }
 
@@ -149,7 +150,7 @@ async fn the_same_content_returns_the_existing_note() {
     assert!(!second.created);
     assert!(
         store
-            .find_note_by_hash(&content_hash("cat facts"), DataClass::Private)
+            .find_note_by_hash(&content_hash("cat facts"), DataClass::Private, None)
             .await
             .unwrap()
             .is_some()
@@ -177,7 +178,7 @@ async fn the_same_content_in_the_other_class_is_a_note_of_its_own() {
     assert!(public.created);
     assert_ne!(public.id, secret.id);
     let found = memory
-        .search("launch date", ClassFilter::PublicOnly, SCOPE_PUBLIC, 5)
+        .search("launch date", ClassFilter::PUBLIC_ONLY, SCOPE_PUBLIC, 5)
         .await
         .unwrap();
     assert_eq!(
@@ -200,7 +201,7 @@ async fn embedding_costs_are_reported() {
         .unwrap();
     assert_eq!(again.cost_usd_micros, 0, "nothing new was embedded");
     let found = memory
-        .search("cat", ClassFilter::Any, SCOPE_PRIVATE, 5)
+        .search("cat", ClassFilter::ANY, SCOPE_PRIVATE, 5)
         .await
         .unwrap();
     assert_eq!(found.cost_usd_micros, 7);
@@ -328,7 +329,7 @@ async fn search_is_hybrid_and_finds_by_either_path() {
         .await
         .unwrap();
     let found = memory
-        .search("parks", ClassFilter::Any, SCOPE_PRIVATE, 5)
+        .search("parks", ClassFilter::ANY, SCOPE_PRIVATE, 5)
         .await
         .unwrap();
     assert_eq!(found.mode, SearchMode::Hybrid);
@@ -340,7 +341,7 @@ async fn a_private_query_is_embedded_as_private() {
     let fake = Arc::new(Fake::default());
     let (memory, _) = memory_with(Some(Arc::clone(&fake)));
     memory
-        .search("cat", ClassFilter::Any, SCOPE_PRIVATE, 5)
+        .search("cat", ClassFilter::ANY, SCOPE_PRIVATE, 5)
         .await
         .unwrap();
     assert_eq!(
@@ -376,7 +377,7 @@ async fn fusion_sees_past_the_number_of_results_asked_for() {
         .await
         .unwrap();
     let found = memory
-        .search("cat wanted", ClassFilter::Any, SCOPE_PRIVATE, 1)
+        .search("cat wanted", ClassFilter::ANY, SCOPE_PRIVATE, 1)
         .await
         .unwrap();
     assert_eq!(found.hits[0].note_id, both.id);
@@ -392,7 +393,7 @@ async fn a_note_appears_once_however_many_chunks_match() {
         .unwrap();
     assert!(stored.chunks > 1);
     let found = memory
-        .search("shared", ClassFilter::Any, SCOPE_PRIVATE, 5)
+        .search("shared", ClassFilter::ANY, SCOPE_PRIVATE, 5)
         .await
         .unwrap();
     assert_eq!(found.hits.len(), 1);
@@ -406,7 +407,7 @@ async fn without_an_embedder_search_says_keyword_only() {
         .await
         .unwrap();
     let found = memory
-        .search("naps", ClassFilter::Any, SCOPE_PRIVATE, 5)
+        .search("naps", ClassFilter::ANY, SCOPE_PRIVATE, 5)
         .await
         .unwrap();
     assert_eq!(found.hits.len(), 1);
@@ -427,7 +428,7 @@ async fn a_failing_embedder_shows_in_the_result() {
         cost_usd_micros: 0,
     });
     let found = memory
-        .search("naps", ClassFilter::Any, SCOPE_PRIVATE, 5)
+        .search("naps", ClassFilter::ANY, SCOPE_PRIVATE, 5)
         .await
         .unwrap();
     assert_eq!(found.hits.len(), 1);
@@ -444,7 +445,7 @@ async fn a_cut_result_says_so() {
             .unwrap();
     }
     let found = memory
-        .search("shared", ClassFilter::Any, SCOPE_PRIVATE, 2)
+        .search("shared", ClassFilter::ANY, SCOPE_PRIVATE, 2)
         .await
         .unwrap();
     assert_eq!(found.hits.len(), 2);
@@ -469,7 +470,7 @@ async fn a_public_search_cannot_reach_private_notes() {
         .await
         .unwrap();
     let found = memory
-        .search("cat", ClassFilter::PublicOnly, SCOPE_PUBLIC, 5)
+        .search("cat", ClassFilter::PUBLIC_ONLY, SCOPE_PUBLIC, 5)
         .await
         .unwrap();
     assert_eq!(found.hits.len(), 1);
@@ -480,13 +481,13 @@ async fn a_public_search_cannot_reach_private_notes() {
     );
     assert_eq!(
         memory
-            .get(secret.id, ClassFilter::PublicOnly)
+            .get(secret.id, ClassFilter::PUBLIC_ONLY)
             .await
             .unwrap(),
         None
     );
     assert_eq!(
-        memory.delete(secret.id, ClassFilter::PublicOnly).await,
+        memory.delete(secret.id, ClassFilter::PUBLIC_ONLY).await,
         Err(MemoryError::NotFound(secret.id))
     );
     let edit = NoteEdit {
@@ -497,7 +498,7 @@ async fn a_public_search_cannot_reach_private_notes() {
         .update(
             secret.id,
             edit,
-            ClassFilter::PublicOnly,
+            ClassFilter::PUBLIC_ONLY,
             Trust::Trusted,
             None,
             now(),
@@ -519,7 +520,7 @@ async fn an_untrusted_note_stays_labelled_in_search() {
         .await
         .unwrap();
     let found = memory
-        .search("fetched", ClassFilter::Any, SCOPE_PRIVATE, 5)
+        .search("fetched", ClassFilter::ANY, SCOPE_PRIVATE, 5)
         .await
         .unwrap();
     assert_eq!(found.hits[0].provenance.trust, Trust::Untrusted);
@@ -541,7 +542,7 @@ async fn an_edit_is_found_and_the_old_text_is_not() {
         .update(
             stored.id,
             edit,
-            ClassFilter::Any,
+            ClassFilter::ANY,
             Trust::Trusted,
             None,
             now(),
@@ -552,7 +553,7 @@ async fn an_edit_is_found_and_the_old_text_is_not() {
         let memory = memory.clone();
         async move {
             memory
-                .search(q, ClassFilter::Any, SCOPE_PRIVATE, 5)
+                .search(q, ClassFilter::ANY, SCOPE_PRIVATE, 5)
                 .await
                 .unwrap()
                 .hits
@@ -581,7 +582,7 @@ async fn an_untrusted_edit_taints_the_note_and_never_changes_its_class() {
         .update(
             stored.id,
             edit,
-            ClassFilter::Any,
+            ClassFilter::ANY,
             Trust::Untrusted,
             None,
             now(),
@@ -610,7 +611,7 @@ async fn a_title_edit_does_not_re_embed() {
         .update(
             stored.id,
             edit,
-            ClassFilter::Any,
+            ClassFilter::ANY,
             Trust::Trusted,
             None,
             now(),
@@ -632,10 +633,10 @@ async fn delete_forgets_and_a_second_delete_says_so() {
         .store(note("gone soon"), private(), None, now())
         .await
         .unwrap();
-    memory.delete(stored.id, ClassFilter::Any).await.unwrap();
-    assert_eq!(memory.get(stored.id, ClassFilter::Any).await.unwrap(), None);
+    memory.delete(stored.id, ClassFilter::ANY).await.unwrap();
+    assert_eq!(memory.get(stored.id, ClassFilter::ANY).await.unwrap(), None);
     assert_eq!(
-        memory.delete(stored.id, ClassFilter::Any).await,
+        memory.delete(stored.id, ClassFilter::ANY).await,
         Err(MemoryError::NotFound(stored.id))
     );
 }
@@ -645,7 +646,7 @@ async fn limits_and_empty_queries_are_refused() {
     let (memory, _) = memory_with(None);
     for (query, limit) in [("a", 0), ("a", MAX_SEARCH_LIMIT + 1), ("  ", 5)] {
         let result = memory
-            .search(query, ClassFilter::Any, SCOPE_PRIVATE, limit)
+            .search(query, ClassFilter::ANY, SCOPE_PRIVATE, limit)
             .await;
         assert!(matches!(result, Err(MemoryError::Invalid(_))));
     }
@@ -666,7 +667,7 @@ async fn a_similarity_threshold_applies_before_the_limit() {
         .await
         .unwrap();
     let found = memory
-        .search_close("cat", ClassFilter::Any, SCOPE_PRIVATE, 1, Some(0.6))
+        .search_close("cat", ClassFilter::ANY, SCOPE_PRIVATE, 1, Some(0.6))
         .await
         .unwrap();
     assert_eq!(found.hits.len(), 1, "{:?}", found.hits);
@@ -741,7 +742,7 @@ async fn an_update_that_isnt_saved_still_reports_its_embedding() {
         .update(
             stored.id,
             edit,
-            ClassFilter::Any,
+            ClassFilter::ANY,
             Trust::Trusted,
             None,
             now(),

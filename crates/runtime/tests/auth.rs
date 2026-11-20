@@ -334,3 +334,64 @@ async fn a_private_run_is_seen_by_whoever_asked_and_the_owner_only() {
     assert_eq!(everything["items"].as_array().unwrap().len(), 1);
     assert_eq!(everything["hidden"], 0);
 }
+
+#[tokio::test]
+async fn a_note_stored_by_a_private_run_is_found_by_its_person_and_the_owner_only() {
+    let server = serve().await;
+    server.person("sam", "member").await;
+    server.person("ada", "member").await;
+    let body = json!({ "person": "person:sam", "scopes": ["read", "run"], "name": "own",
+                       "private_by_default": true });
+    let (status, made) = server
+        .call(Method::POST, "/api/v1/keys", OWNER_KEY, Some(body))
+        .await;
+    assert_eq!(status, StatusCode::CREATED, "{made}");
+    let sam = made["secret"].as_str().unwrap().to_owned();
+    let (_, ada) = server.key("person:ada", &["read", "run"]).await;
+
+    let memory = |arguments: Value| json!({ "name": "memory", "arguments": arguments });
+    let stored = server
+        .mcp(
+            &sam,
+            "tools/call",
+            memory(json!({ "operation": "store", "text": "sam's otter plan" })),
+        )
+        .await;
+    assert_eq!(stored["result"]["isError"], false, "{stored}");
+    let shared = server
+        .mcp(
+            &ada,
+            "tools/call",
+            memory(json!({ "operation": "store", "text": "ada's otter map" })),
+        )
+        .await;
+    assert_eq!(shared["result"]["isError"], false, "{shared}");
+
+    let found = |key: String| {
+        let server = &server;
+        async move {
+            let reply = server
+                .mcp(
+                    &key,
+                    "tools/call",
+                    memory(json!({ "operation": "search", "query": "otter" })),
+                )
+                .await;
+            let hits = reply["result"]["structuredContent"]["result"]["hits"].clone();
+            let mut texts: Vec<String> = hits
+                .as_array()
+                .unwrap_or(&Vec::new())
+                .iter()
+                .filter_map(|hit| hit["text"].as_str().map(str::to_owned))
+                .collect();
+            texts.sort();
+            (texts, reply)
+        }
+    };
+    let (adas, reply) = found(ada.clone()).await;
+    assert_eq!(adas, ["ada's otter map"], "{reply}");
+    let (sams, reply) = found(sam.clone()).await;
+    assert_eq!(sams.len(), 2, "{reply}");
+    let (owners, reply) = found(OWNER_KEY.to_owned()).await;
+    assert_eq!(owners.len(), 2, "{reply}");
+}

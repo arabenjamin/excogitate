@@ -9,7 +9,7 @@ repository.workspace = true
 publish = false
 
 [dependencies]
-uuid.workspace = true
+uuid = { workspace = true, features = ["v5"] }
 
 [lints]
 workspace = true

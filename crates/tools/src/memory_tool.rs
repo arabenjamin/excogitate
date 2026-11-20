@@ -514,12 +514,14 @@ fn missing(what: &str) -> ToolFailure {
     ToolFailure::new(format!("this operation needs `{what}`"))
 }
 
-/// What a run may see: a public run only sees what's public.
-const fn classes_for(data_class: DataClass) -> ClassFilter {
-    match data_class {
-        DataClass::Private => ClassFilter::Any,
-        DataClass::Public => ClassFilter::PublicOnly,
-    }
+/// What a run may see: a public run only sees what's public, and a person's
+/// run doesn't see someone else's private notes.
+const fn classes_for(context: ToolContext) -> ClassFilter {
+    let classes = match context.data_class {
+        DataClass::Private => ClassFilter::ANY,
+        DataClass::Public => ClassFilter::PUBLIC_ONLY,
+    };
+    classes.reading_as(context.reader)
 }
 
 /// Gives a model long-term memory.
@@ -573,6 +575,7 @@ impl MemoryTool {
             data_class: context.data_class,
             trust: Trust::Untrusted,
             stored_by: Actor::new(format!("run:{}", context.run)),
+            private_to: context.private_to,
         };
         let done = self
             .memory
@@ -597,7 +600,7 @@ impl MemoryTool {
             .memory
             .search_lake(
                 &query,
-                classes_for(context.data_class),
+                classes_for(context),
                 scope,
                 args.limit.unwrap_or(DEFAULT_LIMIT),
                 args.min_similarity,
@@ -657,7 +660,7 @@ impl MemoryTool {
     /// The note, if this run may see it.
     async fn visible_note(&self, id: NoteId, context: ToolContext) -> Result<Note, ToolFailure> {
         self.memory
-            .get(id, classes_for(context.data_class))
+            .get(id, classes_for(context))
             .await
             .map_err(|error| failure(&error))?
             .ok_or_else(|| ToolFailure::new(format!("no note {id} is visible to this run")))
@@ -720,7 +723,7 @@ impl MemoryTool {
             .update(
                 id,
                 edit,
-                classes_for(context.data_class),
+                classes_for(context),
                 Trust::Untrusted,
                 Some(context.budget_usd_micros),
                 Utc::now(),
@@ -740,7 +743,7 @@ impl MemoryTool {
         };
         let opened = self
             .memory
-            .open(&source, &item, classes_for(context.data_class), lake)
+            .open(&source, &item, classes_for(context), lake)
             .await
             .map_err(|error| failure(&error))?;
         let Some(found) = opened.item else {
@@ -776,7 +779,7 @@ impl MemoryTool {
             .memory
             .recent(
                 window,
-                classes_for(context.data_class),
+                classes_for(context),
                 args.limit.unwrap_or(DEFAULT_RECENT),
             )
             .await
@@ -816,7 +819,7 @@ impl MemoryTool {
             .count(
                 &term,
                 window,
-                classes_for(context.data_class),
+                classes_for(context),
                 args.limit.unwrap_or(DEFAULT_COUNTED),
             )
             .await
@@ -851,7 +854,7 @@ impl MemoryTool {
     ) -> Result<(MemoryResult, Trust, u64), ToolFailure> {
         self.changeable(id, context).await?;
         self.memory
-            .delete(id, classes_for(context.data_class))
+            .delete(id, classes_for(context))
             .await
             .map_err(|error| failure(&error))?;
         Ok((

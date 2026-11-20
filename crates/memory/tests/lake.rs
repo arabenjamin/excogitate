@@ -109,6 +109,7 @@ async fn memory(sources: Vec<LakeSource>) -> Memory {
         data_class: DataClass::Private,
         trust: Trust::Trusted,
         stored_by: Actor::new("owner"),
+        private_to: None,
     };
     memory.store(note, origin, None, Utc::now()).await.unwrap();
     memory.attach_sources(sources).unwrap();
@@ -128,8 +129,8 @@ fn everything(data_class: DataClass) -> LakeSearch<'static> {
 
 const fn classes(data_class: DataClass) -> ClassFilter {
     match data_class {
-        DataClass::Private => ClassFilter::Any,
-        DataClass::Public => ClassFilter::PublicOnly,
+        DataClass::Private => ClassFilter::ANY,
+        DataClass::Public => ClassFilter::PUBLIC_ONLY,
     }
 }
 
@@ -296,7 +297,7 @@ async fn the_query_vector_reaches_only_a_source_that_takes_it() {
     let found = memory
         .search_lake(
             "cats",
-            ClassFilter::Any,
+            ClassFilter::ANY,
             SCOPE,
             10,
             Some(0.5),
@@ -365,7 +366,7 @@ async fn an_item_is_opened_whole_if_the_run_may_see_it() {
         .open(
             "demo.lake",
             "long",
-            ClassFilter::Any,
+            ClassFilter::ANY,
             everything(DataClass::Private),
         )
         .await
@@ -378,7 +379,7 @@ async fn an_item_is_opened_whole_if_the_run_may_see_it() {
         .open(
             "demo.lake",
             "short",
-            ClassFilter::PublicOnly,
+            ClassFilter::PUBLIC_ONLY,
             everything(DataClass::Public),
         )
         .await
@@ -391,7 +392,7 @@ async fn an_item_is_opened_whole_if_the_run_may_see_it() {
         chosen: Some(&names),
     };
     let refused = memory
-        .open("demo.lake", "short", ClassFilter::Any, not_chosen)
+        .open("demo.lake", "short", ClassFilter::ANY, not_chosen)
         .await
         .unwrap_err();
     assert!(matches!(refused, MemoryError::Invalid(_)), "{refused}");

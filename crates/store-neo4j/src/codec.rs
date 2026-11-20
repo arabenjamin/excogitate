@@ -160,7 +160,7 @@ pub(crate) fn note_columns() -> String {
     format!(
         "n.id AS id, n.title AS title, n.body AS body, n.tags AS tags, \
          n.source_url AS source_url, n.content_hash AS content_hash, n.version AS version, \
-         n.updated_at AS updated_at, {PROVENANCE}"
+         n.updated_at AS updated_at, n.private_to AS private_to, {PROVENANCE}"
     )
 }
 
@@ -175,6 +175,13 @@ pub(crate) fn note(row: &Row) -> Result<Note, StoreError> {
         provenance: provenance(row)?,
         version: number(row, "version")?,
         updated_at: time(row, "updated_at")?,
+        private_to: get::<Option<String>>(row, "private_to")?
+            .map(|id| {
+                Uuid::parse_str(&id)
+                    .map(protocol::Reader::from_uuid)
+                    .map_err(|error| StoreError::Backend(format!("a note's private_to: {error}")))
+            })
+            .transpose()?,
     })
 }
 
@@ -193,6 +200,10 @@ pub(crate) fn note_props(
         ("content_hash".to_owned(), note.content_hash.clone().into()),
         ("version".to_owned(), int(version)?.into()),
         ("updated_at".to_owned(), at(note.updated_at)),
+        (
+            "private_to".to_owned(),
+            note.private_to.map(|reader| reader.to_string()).into(),
+        ),
     ]);
     Ok(props)
 }

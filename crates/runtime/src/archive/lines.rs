@@ -158,6 +158,10 @@ pub struct NoteLine {
     pub origin: Origin,
     /// When it last changed.
     pub updated_at: DateTime<Utc>,
+    /// Who it's private to, if anyone: an opaque reader id, the same for the
+    /// same person on every instance.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub private_to: Option<Uuid>,
 }
 
 impl From<&Note> for NoteLine {
@@ -171,6 +175,7 @@ impl From<&Note> for NoteLine {
             content_hash: note.content_hash.clone(),
             origin: (&note.provenance).into(),
             updated_at: note.updated_at,
+            private_to: note.private_to.map(|reader| reader.as_uuid()),
         }
     }
 }
@@ -187,6 +192,7 @@ impl From<NoteLine> for Note {
             provenance: line.origin.into(),
             version: 1,
             updated_at: line.updated_at,
+            private_to: line.private_to.map(protocol::Reader::from_uuid),
         }
     }
 }

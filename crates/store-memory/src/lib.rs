@@ -7,7 +7,7 @@ use std::sync::{Mutex, MutexGuard, PoisonError};
 
 use async_trait::async_trait;
 use chrono::{DateTime, NaiveDate, Utc};
-use protocol::DataClass;
+use protocol::{DataClass, Reader};
 use serde_json::Value;
 use store::{
     Archive, Chunk, ChunkHit, ChunkId, ClassFilter, Definition, DefinitionKey, DefinitionKind,
@@ -75,7 +75,7 @@ fn cosine(a: &[f32], b: &[f32]) -> f32 {
 }
 
 fn admits(classes: ClassFilter, note: &Note) -> bool {
-    classes == ClassFilter::Any || note.provenance.data_class == DataClass::Public
+    classes.shows(note.provenance.data_class, note.private_to)
 }
 
 impl State {
@@ -308,13 +308,18 @@ impl NoteReader for MemoryStore {
         &self,
         hash: &str,
         class: DataClass,
+        private_to: Option<Reader>,
     ) -> Result<Option<Note>, StoreError> {
         // Notes are kept in id order, so the first match is the lowest id.
         Ok(self
             .state()
             .notes
             .values()
-            .find(|note| note.content_hash == hash && note.provenance.data_class == class)
+            .find(|note| {
+                note.content_hash == hash
+                    && note.provenance.data_class == class
+                    && note.private_to == private_to
+            })
             .cloned())
     }
 

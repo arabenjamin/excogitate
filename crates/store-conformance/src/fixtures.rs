@@ -41,6 +41,7 @@ pub fn note(body: &str) -> Note {
         provenance: provenance(DataClass::Private, Trust::Trusted),
         version: 1,
         updated_at: at(1),
+        private_to: None,
     }
 }
 

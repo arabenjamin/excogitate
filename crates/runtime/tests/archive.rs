@@ -97,6 +97,7 @@ async fn filled() -> MemoryStore {
         provenance: provenance(),
         version: 1,
         updated_at: at(1),
+        private_to: None,
     };
     let chunks = (0..2)
         .map(|ordinal| Chunk {

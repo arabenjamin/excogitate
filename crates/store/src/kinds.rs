@@ -2,7 +2,7 @@
 //! jobs, and definitions.
 
 use chrono::{DateTime, Utc};
-use protocol::{Actor, DataClass, Trust};
+use protocol::{Actor, DataClass, Reader, Trust};
 use serde_json::Value;
 
 use crate::{ChunkId, JobId, NoteId, TaskId};
@@ -41,6 +41,10 @@ pub struct Note {
     pub version: u64,
     /// When it last changed.
     pub updated_at: DateTime<Utc>,
+    /// Who it's private to, if anyone: a note stored by a private run is
+    /// private to whoever asked for it. Only they, and a read with no reader,
+    /// see it.
+    pub private_to: Option<Reader>,
 }
 
 /// A retrievable piece of a note.
@@ -102,13 +106,58 @@ pub struct NotesStored {
     pub total: u64,
 }
 
-/// Which privacy classes a search may return.
+/// What a read may return: which privacy classes, and, for private notes,
+/// who's reading. A note private to one reader is returned only to that
+/// reader, or to a read with no reader (the owner's, and the runtime's own).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ClassFilter {
-    /// Everything.
-    Any,
-    /// Only what's marked public.
-    PublicOnly,
+pub struct ClassFilter {
+    public_only: bool,
+    reader: Option<Reader>,
+}
+
+impl ClassFilter {
+    /// Every class, and every note whoever it's private to.
+    pub const ANY: Self = Self {
+        public_only: false,
+        reader: None,
+    };
+    /// Only what's marked public, and every note whoever it's private to.
+    pub const PUBLIC_ONLY: Self = Self {
+        public_only: true,
+        reader: None,
+    };
+
+    /// The same filter, reading as `reader`: someone else's private notes are
+    /// left out. None reads everything.
+    #[must_use]
+    pub const fn reading_as(mut self, reader: Option<Reader>) -> Self {
+        self.reader = reader;
+        self
+    }
+
+    /// True if only public notes may be returned.
+    #[must_use]
+    pub const fn public_only(self) -> bool {
+        self.public_only
+    }
+
+    /// Who's reading, if a reader was given.
+    #[must_use]
+    pub const fn reader(self) -> Option<Reader> {
+        self.reader
+    }
+
+    /// Whether a note of `data_class`, private to `private_to` if anyone,
+    /// may be returned.
+    #[must_use]
+    pub fn shows(self, data_class: DataClass, private_to: Option<Reader>) -> bool {
+        let class_ok = !self.public_only || data_class == DataClass::Public;
+        let reader_ok = match (self.reader, private_to) {
+            (Some(reader), Some(owner)) => reader == owner,
+            _ => true,
+        };
+        class_ok && reader_ok
+    }
 }
 
 /// Where a task stands.

@@ -23,7 +23,7 @@ use protocol::{DataClass, RunId};
 use schema::bounded;
 use store::{ChunkHit, ChunkId, ClassFilter, PageRequest};
 
-use super::{MAX_SEARCH_LIMIT, Memory, MemoryError, NoteHit, SearchMode, StoreLists, visible_to};
+use super::{MAX_SEARCH_LIMIT, Memory, MemoryError, NoteHit, SearchMode, StoreLists};
 use crate::fuse::fuse_keys;
 
 /// A source memory reads, as the runtime installed it.
@@ -330,7 +330,7 @@ impl LakeSource {
         let items = usable
             .into_iter()
             .map(|item| kept(self, item, MAX_HIT_TEXT, sent.is_some()).0)
-            .filter(|item| visible_to(classes, item.data_class))
+            .filter(|item| classes.shows(item.data_class, None))
             .collect();
         Searched {
             items,
@@ -672,7 +672,7 @@ impl Memory {
             .item
             .filter(|item| item.id == id)
             .map(|item| kept(found, item, MAX_ITEM_TEXT, false))
-            .filter(|(item, _)| visible_to(classes, item.data_class));
+            .filter(|(item, _)| classes.shows(item.data_class, None));
         let truncated = visible.as_ref().is_some_and(|(_, truncated)| *truncated);
         Ok(OpenedItem {
             item: visible.map(|(item, _)| item),

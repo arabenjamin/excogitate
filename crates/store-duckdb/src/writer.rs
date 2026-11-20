@@ -318,7 +318,7 @@ impl Writer<'_> {
     fn insert_note(&self, note: &Note, version: i64) -> Result<(), StoreError> {
         self.connection
             .execute(
-                "INSERT INTO notes VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "INSERT INTO notes VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 params![
                     id_of(note.id),
                     note.title,
@@ -332,6 +332,7 @@ impl Writer<'_> {
                     note.provenance.stored_at,
                     version,
                     note.updated_at,
+                    note.private_to.map(|reader| reader.to_string()),
                 ],
             )
             .map(|_| ())

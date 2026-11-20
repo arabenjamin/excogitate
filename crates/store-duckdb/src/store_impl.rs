@@ -7,7 +7,7 @@ use std::sync::{Arc, Mutex, PoisonError, RwLock};
 use async_trait::async_trait;
 use chrono::{DateTime, NaiveDate, Utc};
 use duckdb::{Connection, params};
-use protocol::DataClass;
+use protocol::{DataClass, Reader};
 use serde_json::Value;
 use store::{
     Chunk, ChunkHit, ClassFilter, Definition, DefinitionKey, DefinitionKind, DefinitionReader,
@@ -233,16 +233,18 @@ impl NoteReader for DuckDbStore {
         &self,
         hash: &str,
         class: DataClass,
+        private_to: Option<Reader>,
     ) -> Result<Option<Note>, StoreError> {
         let hash = hash.to_owned();
         let class = data_class_name(class);
+        let private_to = private_to.map(|reader| reader.to_string());
         self.read(move |connection| {
             optional(connection.query_row(
                 &format!(
                     "SELECT {NOTE_COLUMNS} FROM notes WHERE content_hash = ? AND data_class = ? \
-                     ORDER BY id LIMIT 1"
+                     AND private_to IS NOT DISTINCT FROM ? ORDER BY id LIMIT 1"
                 ),
-                params![hash, class],
+                params![hash, class, private_to],
                 note_at,
             ))
         })
@@ -260,21 +262,37 @@ impl NoteReader for DuckDbStore {
         classes: ClassFilter,
         page: PageRequest,
     ) -> Result<NotesStored, StoreError> {
-        let public_only = matches!(classes, ClassFilter::PublicOnly);
+        let public_only = classes.public_only();
+        let reader = read::reader_of(classes);
         self.read(move |connection| {
             let filter = "WHERE stored_at >= ? AND (?::TIMESTAMP IS NULL OR stored_at < ?) \
-                          AND (NOT ? OR data_class = 'public')";
+                          AND (NOT ? OR data_class = 'public') \
+                          AND (?::VARCHAR IS NULL OR private_to IS NULL OR private_to = ?)";
             let total: i64 = connection
                 .query_row(
                     &format!("SELECT count(*) FROM notes {filter}"),
-                    params![window.since, window.until, window.until, public_only],
+                    params![
+                        window.since,
+                        window.until,
+                        window.until,
+                        public_only,
+                        reader,
+                        reader
+                    ],
                     |row| row.get(0),
                 )
                 .map_err(backend)?;
             let notes = paged(
                 connection,
                 &format!("SELECT {NOTE_COLUMNS} FROM notes {filter} ORDER BY stored_at DESC, id"),
-                params![window.since, window.until, window.until, public_only],
+                params![
+                    window.since,
+                    window.until,
+                    window.until,
+                    public_only,
+                    reader,
+                    reader
+                ],
                 page,
                 note_at,
             )?;
@@ -293,7 +311,8 @@ impl NoteReader for DuckDbStore {
         classes: ClassFilter,
         page: PageRequest,
     ) -> Result<NotesStored, StoreError> {
-        let public_only = matches!(classes, ClassFilter::PublicOnly);
+        let public_only = classes.public_only();
+        let reader = read::reader_of(classes);
         let term = term.to_lowercase();
         let (since, until) = (window.map(|w| w.since), window.and_then(|w| w.until));
         self.read(move |connection| {
@@ -301,18 +320,39 @@ impl NoteReader for DuckDbStore {
             let filter = "WHERE (strpos(lower(body), ?) > 0 OR strpos(lower(title), ?) > 0) \
                           AND (?::TIMESTAMP IS NULL OR stored_at >= ?) \
                           AND (?::TIMESTAMP IS NULL OR stored_at < ?) \
-                          AND (NOT ? OR data_class = 'public')";
+                          AND (NOT ? OR data_class = 'public') \
+                          AND (?::VARCHAR IS NULL OR private_to IS NULL OR private_to = ?)";
             let total: i64 = connection
                 .query_row(
                     &format!("SELECT count(*) FROM notes {filter}"),
-                    params![term, term, since, since, until, until, public_only],
+                    params![
+                        term,
+                        term,
+                        since,
+                        since,
+                        until,
+                        until,
+                        public_only,
+                        reader,
+                        reader
+                    ],
                     |row| row.get(0),
                 )
                 .map_err(backend)?;
             let notes = paged(
                 connection,
                 &format!("SELECT {NOTE_COLUMNS} FROM notes {filter} ORDER BY stored_at DESC, id"),
-                params![term, term, since, since, until, until, public_only],
+                params![
+                    term,
+                    term,
+                    since,
+                    since,
+                    until,
+                    until,
+                    public_only,
+                    reader,
+                    reader
+                ],
                 page,
                 note_at,
             )?;

@@ -51,6 +51,8 @@ pub struct NoteOrigin {
     pub trust: Trust,
     /// Who's storing it.
     pub stored_by: Actor,
+    /// Who it's private to, if anyone: whoever asked for a private run.
+    pub private_to: Option<protocol::Reader>,
 }
 
 /// What a store did.
@@ -267,10 +269,6 @@ fn with_spent(scope: EmbedScope, spent: u64) -> EmbedScope {
     }
 }
 
-const fn visible_to(classes: ClassFilter, data_class: DataClass) -> bool {
-    matches!(classes, ClassFilter::Any) || matches!(data_class, DataClass::Public)
-}
-
 impl Memory {
     /// Memory over this store. Without an embedder, search uses keywords.
     #[must_use]
@@ -403,7 +401,7 @@ impl Memory {
         let hash = content_hash(&note.body);
         if let Some(existing) = self
             .store
-            .find_note_by_hash(&hash, origin.data_class)
+            .find_note_by_hash(&hash, origin.data_class, origin.private_to)
             .await?
         {
             let chunks = self.store.list_chunks(existing.id).await?;
@@ -439,6 +437,7 @@ impl Memory {
             },
             version: 1,
             updated_at: now,
+            private_to: origin.private_to,
         };
         let unit =
             UnitOfWork::new()
@@ -473,7 +472,7 @@ impl Memory {
             .store
             .get_note(id)
             .await?
-            .filter(|note| visible_to(classes, note.provenance.data_class)))
+            .filter(|note| classes.shows(note.provenance.data_class, note.private_to)))
     }
 
     /// The notes stored in `window` that `classes` admits, the latest

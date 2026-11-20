@@ -13,8 +13,20 @@ Each chunk is embedded through the model gateway, so routing, privacy and spend
 caps apply. If a chunk can't be embedded, the note is still stored. The chunk
 can then only be found by keyword, and `unembedded_chunks` says how many.
 
+### Private notes
+
+A note stored by a [private run](api.md#private-runs) is private to whoever
+asked for it (`Note::private_to`, an opaque reader id made from the person's
+id, never their name). Every read leaves it out for anyone else: search, the
+vector and keyword halves alike, `recent`, `count`, `get` and an edit or a
+delete, which answer as for no note. A count leaves it out too, so another
+person's totals never hint at it. The owner, schedules and the runtime have
+no reader, so they see every note; only a person (`person:<id>`) reads as
+themselves. An export keeps it, with its `private_to`.
+
 The same content returns the note that already has it, within one privacy
-class. A public run storing words a private note already holds gets a note of
+class and the same privacy to a person: storing words someone else keeps to
+themselves gets a note of one's own, not a sign that theirs exists. A public run storing words a private note already holds gets a note of
 its own: it never learns the private one exists, and a private note never
 depends on one public runs can change or delete.
 

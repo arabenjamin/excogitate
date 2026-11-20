@@ -4,7 +4,7 @@ pub use crate::archive::{
     a_restored_job_keeps_how_it_ended, the_archive_lists_everything_in_order,
 };
 
-use protocol::{Actor, DataClass, Trust};
+use protocol::{Actor, DataClass, Reader, Trust};
 use serde_json::json;
 use store::{
     ClassFilter, Definition, DefinitionKey, DefinitionKind, Direction, FieldFilter, FieldKind,
@@ -44,7 +44,7 @@ fn is_not_found<T: std::fmt::Debug>(result: Result<T, StoreError>) {
 
 async fn found_texts(store: &dyn Store, query: &str) -> Vec<String> {
     let hits = store
-        .search_text(query, ClassFilter::Any, page(10))
+        .search_text(query, ClassFilter::ANY, page(10))
         .await
         .unwrap();
     hits.items.into_iter().map(|h| h.chunk.text).collect()
@@ -110,13 +110,13 @@ pub async fn find_note_by_hash_finds_the_copy(store: &dyn Store) {
         .await
         .unwrap();
     let found = store
-        .find_note_by_hash(&n.content_hash, DataClass::Private)
+        .find_note_by_hash(&n.content_hash, DataClass::Private, None)
         .await
         .unwrap();
     assert_eq!(found.map(|f| f.id), Some(n.id));
     assert_eq!(
         store
-            .find_note_by_hash("other", DataClass::Private)
+            .find_note_by_hash("other", DataClass::Private, None)
             .await
             .unwrap(),
         None
@@ -124,7 +124,7 @@ pub async fn find_note_by_hash_finds_the_copy(store: &dyn Store) {
     // The same content in the other class is neither found nor in the way.
     assert_eq!(
         store
-            .find_note_by_hash(&n.content_hash, DataClass::Public)
+            .find_note_by_hash(&n.content_hash, DataClass::Public, None)
             .await
             .unwrap(),
         None
@@ -136,7 +136,7 @@ pub async fn find_note_by_hash_finds_the_copy(store: &dyn Store) {
         .await
         .unwrap();
     let found = store
-        .find_note_by_hash(&n.content_hash, DataClass::Public)
+        .find_note_by_hash(&n.content_hash, DataClass::Public, None)
         .await
         .unwrap();
     assert_eq!(found.map(|f| f.id), Some(public.id));
@@ -220,7 +220,7 @@ pub async fn text_search_with_no_match_is_empty(store: &dyn Store) {
         .await
         .unwrap();
     let hits = store
-        .search_text("absent", ClassFilter::Any, page(5))
+        .search_text("absent", ClassFilter::ANY, page(5))
         .await
         .unwrap();
     assert!(hits.items.is_empty() && !hits.has_more);
@@ -235,12 +235,12 @@ pub async fn hits_carry_provenance(store: &dyn Store) {
         .await
         .unwrap();
     let text = store
-        .search_text("labelled", ClassFilter::Any, page(5))
+        .search_text("labelled", ClassFilter::ANY, page(5))
         .await
         .unwrap();
     assert_eq!(text.items[0].provenance, n.provenance);
     let vector = store
-        .search_vector(&[1.0, 0.0, 0.0], ClassFilter::Any, page(5))
+        .search_vector(&[1.0, 0.0, 0.0], ClassFilter::ANY, page(5))
         .await
         .unwrap();
     assert_eq!(vector.items[0].provenance, n.provenance);
@@ -292,16 +292,82 @@ pub async fn public_only_hides_private(store: &dyn Store) {
     };
     check(
         store
-            .search_text("shared", ClassFilter::PublicOnly, page(5))
+            .search_text("shared", ClassFilter::PUBLIC_ONLY, page(5))
             .await
             .unwrap(),
     );
     check(
         store
-            .search_vector(&[1.0, 0.0, 0.0], ClassFilter::PublicOnly, page(5))
+            .search_vector(&[1.0, 0.0, 0.0], ClassFilter::PUBLIC_ONLY, page(5))
             .await
             .unwrap(),
     );
+}
+
+/// A note private to one reader is found by that reader, and by a read with
+/// no reader, in every read; never by another reader, who can't learn it
+/// exists, not even from a count or a hash lookup.
+pub async fn a_private_note_is_seen_by_its_reader_only(store: &dyn Store) {
+    let (sam, ada) = (Reader::of("person:sam"), Reader::of("person:ada"));
+    let mut mine = note("sam's otter");
+    mine.private_to = Some(sam);
+    let shared = note("shared otter");
+    for made in [&mine, &shared] {
+        store
+            .apply(note_with_text(made, "otter word", Some([1.0, 0.0, 0.0])))
+            .await
+            .unwrap();
+    }
+    let ids = |hits: store::Page<store::ChunkHit>| {
+        let mut ids: Vec<_> = hits.items.iter().map(|hit| hit.chunk.note_id).collect();
+        ids.sort();
+        ids
+    };
+    let mut both = vec![mine.id, shared.id];
+    both.sort();
+    for (classes, expected) in [
+        (ClassFilter::ANY, both.clone()),
+        (ClassFilter::ANY.reading_as(Some(sam)), both.clone()),
+        (ClassFilter::ANY.reading_as(Some(ada)), vec![shared.id]),
+    ] {
+        let text = store.search_text("otter", classes, page(5)).await.unwrap();
+        assert_eq!(ids(text), expected, "text, {classes:?}");
+        let near = store
+            .search_vector(&[1.0, 0.0, 0.0], classes, page(5))
+            .await
+            .unwrap();
+        assert_eq!(ids(near), expected, "vector, {classes:?}");
+        let stored = store
+            .notes_stored(
+                store::StoredWindow {
+                    since: at(0),
+                    until: None,
+                },
+                classes,
+                page(5),
+            )
+            .await
+            .unwrap();
+        assert_eq!(stored.total, expected.len() as u64, "stored, {classes:?}");
+        let containing = store
+            .notes_containing("otter", None, classes, page(5))
+            .await
+            .unwrap();
+        assert_eq!(
+            containing.total,
+            expected.len() as u64,
+            "containing, {classes:?}"
+        );
+    }
+    let kept = store.get_note(mine.id).await.unwrap().unwrap();
+    assert_eq!(kept.private_to, Some(sam), "it round-trips");
+    // A hash lookup matches only the same privacy: Ada storing the same
+    // words gets her own note, not a hint that Sam has one.
+    let hash = &mine.content_hash;
+    let found = |private_to| store.find_note_by_hash(hash, DataClass::Private, private_to);
+    assert_eq!(found(Some(sam)).await.unwrap().map(|n| n.id), Some(mine.id));
+    assert_eq!(found(Some(ada)).await.unwrap(), None);
+    assert_eq!(found(None).await.unwrap(), None);
 }
 
 /// The notes a window holds, the latest stored first, with how many in all.
@@ -327,7 +393,7 @@ pub async fn notes_list_by_when_they_were_stored(store: &dyn Store) {
         until: until.map(at),
     };
     let open = store
-        .notes_stored(window(20, None), ClassFilter::Any, page(2))
+        .notes_stored(window(20, None), ClassFilter::ANY, page(2))
         .await
         .unwrap();
     assert_eq!(open.total, 3);
@@ -340,7 +406,7 @@ pub async fn notes_list_by_when_they_were_stored(store: &dyn Store) {
 
     // `until` is left out of the window.
     let closed = store
-        .notes_stored(window(10, Some(20)), ClassFilter::Any, page(5))
+        .notes_stored(window(10, Some(20)), ClassFilter::ANY, page(5))
         .await
         .unwrap();
     assert_eq!(closed.total, 1);
@@ -349,14 +415,14 @@ pub async fn notes_list_by_when_they_were_stored(store: &dyn Store) {
     assert_eq!(closed.notes.items[0].provenance.stored_at, at(10));
 
     let public_only = store
-        .notes_stored(window(0, None), ClassFilter::PublicOnly, page(5))
+        .notes_stored(window(0, None), ClassFilter::PUBLIC_ONLY, page(5))
         .await
         .unwrap();
     assert_eq!(public_only.total, 1);
     assert_eq!(public_only.notes.items[0].id, public.id);
 
     let none = store
-        .notes_stored(window(31, None), ClassFilter::Any, page(5))
+        .notes_stored(window(31, None), ClassFilter::ANY, page(5))
         .await
         .unwrap();
     assert_eq!(none.total, 0);
@@ -399,7 +465,7 @@ pub async fn notes_that_mention_a_term_are_counted(store: &dyn Store) {
             .unwrap();
     }
     let all = store
-        .notes_containing("OTTER.CAM", None, ClassFilter::Any, page(2))
+        .notes_containing("OTTER.CAM", None, ClassFilter::ANY, page(2))
         .await
         .unwrap();
     assert_eq!(all.total, 3, "in a body or a title, case ignored");
@@ -411,14 +477,14 @@ pub async fn notes_that_mention_a_term_are_counted(store: &dyn Store) {
         until: Some(at(30)),
     };
     let windowed = store
-        .notes_containing("otter.cam", Some(window), ClassFilter::Any, page(5))
+        .notes_containing("otter.cam", Some(window), ClassFilter::ANY, page(5))
         .await
         .unwrap();
     assert_eq!(windowed.total, 1);
     assert_eq!(windowed.notes.items[0].id, title.id);
 
     let public_only = store
-        .notes_containing("otter.cam", None, ClassFilter::PublicOnly, page(5))
+        .notes_containing("otter.cam", None, ClassFilter::PUBLIC_ONLY, page(5))
         .await
         .unwrap();
     assert_eq!(public_only.total, 1);
@@ -426,12 +492,12 @@ pub async fn notes_that_mention_a_term_are_counted(store: &dyn Store) {
 
     // `%` and `_` are only characters, not patterns.
     let percent = store
-        .notes_containing("100%", None, ClassFilter::Any, page(5))
+        .notes_containing("100%", None, ClassFilter::ANY, page(5))
         .await
         .unwrap();
     assert_eq!(percent.total, 1);
     let underscore = store
-        .notes_containing("otter_cam", None, ClassFilter::Any, page(5))
+        .notes_containing("otter_cam", None, ClassFilter::ANY, page(5))
         .await
         .unwrap();
     assert_eq!(underscore.total, 0);
@@ -449,7 +515,7 @@ pub async fn vector_search_orders_by_similarity(store: &dyn Store) {
         .await
         .unwrap();
     let hits = store
-        .search_vector(&[1.0, 0.0, 0.0], ClassFilter::Any, page(5))
+        .search_vector(&[1.0, 0.0, 0.0], ClassFilter::ANY, page(5))
         .await
         .unwrap();
     let order: Vec<_> = hits.items.iter().map(|h| h.chunk.note_id).collect();
@@ -469,13 +535,13 @@ pub async fn a_zero_vector_is_handled(store: &dyn Store) {
         .await
         .unwrap();
     let hits = store
-        .search_vector(&[1.0, 0.0, 0.0], ClassFilter::Any, page(5))
+        .search_vector(&[1.0, 0.0, 0.0], ClassFilter::ANY, page(5))
         .await
         .unwrap();
     let order: Vec<_> = hits.items.iter().map(|h| h.chunk.note_id).collect();
     assert_eq!(order, [plain.id, zero.id]);
     let none = store
-        .search_vector(&[0.0, 0.0, 0.0], ClassFilter::Any, page(5))
+        .search_vector(&[0.0, 0.0, 0.0], ClassFilter::ANY, page(5))
         .await
         .unwrap();
     assert_eq!(none.items.len(), 2);
@@ -489,7 +555,7 @@ pub async fn an_empty_text_query_is_empty(store: &dyn Store) {
         .unwrap();
     for query in ["", "   ", "?!."] {
         let hits = store
-            .search_text(query, ClassFilter::Any, page(5))
+            .search_text(query, ClassFilter::ANY, page(5))
             .await
             .unwrap();
         assert_eq!(hits.items.len(), 0, "{query:?}");
@@ -503,12 +569,12 @@ pub async fn hits_leave_out_the_embedding(store: &dyn Store) {
         .await
         .unwrap();
     let hits = store
-        .search_text("words", ClassFilter::Any, page(5))
+        .search_text("words", ClassFilter::ANY, page(5))
         .await
         .unwrap();
     assert_eq!(hits.items[0].chunk.embedding, None);
     let hits = store
-        .search_vector(&[1.0, 0.0, 0.0], ClassFilter::Any, page(5))
+        .search_vector(&[1.0, 0.0, 0.0], ClassFilter::ANY, page(5))
         .await
         .unwrap();
     assert_eq!(hits.items[0].chunk.embedding, None);
@@ -521,7 +587,7 @@ pub async fn vector_search_skips_chunks_without_embeddings(store: &dyn Store) {
         .await
         .unwrap();
     let hits = store
-        .search_vector(&[1.0, 0.0, 0.0], ClassFilter::Any, page(5))
+        .search_vector(&[1.0, 0.0, 0.0], ClassFilter::ANY, page(5))
         .await
         .unwrap();
     assert_eq!(hits.items, [] as [store::ChunkHit; 0]);
@@ -530,7 +596,7 @@ pub async fn vector_search_skips_chunks_without_embeddings(store: &dyn Store) {
 
 /// The width is a fact of the schema.
 pub async fn vector_search_refuses_the_wrong_width(store: &dyn Store) {
-    is_invalid(store.search_vector(&[1.0], ClassFilter::Any, page(5)).await);
+    is_invalid(store.search_vector(&[1.0], ClassFilter::ANY, page(5)).await);
 }
 
 /// A wrong width is refused on the way in, too.
@@ -564,7 +630,7 @@ pub async fn search_pages_report_more(store: &dyn Store) {
             .unwrap();
     }
     let hits = store
-        .search_text("common", ClassFilter::Any, page(2))
+        .search_text("common", ClassFilter::ANY, page(2))
         .await
         .unwrap();
     assert_eq!(hits.items.len(), 2);

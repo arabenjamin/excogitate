@@ -85,6 +85,14 @@
       "$ref": "#/$defs/Origin",
       "description": "Where it came from."
     },
+    "private_to": {
+      "description": "Who it's private to, if anyone: an opaque reader id, the same for the\nsame person on every instance.",
+      "format": "uuid",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
     "source_url": {
       "description": "Where it came from, if it was fetched.",
       "maxLength": 8192,

@@ -73,6 +73,7 @@ async fn owners_note(memory: &Memory) -> NoteId {
                 data_class: DataClass::Private,
                 trust: Trust::Trusted,
                 stored_by: Actor::new("owner"),
+                private_to: None,
             },
             None,
             Utc::now(),
@@ -287,7 +288,7 @@ async fn what_a_model_stores_is_untrusted_and_in_its_runs_class() {
     let note = memory
         .get(
             NoteId::from_uuid(id.parse().unwrap()),
-            store::ClassFilter::Any,
+            store::ClassFilter::ANY,
         )
         .await
         .unwrap()
@@ -338,7 +339,7 @@ async fn the_owners_notes_cant_be_changed_or_deleted() {
         assert!(error.message().contains("owner"), "{error}");
     }
     let note = memory
-        .get(id, store::ClassFilter::Any)
+        .get(id, store::ClassFilter::ANY)
         .await
         .unwrap()
         .unwrap();
@@ -451,6 +452,7 @@ async fn kept(memory: &Memory, text: &str, hours_ago: i64, data_class: DataClass
                 data_class,
                 trust: Trust::Untrusted,
                 stored_by: Actor::new("run:x"),
+                private_to: None,
             },
             None,
             Utc::now() - chrono::Duration::hours(hours_ago),

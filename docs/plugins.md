@@ -199,7 +199,10 @@ rest) are re-exported there.
   `#[non_exhaustive]`, so a later release can add a field or a variant
   without breaking a plugin.
 - **Pass the call's `ToolContext` to every capability call.** It says which
-  run, and in a process which tool call, the request is for.
+  run, and in a process which tool call, the request is for. It also says
+  who the run reads as (`reader`) and who what it stores is private to
+  (`private_to`): a note a plugin stores for a private run is private to
+  whoever asked for it, as the run's own are.
 - **What's hidden isn't the contract.** `plugin_api::wire`,
   `plugin_api::rpc`, `McpHandler`, `serve` and `read_line` are the host's
   side. They're public only so the runtime can use them, and they can

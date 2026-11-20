@@ -99,6 +99,12 @@ pub struct ToolContext {
     /// True while a plugin's source answers a search: a search only reads,
     /// so the capability calls made for it may only read too.
     pub reading: bool,
+    /// Who the run reads notes as: someone else's private notes are left
+    /// out. None reads everything, as the owner and schedules do.
+    pub reader: Option<protocol::Reader>,
+    /// Who what the run stores is private to: whoever asked for a private
+    /// run. None keeps it shared.
+    pub private_to: Option<protocol::Reader>,
     /// In a plugin process, the host's token for this one tool call, which
     /// its capability calls carry back.
     pub(crate) call: Option<uuid::Uuid>,
@@ -116,6 +122,8 @@ impl ToolContext {
             time_left_ms: u64::MAX,
             probing: false,
             reading: false,
+            reader: None,
+            private_to: None,
             call: None,
         }
     }
@@ -124,6 +132,19 @@ impl ToolContext {
     #[must_use]
     pub const fn with_probing(mut self, probing: bool) -> Self {
         self.probing = probing;
+        self
+    }
+
+    /// The same context, reading as `reader` and storing private to
+    /// `private_to`.
+    #[must_use]
+    pub const fn with_reader(
+        mut self,
+        reader: Option<protocol::Reader>,
+        private_to: Option<protocol::Reader>,
+    ) -> Self {
+        self.reader = reader;
+        self.private_to = private_to;
         self
     }
 
