@@ -1,24 +1,27 @@
 //! The HTTP server: MCP, the `OpenAI`-compatible front door and the REST API,
-//! all behind the owner key. Everything is checked against its schema before
-//! it's used.
+//! all behind a key: the owner key, or a key made for a person, whose scopes
+//! each route checks. Everything is checked against its schema before it's
+//! used.
 
 mod harness;
 mod mcp;
 mod openai;
+mod people;
 mod rest;
 mod runs;
 mod spec;
 mod tools;
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashMap};
 use std::future::Future;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, PoisonError};
+use std::time::{Duration, Instant};
 
 use axum::Json;
 use axum::Router;
 use axum::body::Bytes;
 use axum::extract::{DefaultBodyLimit, Request, State};
-use axum::http::header::{CONTENT_TYPE, ORIGIN, RETRY_AFTER, WWW_AUTHENTICATE};
+use axum::http::header::{AUTHORIZATION, CONTENT_TYPE, ORIGIN, RETRY_AFTER, WWW_AUTHENTICATE};
 use axum::http::{HeaderMap, HeaderValue, StatusCode};
 use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
@@ -29,11 +32,13 @@ use schemars::JsonSchema;
 use serde::Serialize;
 use serde_json::Value;
 use sha2::{Digest, Sha256};
+use store::{RecordId, StoreError};
 use subtle::ConstantTimeEq;
-use tokio::sync::{OwnedSemaphorePermit, Semaphore};
+use tokio::sync::{OnceCell, OwnedSemaphorePermit, Semaphore};
 use work::{JobTransport, StoreTransport};
 
 use crate::Runtime;
+use crate::auth::{self, Caller, Scope};
 use crate::metrics::prefix_for;
 
 pub use harness::{
@@ -50,6 +55,9 @@ pub use tools::ToolFailureView;
 const MIN_KEY_CHARS: usize = 32;
 /// The largest request read, the same as the longest MCP message over stdio.
 const MAX_BODY_BYTES: usize = 8 * 1024 * 1024;
+/// How often a key's last use is written, at most, so a busy client doesn't
+/// turn every read into a write.
+const USE_EVERY: Duration = Duration::from_secs(60);
 
 /// Whether an owner key is good enough to serve with.
 ///
@@ -126,6 +134,14 @@ impl ApiError {
         Self::new(StatusCode::NOT_FOUND, "not_found", message)
     }
 
+    pub(super) fn forbidden(message: &str) -> Self {
+        Self::new(StatusCode::FORBIDDEN, "forbidden", message)
+    }
+
+    fn unauthorized(message: &str) -> Self {
+        Self::new(StatusCode::UNAUTHORIZED, "unauthorized", message)
+    }
+
     pub(super) fn internal(error: &impl std::fmt::Display) -> Self {
         eprintln!("request failed: {}", bounded(&error.to_string()));
         Self::new(
@@ -174,6 +190,11 @@ impl IntoResponse for ApiError {
                 .headers_mut()
                 .insert(RETRY_AFTER, HeaderValue::from_static("5"));
         }
+        if status == StatusCode::UNAUTHORIZED {
+            response
+                .headers_mut()
+                .insert(WWW_AUTHENTICATE, HeaderValue::from_static("Bearer"));
+        }
         response
     }
 }
@@ -198,6 +219,12 @@ pub(super) struct App {
     feedback_request: Arc<Validator>,
     /// What an MCP message is held to: the schema the document gives.
     mcp_message: Arc<Validator>,
+    person_request: Arc<Validator>,
+    key_request: Arc<Validator>,
+    /// Set once the store knows the record types people and keys are kept as.
+    auth_ready: Arc<OnceCell<()>>,
+    /// When each key's use was last written.
+    uses: Arc<Mutex<HashMap<RecordId, Instant>>>,
 }
 
 impl App {
@@ -208,14 +235,71 @@ impl App {
             .map_err(|_| ApiError::busy())
     }
 
-    fn holds_the_key(&self, headers: &HeaderMap) -> bool {
-        let presented = headers
-            .get(axum::http::header::AUTHORIZATION)
-            .and_then(|value| value.to_str().ok())
-            .and_then(|value| value.split_once(' '))
-            .filter(|(scheme, _)| scheme.eq_ignore_ascii_case("bearer"))
-            .map(|(_, key)| key);
-        presented.is_some_and(|key| bool::from(digest(key).ct_eq(&self.key)))
+    fn is_owner_key(&self, token: &str) -> bool {
+        bool::from(digest(token).ct_eq(&self.key))
+    }
+
+    /// Makes sure the store knows how people and keys are kept.
+    async fn auth_ready(&self) -> Result<(), StoreError> {
+        self.auth_ready
+            .get_or_try_init(|| async {
+                self.runtime
+                    .workflows
+                    .store
+                    .register_records(&auth::declarations())
+                    .await
+            })
+            .await
+            .copied()
+    }
+
+    /// Who a bearer token is, or why it's refused.
+    async fn caller(&self, token: Option<&str>) -> Result<Caller, ApiError> {
+        let Some(token) = token else {
+            return Err(ApiError::unauthorized(
+                "send the owner key or a person's key as a bearer token",
+            ));
+        };
+        if self.is_owner_key(token) {
+            return Ok(Caller::owner());
+        }
+        if !auth::is_key(token) {
+            return Err(ApiError::unauthorized(auth::Refused::Unknown.message()));
+        }
+        self.auth_ready()
+            .await
+            .map_err(|error| ApiError::internal(&error))?;
+        let store = self.runtime.workflows.store.as_ref();
+        let caller = auth::authenticate(store, token, chrono::Utc::now())
+            .await
+            .map_err(|error| ApiError::internal(&error))?
+            .map_err(|refused| ApiError::unauthorized(refused.message()))?;
+        if let Some(key) = caller.key {
+            self.note_use(key);
+        }
+        Ok(caller)
+    }
+
+    /// Writes that `key` was used, unless it was written less than a minute
+    /// ago. It's written apart from the request, which doesn't wait on it.
+    fn note_use(&self, key: RecordId) {
+        let now = Instant::now();
+        {
+            let mut uses = self.uses.lock().unwrap_or_else(PoisonError::into_inner);
+            if uses
+                .get(&key)
+                .is_some_and(|last| now.duration_since(*last) < USE_EVERY)
+            {
+                return;
+            }
+            uses.insert(key, now);
+        }
+        let store = Arc::clone(&self.runtime.workflows.store);
+        tokio::spawn(async move {
+            if let Err(error) = auth::note_use(store.as_ref(), key).await {
+                eprintln!("couldn't note a key's use: {}", bounded(&error.to_string()));
+            }
+        });
     }
 
     fn origin_allowed(&self, headers: &HeaderMap) -> bool {
@@ -267,29 +351,59 @@ fn json_body(headers: &HeaderMap, body: &Bytes) -> Result<Value, ApiError> {
     serde_json::from_slice(body).map_err(|_| ApiError::invalid("the body isn't valid JSON"))
 }
 
-/// Refuses anything without the key, and any browser origin not listed.
-async fn guard(State(app): State<App>, request: Request, next: Next) -> Response {
+/// The bearer token a request carries, if it has one.
+fn bearer(headers: &HeaderMap) -> Option<&str> {
+    headers
+        .get(AUTHORIZATION)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.split_once(' '))
+        .filter(|(scheme, _)| scheme.eq_ignore_ascii_case("bearer"))
+        .map(|(_, key)| key.trim())
+}
+
+/// Refuses anything without a key that works, and any browser origin not
+/// listed. What it lets through carries its [`Caller`].
+async fn guard(State(app): State<App>, mut request: Request, next: Next) -> Response {
     if !app.origin_allowed(request.headers()) {
-        return ApiError::new(
-            StatusCode::FORBIDDEN,
-            "forbidden",
-            "this origin isn't allowed",
-        )
-        .into_response();
+        return ApiError::forbidden("this origin isn't allowed").into_response();
     }
-    if !app.holds_the_key(request.headers()) {
-        let mut response = ApiError::new(
-            StatusCode::UNAUTHORIZED,
-            "unauthorized",
-            "send the owner key as a bearer token",
-        )
-        .into_response();
-        response
-            .headers_mut()
-            .insert(WWW_AUTHENTICATE, HeaderValue::from_static("Bearer"));
-        return response;
+    match app.caller(bearer(request.headers())).await {
+        Ok(caller) => {
+            request.extensions_mut().insert(caller);
+            next.run(request).await
+        }
+        Err(error) => error.into_response(),
     }
-    next.run(request).await
+}
+
+/// Refuses a request whose caller lacks what its route needs. A route that
+/// declares nothing is refused, so a new one fails closed.
+async fn require(State(need): State<Option<spec::Need>>, request: Request, next: Next) -> Response {
+    let Some(caller) = request.extensions().get::<Caller>() else {
+        return ApiError::internal(&"a guarded request had no caller").into_response();
+    };
+    let allowed = match need {
+        None => Err("this route declares no scope, so no key may use it".to_owned()),
+        Some(spec::Need::Scope(scope)) => caller.may(scope),
+        Some(spec::Need::Owner) if !caller.is_owner() => {
+            Err("only the owner key manages people and keys".to_owned())
+        }
+        Some(spec::Need::Owner | spec::Need::Key | spec::Need::PerTool) => Ok(()),
+    };
+    match allowed {
+        Ok(()) => next.run(request).await,
+        Err(message) => ApiError::forbidden(&message).into_response(),
+    }
+}
+
+/// The scope a tool call needs: `chat` for chat, `read` for a call that
+/// only reads, and `run` for one that changes something.
+pub(super) fn scope_for_tool(name: &str, effect: plugin_api::Effect) -> Scope {
+    match (name, effect) {
+        ("chat", _) => Scope::Chat,
+        (_, plugin_api::Effect::Read) => Scope::Read,
+        _ => Scope::Run,
+    }
 }
 
 /// What `/health` says.
@@ -399,7 +513,7 @@ impl Runtime {
         let routes = all_routes();
         let openapi = spec::document(
             &routes,
-            Some(&mcp.listing()),
+            Some(&scoped_listing(&mcp)),
             spec::About {
                 title: product,
                 version,
@@ -429,6 +543,10 @@ impl Runtime {
                 Validator::from_schema(&mcp::message_schema())
                     .map_err(|error| HttpError::Schema(error.to_string()))?,
             ),
+            person_request: validator::<auth::PersonRequest>()?,
+            key_request: validator::<auth::KeyRequest>()?,
+            auth_ready: Arc::new(OnceCell::new()),
+            uses: Arc::new(Mutex::new(HashMap::new())),
         };
         let (mut open, mut guarded) = (Router::new(), Router::new());
         for route in routes {
@@ -440,7 +558,10 @@ impl Runtime {
             if open_route {
                 open = open.route(route.path, route.handler);
             } else {
-                guarded = guarded.route(route.path, route.handler);
+                let checked = route
+                    .handler
+                    .route_layer(middleware::from_fn_with_state(route.need, require));
+                guarded = guarded.route(route.path, checked);
             }
         }
         let guarded = guarded
@@ -482,7 +603,78 @@ fn all_routes() -> Vec<spec::Route> {
     routes.extend(runs::routes());
     routes.extend(harness::routes());
     routes.extend(tools::routes());
+    routes.extend(people::routes());
+    for route in &mut routes {
+        route.need = NEEDS
+            .iter()
+            .find(|(id, _)| *id == route.id)
+            .map(|(_, need)| *need);
+    }
     routes
+}
+
+/// What each keyed route needs of the caller's key, by route id: the one
+/// place to read who may do what. A route left out is refused to every key.
+const NEEDS: &[(&str, spec::Need)] = {
+    use Scope::{Admin, Chat, Read, Run};
+    use spec::Need::{Key, Owner, PerTool, Scope as Has};
+    &[
+        ("metrics", Has(Read)),
+        ("openapi", Has(Read)),
+        ("list_models", Has(Read)),
+        ("list_jobs", Has(Read)),
+        ("get_job", Has(Read)),
+        ("list_definitions", Has(Read)),
+        ("get_definition", Has(Read)),
+        ("list_runs", Has(Read)),
+        ("get_run", Has(Read)),
+        ("list_attempts", Has(Read)),
+        ("get_attempt", Has(Read)),
+        ("list_changes", Has(Read)),
+        ("get_change", Has(Read)),
+        ("list_lessons", Has(Read)),
+        ("list_holds", Has(Read)),
+        ("chat_completions", Has(Chat)),
+        ("put_feedback", Has(Chat)),
+        ("start_run", Has(Run)),
+        ("start_attempt", Has(Admin)),
+        ("revert_change", Has(Admin)),
+        ("hold", Has(Admin)),
+        ("release", Has(Admin)),
+        ("mcp", PerTool),
+        ("call_tool", PerTool),
+        ("me", Key),
+        ("list_my_keys", Key),
+        ("revoke_my_key", Key),
+        ("put_person", Owner),
+        ("list_people", Owner),
+        ("make_key", Owner),
+        ("list_keys", Owner),
+        ("revoke_key", Owner),
+    ]
+};
+
+/// The tools MCP lists, each with the scope a call to it needs, as
+/// declared, for the document.
+fn scoped_listing(mcp: &McpHandler) -> Value {
+    let mut listing = mcp.listing();
+    for tool in listing
+        .get_mut("tools")
+        .and_then(Value::as_array_mut)
+        .into_iter()
+        .flatten()
+    {
+        let name = tool.get("name").and_then(Value::as_str).map(str::to_owned);
+        if let (Some(name), Some(object)) = (name, tool.as_object_mut())
+            && let Some(effect) = mcp.declared_effect(&name)
+        {
+            object.insert(
+                "x-scope".to_owned(),
+                Value::from(scope_for_tool(&name, effect).name()),
+            );
+        }
+    }
+    listing
 }
 
 /// The `OpenAPI` document for the core's routes, with the tool route as one

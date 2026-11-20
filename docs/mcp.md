@@ -18,6 +18,19 @@ docker compose run --rm -T --no-deps session connect http://server:8080
 The address defaults to `http://127.0.0.1:8080`. If the server can't be reached or
 refuses the key, that message gets an error and the session carries on.
 
+## What a key may call
+
+Over HTTP, what a client may call depends on its [key's scopes](api.md#access):
+`chat` needs `chat`, a call that only reads needs `read`, and a call that
+changes something needs `run`. Some tools do both, depending on their
+arguments: `memory` reads with `search` and writes with `store`, and
+`http_request` reads with `GET`. Each call is judged by what it would do.
+
+`tools/list` leaves out what the key can't call at all. A tool that can write
+is still listed for a key with `read`, since such a tool often reads too. A
+call the key may not make gets a JSON-RPC error, code `-32001`, naming the
+scope it needs. It isn't reported as an unknown tool, so the reason is clear.
+
 ## What a client gets
 
 | Tool | What it does |

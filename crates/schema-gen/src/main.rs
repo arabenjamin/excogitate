@@ -75,6 +75,14 @@ fn fixed() -> BTreeMap<&'static str, Value> {
         ("record_decls", schema_of::<store::RecordDecls>()),
         ("agent", schema_of::<workflow::Agent>()),
         ("api_error", schema_of::<runtime::ApiError>()),
+        ("caller", schema_of::<runtime::CallerView>()),
+        ("person", schema_of::<runtime::PersonView>()),
+        ("person_list", schema_of::<runtime::PersonList>()),
+        ("person_request", schema_of::<runtime::PersonRequest>()),
+        ("key", schema_of::<runtime::KeyView>()),
+        ("key_list", schema_of::<runtime::KeyList>()),
+        ("key_made", schema_of::<runtime::KeyMade>()),
+        ("key_request", schema_of::<runtime::KeyRequest>()),
         ("attempt_list", schema_of::<runtime::AttemptList>()),
         ("attempt_view", schema_of::<runtime::AttemptView>()),
         ("improve_request", schema_of::<harness::Request>()),
@@ -130,8 +138,10 @@ fn role(stem: &str) -> Option<Role> {
         | "hold_request"
         | "http_config"
         | "improve_request"
+        | "key_request"
         | "models_config"
         | "openai_chat_request"
+        | "person_request"
         | "plugin_manifest"
         | "plugins_config"
         | "record_decls"
@@ -142,6 +152,12 @@ fn role(stem: &str) -> Option<Role> {
         | "workflow" => Some(Role::Input),
         "api_error"
         | "attempt_list"
+        | "caller"
+        | "key"
+        | "key_list"
+        | "key_made"
+        | "person"
+        | "person_list"
         | "attempt_view"
         | "capability_http_response"
         | "capability_job_started"

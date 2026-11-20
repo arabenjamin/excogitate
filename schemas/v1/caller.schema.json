@@ -1,0 +1,91 @@
+{
+  "$defs": {
+    "CallerRole": {
+      "description": "Who a caller is: the owner, or a person with a role.",
+      "oneOf": [
+        {
+          "const": "viewer",
+          "description": "A viewer.",
+          "type": "string"
+        },
+        {
+          "const": "member",
+          "description": "A member.",
+          "type": "string"
+        },
+        {
+          "const": "admin",
+          "description": "An admin.",
+          "type": "string"
+        },
+        {
+          "const": "owner",
+          "description": "The owner, with the owner key.",
+          "type": "string"
+        }
+      ]
+    },
+    "Scope": {
+      "description": "What a key may be used for.",
+      "oneOf": [
+        {
+          "const": "read",
+          "description": "Read jobs, runs, definitions, Harness² and metrics, and call tools\nthat only read.",
+          "type": "string"
+        },
+        {
+          "const": "chat",
+          "description": "Chat, through MCP or the front door, and mark a run good or bad.",
+          "type": "string"
+        },
+        {
+          "const": "run",
+          "description": "Start workflow runs, and call tools that change something.",
+          "type": "string"
+        },
+        {
+          "const": "admin",
+          "description": "Start Harness² attempts, revert its changes and hold agents.",
+          "type": "string"
+        }
+      ]
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "Who a request came from, and what its key may do.",
+  "properties": {
+    "actor": {
+      "description": "The actor on what it starts: `owner`, or a person's id.",
+      "maxLength": 64,
+      "type": "string"
+    },
+    "key": {
+      "description": "The key's id. None for the owner key.",
+      "maxLength": 36,
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "role": {
+      "$ref": "#/$defs/CallerRole",
+      "description": "The owner, or the person's role."
+    },
+    "scopes": {
+      "description": "What the key may do now: its scopes that the role allows.",
+      "items": {
+        "$ref": "#/$defs/Scope"
+      },
+      "maxItems": 4,
+      "type": "array"
+    }
+  },
+  "required": [
+    "actor",
+    "role",
+    "scopes"
+  ],
+  "title": "CallerView",
+  "type": "object"
+}

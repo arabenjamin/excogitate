@@ -147,6 +147,9 @@ The container runs as uid 1000, which must be able to write `./backup`.
 - **`manifest.json` is written last:** the format's version, the runtime
   that made it, the store, the embedding width and each file's count. An
   export that stopped part way has none, and can't be imported.
+- **People and keys are in it,** as `core.person`, `core.key` and
+  `core.key_use` records: the keys as digests, never their secrets, so an
+  imported store's keys go on working. Keep an export as safe as the store.
 - **Not in it:** the event log (telemetry and trajectories, in its own file
   and pruned), and the record catalog, which plugins declare when they
   start.

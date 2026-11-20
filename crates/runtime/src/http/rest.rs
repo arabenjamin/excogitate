@@ -2,14 +2,13 @@
 
 use std::collections::BTreeMap;
 
-use axum::Json;
 use axum::body::Bytes;
 use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
+use axum::{Extension, Json};
 use chrono::{DateTime, Utc};
-use protocol::Actor;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -22,12 +21,11 @@ use schema::schema_of;
 
 use super::spec::{Body, ID, Kind, LIMIT, OFFSET, Param, Route};
 use super::{ApiError, App, json_body};
+use crate::auth::Caller;
 use crate::jobs::workflow_job;
 
 pub(super) const DEFAULT_LIMIT: u32 = 50;
 pub(super) const MAX_LIMIT: u32 = 200;
-/// Who a request came from, until there are users.
-const OWNER: &str = "owner";
 
 /// Starts a workflow.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -208,7 +206,7 @@ pub(super) fn number(
     })
 }
 
-fn page(params: &BTreeMap<String, String>) -> Result<PageRequest, ApiError> {
+pub(super) fn page(params: &BTreeMap<String, String>) -> Result<PageRequest, ApiError> {
     let limit = number(params, "limit", DEFAULT_LIMIT)?;
     if limit == 0 || limit > MAX_LIMIT {
         return Err(ApiError::invalid(&format!(
@@ -319,6 +317,7 @@ async fn get_definition(
 
 async fn start_run(
     State(app): State<App>,
+    Extension(caller): Extension<Caller>,
     Path(workflow): Path<String>,
     headers: HeaderMap,
     body: Bytes,
@@ -342,7 +341,7 @@ async fn start_run(
         &workflow,
         request.inputs,
         request.priority,
-        Actor::new(OWNER),
+        caller.actor.clone(),
         key,
     );
     let id = job.id;

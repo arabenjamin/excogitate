@@ -1,14 +1,13 @@
 //! Harness² over REST: start an attempt, and read what attempts found.
 
-use axum::Json;
 use axum::body::Bytes;
 use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{delete, get, post, put};
+use axum::{Extension, Json};
 use chrono::Utc;
 use harness::{Attempt, Change, Hold, Lesson, LessonStatus, Request};
-use protocol::Actor;
 use schemars::JsonSchema;
 use serde::Serialize;
 use store::{Job, JobId, JobStatus, PageRequest, RecordId};
@@ -19,10 +18,8 @@ use schema::schema_of;
 
 use super::spec::{Body, ID, Kind, LIMIT, OFFSET, Param, Route};
 use super::{ApiError, App, json_body};
+use crate::auth::Caller;
 use crate::harness::{ChangeError, HARNESS_KIND};
-
-/// Who a request came from, until there are users.
-const OWNER: &str = "owner";
 
 /// A kept attempt, as the API shows it.
 #[derive(Debug, Clone, Serialize, JsonSchema)]
@@ -55,6 +52,7 @@ fn view(id: RecordId, data: serde_json::Value) -> Result<AttemptView, ApiError> 
 
 async fn start(
     State(app): State<App>,
+    Extension(caller): Extension<Caller>,
     headers: HeaderMap,
     body: Bytes,
 ) -> Result<Response, ApiError> {
@@ -101,7 +99,7 @@ async fn start(
         payload: serde_json::to_value(&request).map_err(|error| ApiError::internal(&error))?,
         priority: 0,
         status: JobStatus::Queued,
-        requested_by: Actor::new(OWNER),
+        requested_by: caller.actor.clone(),
         run_at: Utc::now(),
         attempts: 0,
         max_attempts: 1,

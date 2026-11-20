@@ -8,6 +8,7 @@ use axum::routing::MethodRouter;
 use serde_json::{Map, Value, json};
 
 use super::App;
+use crate::auth::Scope;
 
 /// The `OpenAPI` version written.
 const OPENAPI: &str = "3.1.0";
@@ -49,6 +50,8 @@ pub(super) enum Kind {
     OneOf(&'static [&'static str]),
     /// A whole number in this range.
     Count(u32, u32),
+    /// Text matching this pattern.
+    Matching(&'static str),
 }
 
 impl Kind {
@@ -61,6 +64,7 @@ impl Kind {
             Self::Count(least, most) => {
                 json!({ "type": "integer", "minimum": least, "maximum": most })
             }
+            Self::Matching(pattern) => json!({ "type": "string", "pattern": pattern }),
         }
     }
 }
@@ -137,6 +141,31 @@ pub(super) enum Access {
     Metrics,
 }
 
+/// What a keyed route needs of the caller's key.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum Need {
+    /// A scope, which the key's person's role must allow too.
+    Scope(Scope),
+    /// The owner key: people and keys.
+    Owner,
+    /// Any key that works: what a caller asks about itself.
+    Key,
+    /// What each tool call needs, checked per call: `read` for a read,
+    /// `run` for a write, and `chat` for `chat`.
+    PerTool,
+}
+
+impl Need {
+    /// The security requirement the document gives it.
+    fn security(self) -> Value {
+        match self {
+            Self::Scope(scope) => json!([{ "bearer": [scope.name()] }]),
+            Self::Owner => json!([{ "bearer": ["owner"] }]),
+            Self::Key | Self::PerTool => json!([{ "bearer": [] }]),
+        }
+    }
+}
+
 /// One route: its handler, and what the document says about it.
 pub(super) struct Route {
     pub(super) id: &'static str,
@@ -150,6 +179,9 @@ pub(super) struct Route {
     replies: Vec<Reply>,
     errors: Errors,
     pub(super) access: Access,
+    /// What a keyed route needs. One with none is refused, so a new route
+    /// fails closed.
+    pub(super) need: Option<Need>,
     pub(super) handler: MethodRouter<App>,
 }
 
@@ -173,6 +205,7 @@ impl Route {
             replies: Vec::new(),
             errors: Errors::Api,
             access: Access::Keyed,
+            need: None,
             handler,
         }
     }
@@ -355,7 +388,10 @@ pub(super) fn document(
                 "bearer": {
                     "type": "http",
                     "scheme": "bearer",
-                    "description": "The owner key.",
+                    "description": "The owner key, or a key made for a person \
+                                    (exk_...). Each operation names the scope its key \
+                                    needs: read, chat, run or admin; owner means only \
+                                    the owner key.",
                 },
             },
         },
@@ -530,10 +566,24 @@ impl Components {
             Access::Metrics => {
                 operation.insert(
                     "description".to_owned(),
-                    json!("Needs the key unless server.open_metrics is set."),
+                    json!("Needs a key with the read scope unless server.open_metrics is set."),
                 );
             }
             Access::Keyed => {}
+        }
+        if route.access != Access::Open
+            && let Some(need) = route.need
+        {
+            operation.insert("security".to_owned(), need.security());
+            if need == Need::PerTool {
+                operation.insert(
+                    "x-scopes".to_owned(),
+                    json!(
+                        "Per call: read for a tool call that only reads, run for one that \
+                           changes something, chat for chat."
+                    ),
+                );
+            }
         }
         Ok(operation)
     }
@@ -573,6 +623,9 @@ impl Components {
         operation.insert("summary".to_owned(), json!(format!("Call {name}")));
         operation.insert("description".to_owned(), json!(about));
         operation.insert("tags".to_owned(), json!(["tools"]));
+        if let Some(scope) = tool.get("x-scope").and_then(Value::as_str) {
+            operation.insert("security".to_owned(), json!([{ "bearer": [scope] }]));
+        }
         operation.insert(
             "requestBody".to_owned(),
             json!({ "required": true, "content": { "application/json": { "schema": input } } }),
@@ -781,6 +834,34 @@ mod tests {
         assert_eq!(
             schemas["tool_b_input"]["properties"]["p"]["$ref"],
             "#/components/schemas/tool_b_inputPart"
+        );
+    }
+
+    #[test]
+    fn every_keyed_route_says_what_it_needs_and_the_table_names_only_routes() {
+        let routes = super::super::all_routes();
+        for route in &routes {
+            assert!(
+                route.access == Access::Open || route.need.is_some(),
+                "{} is keyed and needs nothing; add it to NEEDS",
+                route.id
+            );
+        }
+        for (id, _) in super::super::NEEDS {
+            assert!(
+                routes.iter().any(|route| route.id == *id),
+                "{id} isn't a route"
+            );
+        }
+        let document = document(&routes, None, ABOUT).unwrap();
+        let operation = |path: &str, method: &str| document["paths"][path][method].clone();
+        assert_eq!(
+            operation("/api/v1/workflows/{name}/runs", "post")["security"],
+            json!([{ "bearer": ["run"] }])
+        );
+        assert_eq!(
+            operation("/api/v1/keys", "post")["security"],
+            json!([{ "bearer": ["owner"] }])
         );
     }
 

@@ -1,0 +1,69 @@
+{
+  "$defs": {
+    "Role": {
+      "description": "What a person may do: the most their keys' scopes can open.",
+      "oneOf": [
+        {
+          "const": "viewer",
+          "description": "Reads.",
+          "type": "string"
+        },
+        {
+          "const": "member",
+          "description": "Reads, chats and runs workflows.",
+          "type": "string"
+        },
+        {
+          "const": "admin",
+          "description": "Everything but people and keys, which are the owner's.",
+          "type": "string"
+        }
+      ]
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "A person, as kept and as the API shows them.",
+  "properties": {
+    "disabled": {
+      "description": "A disabled person's keys all stop working.",
+      "type": "boolean"
+    },
+    "id": {
+      "description": "`person:` and their slug. It's the actor on what they start, and is\nnever reused.",
+      "maxLength": 55,
+      "pattern": "^person:[a-z0-9][a-z0-9-]{0,47}$",
+      "type": "string"
+    },
+    "made_at": {
+      "description": "When they were added.",
+      "format": "date-time",
+      "type": "string"
+    },
+    "made_by": {
+      "description": "Who added them.",
+      "maxLength": 64,
+      "type": "string"
+    },
+    "name": {
+      "description": "Their name, for showing.",
+      "maxLength": 128,
+      "minLength": 1,
+      "type": "string"
+    },
+    "role": {
+      "$ref": "#/$defs/Role",
+      "description": "What they may do."
+    }
+  },
+  "required": [
+    "id",
+    "name",
+    "role",
+    "disabled",
+    "made_at",
+    "made_by"
+  ],
+  "title": "PersonView",
+  "type": "object"
+}

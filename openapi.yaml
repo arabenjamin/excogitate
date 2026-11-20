@@ -321,6 +321,49 @@ components:
           It passed every check, but the run is a probe, so it didn't run and
           nothing happened.
         type: string
+    CallerRole:
+      description: "Who a caller is: the owner, or a person with a role."
+      oneOf:
+      - const: viewer
+        description: A viewer.
+        type: string
+      - const: member
+        description: A member.
+        type: string
+      - const: admin
+        description: An admin.
+        type: string
+      - const: owner
+        description: The owner, with the owner key.
+        type: string
+    CallerView:
+      additionalProperties: false
+      description: Who a request came from, and what its key may do.
+      properties:
+        actor:
+          description: "The actor on what it starts: `owner`, or a person's id."
+          maxLength: 64
+          type: string
+        key:
+          description: The key's id. None for the owner key.
+          maxLength: 36
+          type:
+          - string
+          - "null"
+        role:
+          $ref: "#/components/schemas/CallerRole"
+          description: The owner, or the person's role.
+        scopes:
+          description: "What the key may do now: its scopes that the role allows."
+          items:
+            $ref: "#/components/schemas/Scope"
+          maxItems: 4
+          type: array
+      required:
+      - actor
+      - role
+      - scopes
+      type: object
     Candidate:
       additionalProperties: false
       description: One candidate and what became of it.
@@ -916,6 +959,124 @@ components:
       - attempts
       - max_attempts
       type: object
+    KeyList:
+      additionalProperties: false
+      description: A page of keys, oldest first.
+      properties:
+        has_more:
+          description: True if there are more past this page.
+          type: boolean
+        items:
+          description: The keys.
+          items:
+            $ref: "#/components/schemas/KeyView"
+          maxItems: 200
+          type: array
+      required:
+      - items
+      - has_more
+      type: object
+    KeyMade:
+      additionalProperties: false
+      description: |-
+        A key just made, with its secret. This is the only time the secret is
+        shown.
+      properties:
+        key:
+          $ref: "#/components/schemas/KeyView"
+          description: The key.
+        secret:
+          description: "What to send as the bearer token: `exk_`, the id and the secret."
+          maxLength: 128
+          type: string
+      required:
+      - key
+      - secret
+      type: object
+    KeyRequest:
+      additionalProperties: false
+      description: A key to make.
+      properties:
+        expires_at:
+          default: null
+          description: When it stops working. It never does if left out.
+          format: date-time
+          type:
+          - string
+          - "null"
+        name:
+          description: What it's for, such as "Claude Code on the desktop".
+          maxLength: 128
+          minLength: 1
+          type: string
+        person:
+          description: "Whose it is: `person:` and their slug."
+          maxLength: 55
+          pattern: ^person:[a-z0-9][a-z0-9-]{0,47}$
+          type: string
+        scopes:
+          description: What it may be used for. Each must be one the person's role allows.
+          items:
+            $ref: "#/components/schemas/Scope"
+          maxItems: 4
+          minItems: 1
+          type: array
+      required:
+      - person
+      - scopes
+      - name
+      type: object
+    KeyView:
+      additionalProperties: false
+      description: "A key, as the API shows it: never its secret."
+      properties:
+        expires_at:
+          description: When it stops working, if it was given an end.
+          format: date-time
+          type:
+          - string
+          - "null"
+        id:
+          description: Its id, the part of the key after `exk_` and before the secret.
+          maxLength: 36
+          type: string
+        last_used_at:
+          description: When it was last used, to the minute. None if it never was.
+          format: date-time
+          type:
+          - string
+          - "null"
+        made_at:
+          description: When it was made.
+          format: date-time
+          type: string
+        name:
+          description: What it's for, such as "Claude Code on the desktop".
+          maxLength: 128
+          type: string
+        person:
+          description: Whose it is.
+          maxLength: 55
+          type: string
+        revoked_at:
+          description: When it was revoked, if it was.
+          format: date-time
+          type:
+          - string
+          - "null"
+        scopes:
+          description: What it may be used for, as far as its person's role allows.
+          items:
+            $ref: "#/components/schemas/Scope"
+          maxItems: 4
+          type: array
+      required:
+      - id
+      - person
+      - scopes
+      - name
+      - made_at
+      type: object
     Kind:
       description: What a candidate is.
       oneOf:
@@ -1152,6 +1313,83 @@ components:
       - const: direct
         description: One tool call made directly, with no model involved.
         type: string
+    PersonList:
+      additionalProperties: false
+      description: A page of people, by slug.
+      properties:
+        has_more:
+          description: True if there are more past this page.
+          type: boolean
+        items:
+          description: The people.
+          items:
+            $ref: "#/components/schemas/PersonView"
+          maxItems: 200
+          type: array
+      required:
+      - items
+      - has_more
+      type: object
+    PersonRequest:
+      additionalProperties: false
+      description: |-
+        A person to add, or what to change about one. People are never deleted,
+        so an actor on an old record always resolves; disable one instead.
+      properties:
+        disabled:
+          default: false
+          description: Whether their keys stop working. False if left out.
+          type: boolean
+        name:
+          description: Their name, for showing.
+          maxLength: 128
+          minLength: 1
+          type: string
+        role:
+          $ref: "#/components/schemas/Role"
+          description: What they may do.
+      required:
+      - name
+      - role
+      type: object
+    PersonView:
+      additionalProperties: false
+      description: A person, as kept and as the API shows them.
+      properties:
+        disabled:
+          description: A disabled person's keys all stop working.
+          type: boolean
+        id:
+          description: |-
+            `person:` and their slug. It's the actor on what they start, and is
+            never reused.
+          maxLength: 55
+          pattern: ^person:[a-z0-9][a-z0-9-]{0,47}$
+          type: string
+        made_at:
+          description: When they were added.
+          format: date-time
+          type: string
+        made_by:
+          description: Who added them.
+          maxLength: 64
+          type: string
+        name:
+          description: Their name, for showing.
+          maxLength: 128
+          minLength: 1
+          type: string
+        role:
+          $ref: "#/components/schemas/Role"
+          description: What they may do.
+      required:
+      - id
+      - name
+      - role
+      - disabled
+      - made_at
+      - made_by
+      type: object
     Probed:
       additionalProperties: false
       description: A probe, in brief. Its trajectory has the rest.
@@ -1408,6 +1646,18 @@ components:
       required:
       - agent
       type: object
+    Role:
+      description: "What a person may do: the most their keys' scopes can open."
+      oneOf:
+      - const: viewer
+        description: Reads.
+        type: string
+      - const: member
+        description: Reads, chats and runs workflows.
+        type: string
+      - const: admin
+        description: Everything but people and keys, which are the owner's.
+        type: string
     RunList:
       additionalProperties: false
       description: One page of runs, newest first.
@@ -1503,6 +1753,23 @@ components:
       - harness
       - started_at
       type: object
+    Scope:
+      description: What a key may be used for.
+      oneOf:
+      - const: read
+        description: |-
+          Read jobs, runs, definitions, Harness² and metrics, and call tools
+          that only read.
+        type: string
+      - const: chat
+        description: Chat, through MCP or the front door, and mark a run good or bad.
+        type: string
+      - const: run
+        description: Start workflow runs, and call tools that change something.
+        type: string
+      - const: admin
+        description: Start Harness² attempts, revert its changes and hold agents.
+        type: string
     Skill:
       additionalProperties: false
       description: Instructions for some tasks, added when the task matches.
@@ -2174,7 +2441,7 @@ components:
         type: string
   securitySchemes:
     bearer:
-      description: The owner key.
+      description: "The owner key, or a key made for a person (exk_...). Each operation names the scope its key needs: read, chat, run or admin; owner means only the owner key."
       scheme: bearer
       type: http
 info:
@@ -2234,6 +2501,9 @@ paths:
               schema:
                 $ref: "#/components/schemas/ApiError"
           description: The server failed, or is busy. The body says which.
+      security:
+      - bearer:
+        - read
       summary: "The definitions of one kind: agent, workflow or schedule"
   "/api/v1/definitions/{kind}/{name}":
     get:
@@ -2276,6 +2546,9 @@ paths:
               schema:
                 $ref: "#/components/schemas/ApiError"
           description: The server failed, or is busy. The body says which.
+      security:
+      - bearer:
+        - read
       summary: One definition
   /api/v1/harness/attempts:
     get:
@@ -2326,6 +2599,9 @@ paths:
               schema:
                 $ref: "#/components/schemas/ApiError"
           description: The server failed, or is busy. The body says which.
+      security:
+      - bearer:
+        - read
       summary: The attempts, newest first
     post:
       operationId: start_attempt
@@ -2360,6 +2636,9 @@ paths:
               schema:
                 $ref: "#/components/schemas/ApiError"
           description: The server failed, or is busy. The body says which.
+      security:
+      - bearer:
+        - admin
       summary: Start a Harness² attempt, as a job
   "/api/v1/harness/attempts/{id}":
     get:
@@ -2391,6 +2670,9 @@ paths:
               schema:
                 $ref: "#/components/schemas/ApiError"
           description: The server failed, or is busy. The body says which.
+      security:
+      - bearer:
+        - read
       summary: One attempt
   /api/v1/harness/changes:
     get:
@@ -2450,6 +2732,9 @@ paths:
               schema:
                 $ref: "#/components/schemas/ApiError"
           description: The server failed, or is busy. The body says which.
+      security:
+      - bearer:
+        - read
       summary: The changes Harness² made or proposed
   "/api/v1/harness/changes/{id}":
     get:
@@ -2481,6 +2766,9 @@ paths:
               schema:
                 $ref: "#/components/schemas/ApiError"
           description: The server failed, or is busy. The body says which.
+      security:
+      - bearer:
+        - read
       summary: One change
   "/api/v1/harness/changes/{id}/revert":
     post:
@@ -2512,6 +2800,9 @@ paths:
               schema:
                 $ref: "#/components/schemas/ApiError"
           description: The server failed, or is busy. The body says which.
+      security:
+      - bearer:
+        - admin
       summary: Revert a change
   /api/v1/harness/holds:
     get:
@@ -2552,6 +2843,9 @@ paths:
               schema:
                 $ref: "#/components/schemas/ApiError"
           description: The server failed, or is busy. The body says which.
+      security:
+      - bearer:
+        - read
       summary: The agents and workflows Harness² leaves alone
   "/api/v1/harness/holds/{agent}":
     delete:
@@ -2588,6 +2882,9 @@ paths:
               schema:
                 $ref: "#/components/schemas/ApiError"
           description: The server failed, or is busy. The body says which.
+      security:
+      - bearer:
+        - admin
       summary: Release a hold
     put:
       operationId: hold
@@ -2639,6 +2936,9 @@ paths:
               schema:
                 $ref: "#/components/schemas/ApiError"
           description: The server failed, or is busy. The body says which.
+      security:
+      - bearer:
+        - admin
       summary: Have Harness² leave an agent or workflow alone
   /api/v1/harness/lessons:
     get:
@@ -2695,6 +2995,9 @@ paths:
               schema:
                 $ref: "#/components/schemas/ApiError"
           description: The server failed, or is busy. The body says which.
+      security:
+      - bearer:
+        - read
       summary: The lessons Harness² keeps
   /api/v1/jobs:
     get:
@@ -2746,6 +3049,9 @@ paths:
               schema:
                 $ref: "#/components/schemas/ApiError"
           description: The server failed, or is busy. The body says which.
+      security:
+      - bearer:
+        - read
       summary: The jobs, newest first
   "/api/v1/jobs/{id}":
     get:
@@ -2777,7 +3083,223 @@ paths:
               schema:
                 $ref: "#/components/schemas/ApiError"
           description: The server failed, or is busy. The body says which.
+      security:
+      - bearer:
+        - read
       summary: One job
+  /api/v1/keys:
+    get:
+      operationId: list_keys
+      parameters:
+      - description: "Only this person's keys: `person:` and their slug."
+        in: query
+        name: person
+        required: false
+        schema:
+          pattern: ^person:[a-z0-9][a-z0-9-]{0,47}$
+          type: string
+      - description: How many to return, 1 to 200. 50 if left out.
+        in: query
+        name: limit
+        required: false
+        schema:
+          maximum: 200
+          minimum: 1
+          type: integer
+      - description: How many to skip first.
+        in: query
+        name: offset
+        required: false
+        schema:
+          maximum: 4294967295
+          minimum: 0
+          type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/KeyList"
+          description: A page of keys.
+        4XX:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+          description: "Refused: the request, the key, or what it names. The body says why."
+        5XX:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+          description: The server failed, or is busy. The body says which.
+      security:
+      - bearer:
+        - owner
+      summary: The keys, without their secrets
+    post:
+      operationId: make_key
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/KeyRequest"
+        required: true
+      responses:
+        "201":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/KeyMade"
+          description: The key, with its secret.
+        "413":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+          description: The body is over 8 MiB.
+        4XX:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+          description: "Refused: the request, the key, or what it names. The body says why."
+        5XX:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+          description: The server failed, or is busy. The body says which.
+      security:
+      - bearer:
+        - owner
+      summary: Make a key for a person. Its secret is shown this once
+  "/api/v1/keys/{id}":
+    delete:
+      operationId: revoke_key
+      parameters:
+      - description: The key's id, a UUID.
+        in: path
+        name: id
+        required: true
+        schema:
+          format: uuid
+          type: string
+      responses:
+        "204":
+          description: It's revoked.
+        4XX:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+          description: "Refused: the request, the key, or what it names. The body says why."
+        5XX:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+          description: The server failed, or is busy. The body says which.
+      security:
+      - bearer:
+        - owner
+      summary: Revoke a key. It stops working at once
+  /api/v1/me:
+    get:
+      operationId: me
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CallerView"
+          description: The caller.
+        4XX:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+          description: "Refused: the request, the key, or what it names. The body says why."
+        5XX:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+          description: The server failed, or is busy. The body says which.
+      security:
+      - bearer: []
+      summary: Who this key is, and what it may do
+  /api/v1/me/keys:
+    get:
+      operationId: list_my_keys
+      parameters:
+      - description: How many to return, 1 to 200. 50 if left out.
+        in: query
+        name: limit
+        required: false
+        schema:
+          maximum: 200
+          minimum: 1
+          type: integer
+      - description: How many to skip first.
+        in: query
+        name: offset
+        required: false
+        schema:
+          maximum: 4294967295
+          minimum: 0
+          type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/KeyList"
+          description: A page of keys.
+        4XX:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+          description: "Refused: the request, the key, or what it names. The body says why."
+        5XX:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+          description: The server failed, or is busy. The body says which.
+      security:
+      - bearer: []
+      summary: This key's person's keys
+  "/api/v1/me/keys/{id}":
+    delete:
+      operationId: revoke_my_key
+      parameters:
+      - description: The key's id, a UUID.
+        in: path
+        name: id
+        required: true
+        schema:
+          format: uuid
+          type: string
+      responses:
+        "204":
+          description: It's revoked.
+        4XX:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+          description: "Refused: the request, the key, or what it names. The body says why."
+        5XX:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+          description: The server failed, or is busy. The body says which.
+      security:
+      - bearer: []
+      summary: Revoke one of this key's person's keys
   /api/v1/openapi.json:
     get:
       operationId: openapi
@@ -2801,7 +3323,105 @@ paths:
               schema:
                 $ref: "#/components/schemas/ApiError"
           description: The server failed, or is busy. The body says which.
+      security:
+      - bearer:
+        - read
       summary: This document, with every installed tool at a path of its own
+  /api/v1/people:
+    get:
+      operationId: list_people
+      parameters:
+      - description: How many to return, 1 to 200. 50 if left out.
+        in: query
+        name: limit
+        required: false
+        schema:
+          maximum: 200
+          minimum: 1
+          type: integer
+      - description: How many to skip first.
+        in: query
+        name: offset
+        required: false
+        schema:
+          maximum: 4294967295
+          minimum: 0
+          type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PersonList"
+          description: A page of people.
+        4XX:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+          description: "Refused: the request, the key, or what it names. The body says why."
+        5XX:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+          description: The server failed, or is busy. The body says which.
+      security:
+      - bearer:
+        - owner
+      summary: The people
+  "/api/v1/people/{slug}":
+    put:
+      operationId: put_person
+      parameters:
+      - description: "The person's slug: their id without `person:`."
+        in: path
+        name: slug
+        required: true
+        schema:
+          pattern: ^[a-z0-9][a-z0-9-]{0,47}$
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PersonRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PersonView"
+          description: They were changed.
+        "201":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PersonView"
+          description: They were added.
+        "413":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+          description: The body is over 8 MiB.
+        4XX:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+          description: "Refused: the request, the key, or what it names. The body says why."
+        5XX:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+          description: The server failed, or is busy. The body says which.
+      security:
+      - bearer:
+        - owner
+      summary: Add a person, or change one's name, role or whether they're disabled
   /api/v1/runs:
     get:
       operationId: list_runs
@@ -2857,6 +3477,9 @@ paths:
               schema:
                 $ref: "#/components/schemas/ApiError"
           description: The server failed, or is busy. The body says which.
+      security:
+      - bearer:
+        - read
       summary: The runs, newest first
   "/api/v1/runs/{id}":
     get:
@@ -2888,6 +3511,9 @@ paths:
               schema:
                 $ref: "#/components/schemas/ApiError"
           description: The server failed, or is busy. The body says which.
+      security:
+      - bearer:
+        - read
       summary: One run's trajectory
   "/api/v1/runs/{id}/feedback":
     put:
@@ -2931,6 +3557,9 @@ paths:
               schema:
                 $ref: "#/components/schemas/ApiError"
           description: The server failed, or is busy. The body says which.
+      security:
+      - bearer:
+        - chat
       summary: Mark a run good or bad, for Harness²
   "/api/v1/tools/{name}":
     post:
@@ -2977,7 +3606,10 @@ paths:
               schema:
                 $ref: "#/components/schemas/ApiError"
           description: The server failed, or is busy. The body says which.
+      security:
+      - bearer: []
       summary: Call a tool MCP offers, with its arguments as the body
+      x-scopes: "Per call: read for a tool call that only reads, run for one that changes something, chat for chat."
   "/api/v1/workflows/{name}/runs":
     post:
       operationId: start_run
@@ -3033,6 +3665,9 @@ paths:
               schema:
                 $ref: "#/components/schemas/ApiError"
           description: The server failed, or is busy. The body says which.
+      security:
+      - bearer:
+        - run
       summary: Start a workflow run, as a job
   /health:
     get:
@@ -3188,10 +3823,13 @@ paths:
               schema:
                 $ref: "#/components/schemas/ApiError"
           description: The server failed, or is busy. The body says which.
+      security:
+      - bearer: []
       summary: "MCP over HTTP: one JSON-RPC 2.0 message per request, protocol 2025-06-18"
+      x-scopes: "Per call: read for a tool call that only reads, run for one that changes something, chat for chat."
   /metrics:
     get:
-      description: Needs the key unless server.open_metrics is set.
+      description: Needs a key with the read scope unless server.open_metrics is set.
       operationId: metrics
       responses:
         "200":
@@ -3212,6 +3850,9 @@ paths:
               schema:
                 $ref: "#/components/schemas/ApiError"
           description: The server failed, or is busy. The body says which.
+      security:
+      - bearer:
+        - read
       summary: Metrics, in the OpenMetrics text format
   /v1/chat/completions:
     post:
@@ -3443,6 +4084,9 @@ paths:
                 - receipt
                 type: object
           description: The server failed, or is busy. The body says which.
+      security:
+      - bearer:
+        - chat
       summary: >-
         Chat, as the OpenAI chat completions API. The last message must be the user's,
         and say something.
@@ -3494,6 +4138,9 @@ paths:
               schema:
                 $ref: "#/components/schemas/ApiError"
           description: The server failed, or is busy. The body says which.
+      security:
+      - bearer:
+        - read
       summary: The one model the OpenAI-compatible front door offers
 security:
 - bearer: []

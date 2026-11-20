@@ -27,7 +27,7 @@ const DEFAULT_DIMENSION: usize = 1024;
 /// but this is the finest it honors them.
 const SCHEDULER_TICK: Duration = Duration::from_secs(5);
 /// Where the HTTP server listens unless told otherwise.
-const DEFAULT_BIND: &str = "127.0.0.1:8080";
+pub(crate) const DEFAULT_BIND: &str = "127.0.0.1:8080";
 /// How long open requests get to finish once it's told to stop.
 const HTTP_GRACE: Duration = Duration::from_secs(25);
 /// How long the store waits at shutdown for runs to let go of it.
@@ -106,6 +106,10 @@ pub enum RunError {
     /// The server didn't answer its health check.
     #[error("unhealthy: {0}")]
     Unhealthy(String),
+    /// The server couldn't be asked, or refused, when managing people or
+    /// keys.
+    #[error("the server: {0}")]
+    Admin(String),
 }
 
 fn read(path: &Path) -> Result<String, RunError> {
@@ -399,7 +403,7 @@ pub async fn run_health(product: &str) -> Result<(), RunError> {
 
 /// `/health` at a bind address, an any-address host asked on loopback. None
 /// for no bind, or an empty one.
-fn health_url(bind: Option<&str>) -> Option<String> {
+pub(crate) fn health_url(bind: Option<&str>) -> Option<String> {
     let bind = bind.map(str::trim).filter(|bind| !bind.is_empty())?;
     let host_port = match bind.parse::<std::net::SocketAddr>() {
         Ok(address) if address.ip().is_unspecified() => {
@@ -596,6 +600,11 @@ pub async fn run_import(
     // runtime was built.
     runtime
         .harness_records()
+        .await
+        .map_err(RunError::OpenStore)?;
+    store
+        .shared()
+        .register_records(&crate::auth::declarations())
         .await
         .map_err(RunError::OpenStore)?;
     drop(runtime);

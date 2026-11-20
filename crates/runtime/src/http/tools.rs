@@ -4,13 +4,13 @@
 
 use std::sync::Arc;
 
-use axum::Json;
 use axum::body::Bytes;
 use axum::extract::{Path, State};
 use axum::http::HeaderMap;
 use axum::http::header::HOST;
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
+use axum::{Extension, Json};
 use plugin_api::{Called, DataClass, RunId, ToolContext};
 use schema::bounded;
 use schemars::JsonSchema;
@@ -18,7 +18,8 @@ use serde::Serialize;
 use serde_json::Value;
 
 use super::spec::{Body, Route};
-use super::{ApiError, App, detached, json_body};
+use super::{ApiError, App, detached, json_body, scope_for_tool};
+use crate::auth::Caller;
 
 /// The generic tool route's id. A served document lists each tool at a
 /// path of its own instead.
@@ -38,20 +39,26 @@ pub struct ToolFailureView {
 
 async fn call_tool(
     State(app): State<App>,
+    Extension(caller): Extension<Caller>,
     Path(name): Path<String>,
     headers: HeaderMap,
     body: Bytes,
 ) -> Result<Response, ApiError> {
     let arguments = json_body(&headers, &body)?;
+    if let Some(effect) = app.mcp.effect_of(&name, &arguments) {
+        caller
+            .may(scope_for_tool(&name, effect))
+            .map_err(|message| ApiError::forbidden(&message))?;
+    }
     let permit = app.permit()?;
     let handler = Arc::clone(&app.mcp);
     // A caller from outside, as over MCP: private, and the call's own run.
     let context = ToolContext::new(RunId::generate(), DataClass::Private, 0);
-    let called = detached(permit, async move {
+    let outcome = detached(permit, async move {
         handler.call(&name, arguments, context).await
     })
     .await?;
-    match called {
+    match outcome {
         Called::Ran(value) => Ok(Json(value).into_response()),
         Called::Failed(message) => Ok(Json(ToolFailureView {
             is_error: true,

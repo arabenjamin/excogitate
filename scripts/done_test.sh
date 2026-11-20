@@ -193,6 +193,31 @@ tool_path=$(jq -r '.paths | keys[] | select(endswith("/calculate"))' "$spec")
 api "$base$tool_path" --data '{"expression": "6 * 7"}' >"$calculated"
 check "a tool is called over REST at the path the document gives" "$calculated" '.[0].result.value == 42'
 
+# A person's key, made with the command line inside the server's container,
+# which asks the running server.
+made="$work/made"
+compose exec -T server excogitate people put sam Sam member >/dev/null
+compose exec -T server excogitate keys make person:sam read,chat "done test" 2>/dev/null >"$made"
+check "the command line adds a person and makes them a key" "$made" \
+  '.[0].key.person == "person:sam" and .[0].key.scopes == ["read", "chat"]
+   and (.[0].secret | startswith("exk_"))'
+person_key=$(jq -r .secret "$made")
+as_sam() { curl --silent --header "authorization: Bearer $person_key" --header 'content-type: application/json' "$@"; }
+me="$work/me"
+as_sam "$base/api/v1/me" >"$me"
+check "the key says who it is" "$me" '.[0].actor == "person:sam" and .[0].role == "member"'
+sam_tools="$work/sam_tools"
+as_sam "$base/mcp" -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}' >"$sam_tools"
+check "MCP lists only the tools the key may call" "$sam_tools" \
+  '.[0].result.tools | map(.name) | (index("chat") != null) and (index("memory") != null)'
+refused=$(as_sam --output /dev/null --write-out '%{http_code}' "$base/api/v1/workflows/nothing/runs" -d '{"inputs":{}}')
+[[ $refused == 403 ]] || fail "a key without the run scope started a run ($refused)"
+ok "a key without the run scope can't start a run"
+compose exec -T server excogitate keys revoke "$(jq -r .key.id "$made")" >/dev/null
+revoked=$(as_sam --output /dev/null --write-out '%{http_code}' "$base/api/v1/me")
+[[ $revoked == 401 ]] || fail "a revoked key still worked ($revoked)"
+ok "a revoked key stops at once"
+
 # Harness², on a server of its own: a regression is never adopted, a probe's
 # write never happens, a supported edit is adopted and logged, and a revert
 # puts the file back exactly.

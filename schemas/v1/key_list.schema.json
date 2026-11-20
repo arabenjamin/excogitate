@@ -1,0 +1,118 @@
+{
+  "$defs": {
+    "KeyView": {
+      "additionalProperties": false,
+      "description": "A key, as the API shows it: never its secret.",
+      "properties": {
+        "expires_at": {
+          "description": "When it stops working, if it was given an end.",
+          "format": "date-time",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "id": {
+          "description": "Its id, the part of the key after `exk_` and before the secret.",
+          "maxLength": 36,
+          "type": "string"
+        },
+        "last_used_at": {
+          "description": "When it was last used, to the minute. None if it never was.",
+          "format": "date-time",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "made_at": {
+          "description": "When it was made.",
+          "format": "date-time",
+          "type": "string"
+        },
+        "name": {
+          "description": "What it's for, such as \"Claude Code on the desktop\".",
+          "maxLength": 128,
+          "type": "string"
+        },
+        "person": {
+          "description": "Whose it is.",
+          "maxLength": 55,
+          "type": "string"
+        },
+        "revoked_at": {
+          "description": "When it was revoked, if it was.",
+          "format": "date-time",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "scopes": {
+          "description": "What it may be used for, as far as its person's role allows.",
+          "items": {
+            "$ref": "#/$defs/Scope"
+          },
+          "maxItems": 4,
+          "type": "array"
+        }
+      },
+      "required": [
+        "id",
+        "person",
+        "scopes",
+        "name",
+        "made_at"
+      ],
+      "type": "object"
+    },
+    "Scope": {
+      "description": "What a key may be used for.",
+      "oneOf": [
+        {
+          "const": "read",
+          "description": "Read jobs, runs, definitions, Harness² and metrics, and call tools\nthat only read.",
+          "type": "string"
+        },
+        {
+          "const": "chat",
+          "description": "Chat, through MCP or the front door, and mark a run good or bad.",
+          "type": "string"
+        },
+        {
+          "const": "run",
+          "description": "Start workflow runs, and call tools that change something.",
+          "type": "string"
+        },
+        {
+          "const": "admin",
+          "description": "Start Harness² attempts, revert its changes and hold agents.",
+          "type": "string"
+        }
+      ]
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "A page of keys, oldest first.",
+  "properties": {
+    "has_more": {
+      "description": "True if there are more past this page.",
+      "type": "boolean"
+    },
+    "items": {
+      "description": "The keys.",
+      "items": {
+        "$ref": "#/$defs/KeyView"
+      },
+      "maxItems": 200,
+      "type": "array"
+    }
+  },
+  "required": [
+    "items",
+    "has_more"
+  ],
+  "title": "KeyList",
+  "type": "object"
+}

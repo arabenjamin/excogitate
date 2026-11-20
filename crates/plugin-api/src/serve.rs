@@ -13,7 +13,7 @@ use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncRead, AsyncWrite};
 
 use crate::rpc::{self, INVALID_PARAMS, METHOD_NOT_FOUND, Peer, failure, success};
 use crate::wire::{CONTEXT_META, WireContext};
-use crate::{Tool, ToolContext};
+use crate::{Effect, Tool, ToolContext};
 
 /// The MCP protocol version spoken.
 pub const MCP_VERSION: &str = "2025-06-18";
@@ -176,6 +176,27 @@ impl McpHandler {
     #[must_use]
     pub fn listing(&self) -> Value {
         tool_listing(&self.tools)
+    }
+
+    /// What tool `name` declares it does, if there's a tool by that name.
+    #[must_use]
+    pub fn declared_effect(&self, name: &str) -> Option<Effect> {
+        self.tools
+            .get(name)
+            .map(|served| served.tool.definition().effect)
+    }
+
+    /// What a call to tool `name` with `arguments` would do, if there's a
+    /// tool by that name. Arguments that don't meet its schema count as a
+    /// write, since nothing can be said about them.
+    #[must_use]
+    pub fn effect_of(&self, name: &str, arguments: &Value) -> Option<Effect> {
+        let Served { tool, input } = self.tools.get(name)?;
+        Some(if input.check(arguments).is_ok() {
+            tool.effect_of(arguments)
+        } else {
+            Effect::Write
+        })
     }
 
     /// The reply to one message. A notification gets none.

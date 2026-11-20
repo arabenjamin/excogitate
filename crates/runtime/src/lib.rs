@@ -4,8 +4,10 @@
 
 #![deny(clippy::string_slice, clippy::indexing_slicing)]
 
+mod admin;
 mod archive;
 mod assemble;
+mod auth;
 mod capability;
 mod cli;
 mod config;
@@ -27,6 +29,10 @@ pub use archive::{
     NoteLine, RecordLine, Source, SpendLine, TaskLine, WorkingLine, export, import, summary,
 };
 pub use assemble::{Plugins, Runtime, RuntimeError};
+pub use auth::{
+    CallerRole, CallerView, KeyList, KeyMade, KeyRequest, KeyView, PersonList, PersonRequest,
+    PersonView, Role, Scope,
+};
 pub use cli::{Program, main};
 pub use config::{
     Config, ConfigError, HarnessConfig, OnlyWhenAsked, RetentionConfig, Route, ServerConfig,

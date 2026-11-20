@@ -244,6 +244,13 @@ impl Tool for DispatchedTool {
         definition
     }
 
+    fn effect_of(&self, arguments: &Value) -> Effect {
+        self.runtime
+            .registry
+            .effect_of(&self.definition.name, arguments)
+            .unwrap_or(self.definition.effect)
+    }
+
     async fn run(&self, arguments: Value, _: ToolContext) -> Result<ToolOutput, ToolFailure> {
         let name = self.definition.name.clone();
         let subject = RunSubject {

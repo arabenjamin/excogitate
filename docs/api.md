@@ -14,10 +14,49 @@ the scheduler. `docker compose up -d` runs it.
 
 ## Access
 
-**Everything but `/health` needs the owner key,** sent as
-`Authorization: Bearer <key>`. Set it in `EXCOGITATE_OWNER_KEY`. It has to be at
-least 32 characters, and the server won't start without it. There are no users
-or roles yet, so whoever holds the key is the owner.
+**Everything but `/health` needs a key,** sent as
+`Authorization: Bearer <key>`. There are two kinds:
+
+- **The owner key,** in `EXCOGITATE_OWNER_KEY`. It has to be at least 32
+  characters, and the server won't start without it. It may do everything,
+  and it's the only key that manages people and keys. It isn't stored, so it
+  can't be revoked or locked out; change the variable to change it.
+- **A person's key,** `exk_<id>_<secret>`, made by the owner for one
+  [person](#people-and-keys). Only the secret's SHA-256 is kept, and the
+  secret is shown once, when the key is made. The `exk_` prefix lets a secret
+  scanner find a leaked one.
+
+A person has a **role**, and each of their keys has **scopes**. A request may
+do what its key's scopes say, as far as the role allows. Both are checked on
+every request, so a revoked key, a disabled person or a lowered role takes
+effect at once.
+
+| Scope | What it opens |
+|---|---|
+| `read` | Every `GET` under `/api/v1` (jobs, runs, definitions, Harness², this document), `GET /v1/models`, `/metrics`, and tool calls that only read |
+| `chat` | `POST /v1/chat/completions`, the `chat` tool, and `PUT /api/v1/runs/{id}/feedback` |
+| `run` | `POST /api/v1/workflows/{name}/runs`, and tool calls that change something |
+| `admin` | `POST /api/v1/harness/attempts`, reverting a change, and holding or releasing an agent |
+
+| Role | Scopes its keys may use |
+|---|---|
+| `viewer` | `read` |
+| `member` | `read`, `chat`, `run` |
+| `admin` | all four |
+
+People and keys are the owner key's alone. Every route says what it needs in
+one table (`NEEDS` in `crates/runtime/src/http/mod.rs`), and a route left out
+of it is refused to every key, so a new route can't open by accident. The
+[OpenAPI document](#openapi) gives each operation's scope.
+
+A key that doesn't exist, has the wrong secret, or isn't a key at all is a
+401 that doesn't say which, so a guess learns nothing. A revoked or expired
+key, or one whose person is disabled, is a 401 that says so. A key without
+the scope a route needs is a 403 naming the scope, or the role, if the key
+has the scope but its person's role no longer allows it.
+
+There's no rate limit per key. `server.max_concurrent_requests` is the limit
+for everyone.
 
 **There's no TLS.** Compose publishes the port to this machine only. Put a TLS
 proxy in front before exposing it, or the key crosses the network in clear text.
@@ -184,6 +223,40 @@ budget and receipt. A call that ran and failed is a 200 with
 ([schema](../schemas/v1/tool_failure.schema.json)), because it ran. A tool
 that doesn't exist is a 404, and arguments that don't meet its schema are a
 400 with the problems, before anything runs.
+
+### People and keys
+
+Only the owner key reaches these. People are never deleted, so an actor on an
+old record always resolves; disable one instead, and their keys all stop.
+
+| Route | What it does |
+|---|---|
+| `PUT /api/v1/people/{slug}` | Adds a person (201) or changes one (200): `{"name", "role", "disabled"}` ([schema](../schemas/v1/person_request.schema.json)). Their id is `person:<slug>`, which is the actor on what they start. |
+| `GET /api/v1/people?limit=&offset=` | The people. |
+| `POST /api/v1/keys` | Makes a key: `{"person", "scopes", "name", "expires_at"}` ([schema](../schemas/v1/key_request.schema.json)). The reply has the `secret`, shown this once. A scope the person's role doesn't allow is a 403. A key doesn't expire unless `expires_at` is given. |
+| `GET /api/v1/keys?person=&limit=&offset=` | The keys, never their secrets, each with `last_used_at` (written at most once a minute), so a stale one is easy to find. |
+| `DELETE /api/v1/keys/{id}` | Revokes a key, at once. |
+
+Any key reaches these, to see itself:
+
+| Route | What it does |
+|---|---|
+| `GET /api/v1/me` | Who the key is: `actor`, `role`, the `scopes` it may use now, and its id ([schema](../schemas/v1/caller.schema.json)). |
+| `GET /api/v1/me/keys` | Its person's keys. |
+| `DELETE /api/v1/me/keys/{id}` | Revokes one of them, such as a key that leaked. |
+
+From the command line, with `EXCOGITATE_OWNER_KEY` set, these ask the running
+server (at `EXCOGITATE_URL`, or the address `EXCOGITATE_BIND` gives):
+
+```sh
+excogitate people put sam "Sam" member
+excogitate keys make person:sam read,chat "Claude Code on the desktop"
+excogitate keys person:sam
+excogitate keys revoke <id>
+```
+
+In Compose, run them in the server's container:
+`docker compose exec server excogitate keys …`.
 
 ### Definitions
 

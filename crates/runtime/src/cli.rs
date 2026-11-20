@@ -64,8 +64,8 @@ impl Program {
 
 /// Runs the command line: `serve` (MCP over stdio), `server` (HTTP, workers
 /// and the scheduler), `connect [url]`, `export <dir>`, `import <dir>`,
-/// `health` (the server's `/health`, for a container's health check), or
-/// `version`.
+/// `health` (the server's `/health`, for a container's health check),
+/// `people …` and `keys …` (asking the running server), or `version`.
 pub async fn main(program: Program) -> ExitCode {
     let arguments: Vec<String> = std::env::args().skip(1).collect();
     let arguments: Vec<&str> = arguments.iter().map(String::as_str).collect();
@@ -96,9 +96,16 @@ pub async fn main(program: Program) -> ExitCode {
             )
             .await
         }
+        ["people" | "keys", ..] => {
+            let Some(result) = crate::admin::run(program.name, &arguments).await else {
+                eprintln!("usage: {} …\n{}", program.name, crate::admin::USAGE);
+                return ExitCode::from(2);
+            };
+            result
+        }
         _ => {
             eprintln!(
-                "usage: {} [serve | server | connect [url] | export <dir> | import <dir> | health | version]",
+                "usage: {} [serve | server | connect [url] | export <dir> | import <dir> | health | people … | keys … | version]",
                 program.name
             );
             return ExitCode::from(2);

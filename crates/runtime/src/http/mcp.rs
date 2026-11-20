@@ -3,6 +3,7 @@
 
 use std::sync::Arc;
 
+use axum::Extension;
 use axum::body::Bytes;
 use axum::extract::State;
 use axum::http::{HeaderMap, StatusCode};
@@ -13,13 +14,67 @@ use plugin_api::rpc::{INVALID_REQUEST, PARSE_ERROR, failure};
 use serde_json::{Value, json};
 
 use super::spec::{Body, Errors, Kind, Param, Route};
-use super::{ApiError, App, detached, json_body};
+use super::{ApiError, App, detached, json_body, scope_for_tool};
+use crate::auth::{Caller, Scope};
+use plugin_api::Effect;
+
+/// The JSON-RPC error a call gets when its key may not make it: a code in
+/// the range JSON-RPC leaves to servers.
+const FORBIDDEN: i64 = -32001;
 
 fn rpc_error(status: StatusCode, code: i64, message: &str) -> Response {
     (status, axum::Json(failure(&Value::Null, code, message))).into_response()
 }
 
-async fn post_message(State(app): State<App>, headers: HeaderMap, body: Bytes) -> Response {
+/// Whether `caller` may make this `tools/call`, and if not, why. A tool
+/// that doesn't exist is left for the handler to say so.
+fn may_call(app: &App, caller: &Caller, params: Option<&Value>) -> Result<(), String> {
+    let params = params.cloned().unwrap_or_else(|| json!({}));
+    let Some(name) = params.get("name").and_then(Value::as_str) else {
+        return Ok(());
+    };
+    let arguments = params
+        .get("arguments")
+        .cloned()
+        .unwrap_or_else(|| json!({}));
+    match app.mcp.effect_of(name, &arguments) {
+        Some(effect) => caller.may(scope_for_tool(name, effect)),
+        None => Ok(()),
+    }
+}
+
+/// Whether `caller` sees tool `name` listed: when it may make the call the
+/// tool declares, or, for a tool declared as writing, when it may read,
+/// since such a tool often reads too (memory searches, `http_request`
+/// GETs). A call that would write is still refused, with the scope it needs.
+fn listed_for(caller: &Caller, name: &str, declared: Effect) -> bool {
+    caller.may(scope_for_tool(name, declared)).is_ok()
+        || (declared == Effect::Write && name != "chat" && caller.may(Scope::Read).is_ok())
+}
+
+/// Leaves out of a `tools/list` reply each tool the caller can't call at
+/// all, so a client doesn't offer one it can't use.
+fn only_callable(app: &App, caller: &Caller, mut reply: Value) -> Value {
+    if let Some(tools) = reply
+        .pointer_mut("/result/tools")
+        .and_then(Value::as_array_mut)
+    {
+        tools.retain(|tool| {
+            let name = tool.get("name").and_then(Value::as_str).unwrap_or("");
+            app.mcp
+                .declared_effect(name)
+                .is_some_and(|effect| listed_for(caller, name, effect))
+        });
+    }
+    reply
+}
+
+async fn post_message(
+    State(app): State<App>,
+    Extension(caller): Extension<Caller>,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Response {
     if let Some(version) = headers.get("mcp-protocol-version")
         && version.to_str().ok() != Some(MCP_VERSION)
     {
@@ -42,7 +97,15 @@ async fn post_message(State(app): State<App>, headers: HeaderMap, body: Bytes) -
     if message.get("id").is_none() || message.get("method").is_none() {
         return StatusCode::ACCEPTED.into_response();
     }
-    let reply = if message.get("method").and_then(Value::as_str) == Some("tools/call") {
+    let method = message.get("method").and_then(Value::as_str);
+    if method == Some("tools/call")
+        && let Err(detail) = may_call(&app, &caller, message.get("params"))
+    {
+        let id = message.get("id").cloned().unwrap_or(Value::Null);
+        return axum::Json(failure(&id, FORBIDDEN, &detail)).into_response();
+    }
+    let listing = method == Some("tools/list");
+    let reply = if method == Some("tools/call") {
         let permit = match app.permit() {
             Ok(permit) => permit,
             Err(error) => return error.into_response(),
@@ -56,6 +119,7 @@ async fn post_message(State(app): State<App>, headers: HeaderMap, body: Bytes) -
         app.mcp.handle(&message).await
     };
     match reply {
+        Some(reply) if listing => axum::Json(only_callable(&app, &caller, reply)).into_response(),
         Some(reply) => axum::Json(reply).into_response(),
         None => ApiError::internal(&"a request got no reply").into_response(),
     }

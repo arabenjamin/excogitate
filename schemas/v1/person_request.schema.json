@@ -1,0 +1,50 @@
+{
+  "$defs": {
+    "Role": {
+      "description": "What a person may do: the most their keys' scopes can open.",
+      "oneOf": [
+        {
+          "const": "viewer",
+          "description": "Reads.",
+          "type": "string"
+        },
+        {
+          "const": "member",
+          "description": "Reads, chats and runs workflows.",
+          "type": "string"
+        },
+        {
+          "const": "admin",
+          "description": "Everything but people and keys, which are the owner's.",
+          "type": "string"
+        }
+      ]
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "A person to add, or what to change about one. People are never deleted,\nso an actor on an old record always resolves; disable one instead.",
+  "properties": {
+    "disabled": {
+      "default": false,
+      "description": "Whether their keys stop working. False if left out.",
+      "type": "boolean"
+    },
+    "name": {
+      "description": "Their name, for showing.",
+      "maxLength": 128,
+      "minLength": 1,
+      "type": "string"
+    },
+    "role": {
+      "$ref": "#/$defs/Role",
+      "description": "What they may do."
+    }
+  },
+  "required": [
+    "name",
+    "role"
+  ],
+  "title": "PersonRequest",
+  "type": "object"
+}

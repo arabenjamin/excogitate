@@ -1,0 +1,71 @@
+{
+  "$defs": {
+    "Scope": {
+      "description": "What a key may be used for.",
+      "oneOf": [
+        {
+          "const": "read",
+          "description": "Read jobs, runs, definitions, Harness² and metrics, and call tools\nthat only read.",
+          "type": "string"
+        },
+        {
+          "const": "chat",
+          "description": "Chat, through MCP or the front door, and mark a run good or bad.",
+          "type": "string"
+        },
+        {
+          "const": "run",
+          "description": "Start workflow runs, and call tools that change something.",
+          "type": "string"
+        },
+        {
+          "const": "admin",
+          "description": "Start Harness² attempts, revert its changes and hold agents.",
+          "type": "string"
+        }
+      ]
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "A key to make.",
+  "properties": {
+    "expires_at": {
+      "default": null,
+      "description": "When it stops working. It never does if left out.",
+      "format": "date-time",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "name": {
+      "description": "What it's for, such as \"Claude Code on the desktop\".",
+      "maxLength": 128,
+      "minLength": 1,
+      "type": "string"
+    },
+    "person": {
+      "description": "Whose it is: `person:` and their slug.",
+      "maxLength": 55,
+      "pattern": "^person:[a-z0-9][a-z0-9-]{0,47}$",
+      "type": "string"
+    },
+    "scopes": {
+      "description": "What it may be used for. Each must be one the person's role allows.",
+      "items": {
+        "$ref": "#/$defs/Scope"
+      },
+      "maxItems": 4,
+      "minItems": 1,
+      "type": "array"
+    }
+  },
+  "required": [
+    "person",
+    "scopes",
+    "name"
+  ],
+  "title": "KeyRequest",
+  "type": "object"
+}

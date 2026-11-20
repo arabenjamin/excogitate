@@ -15,8 +15,9 @@ Every variable starts with the product's name in capitals. The image and
 | `EXCOGITATE_NEO4J_DATABASE` | the server's default | With `STORE=neo4j`: the database to use. |
 | `EXCOGITATE_PLUGINS` | none | `plugins.yaml`: what each compiled-in plugin may use (schema: [`schemas/v1/plugins_config.schema.json`](../schemas/v1/plugins_config.schema.json)). Without it, nothing is granted. See [plugins](plugins.md#two-ways-to-run). |
 | `EXCOGITATE_DEFINITIONS` | `definitions` | Where agent, workflow and schedule files live. See [workflows](workflows.md). |
-| `EXCOGITATE_OWNER_KEY` | none | The `server` command won't start without it. At least 32 characters. See [the API](api.md). |
+| `EXCOGITATE_OWNER_KEY` | none | The `server` command won't start without it. At least 32 characters. It may do everything, and only it manages people and keys. See [access](api.md#access). |
 | `EXCOGITATE_BIND` | `127.0.0.1:8080` | Where the server listens. |
+| `EXCOGITATE_URL` | from `EXCOGITATE_BIND` | Where `people` and `keys` on the command line find the server. See [people and keys](api.md#people-and-keys). |
 | `HOST_PORT` | `8080` | Compose only: the port on this machine. |
 | `FEATURES` | none | Compose only: features to build in, such as `app/neo4j`. |
 | `EXCOGITATE_EXTENSION_DIR` | `.cache/duckdb-extensions` | DuckDB's extensions, from `scripts/fetch_duckdb_extensions.sh`. The image includes them. Nothing is downloaded at run time. |
