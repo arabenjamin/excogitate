@@ -3,6 +3,12 @@
 All notable changes are listed here. The file is generated from the
 Conventional Commits by [git-cliff](https://git-cliff.org) (`cliff.toml`).
 
+## [0.22.0] - 2026-11-19
+
+### Fixed
+
+- The OpenAPI document says what the server does (breaking)
+
 ## [0.21.0] - 2026-11-16
 
 ### Features
