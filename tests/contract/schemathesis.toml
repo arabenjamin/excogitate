@@ -1,0 +1,15 @@
+# What Schemathesis is told beyond the document, each with why. Anything it
+# finds that isn't here fails the run; adding to this file is a review.
+
+# A body over 8 MiB is refused with a 413 before its schema is read, and no
+# document can state a limit on a whole body. It's a refusal like any other.
+[checks.negative_data_rejection]
+expected-statuses = ["400", "401", "403", "404", "405", "406", "409", "413", "415", "422", "428", "429", "5xx"]
+
+# The front door's last message must be the user's, and say something. No
+# JSON Schema can say which item in a list comes last, so a request the schema
+# allows can still be refused; the 400 and the rule are in the document.
+[[operations]]
+include-path = "/v1/chat/completions"
+include-method = "POST"
+checks.positive_data_acceptance.expected-statuses = ["2xx", "3xx", "400", "401", "403", "404", "409", "429", "5xx"]

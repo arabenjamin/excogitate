@@ -95,11 +95,19 @@ plugins change.
 
 A test calls every route, its error replies included, and checks each reply's
 status, content type and body against the server's own document.
-Schemathesis (4.32.7, `--checks all`, 50 examples an operation) finds two
-things a document can't say, and nothing else: a body over 8 MiB is refused
-with a 413 before its schema is read, and the front door's last message must
-be the user's, which no JSON Schema can state; both replies are declared. An
-MCP message is held to the very schema the document gives it.
+An MCP message is held to the very schema the document gives it.
+
+`scripts/contract_check.sh` runs Schemathesis (pinned with its dependencies by
+hash, in `tests/contract/`) against a server alone on a network with no way
+out: it calls every operation with generated requests and checks each reply
+against the document. The done-test runs it with the same requests every time
+(near enough: the stateful phase varies a little), so a failure on `main` is
+the change's. A weekly workflow runs it with new requests and opens an issue
+with the seed that repeats them (`CONTRACT_RANDOM=1 CONTRACT_SEED=<seed>`).
+[`tests/contract/schemathesis.toml`](../tests/contract/schemathesis.toml)
+holds the only two things it's told beyond the document, each with why: a body
+over 8 MiB is refused with a 413 before its schema is read, and the front
+door's last message must be the user's, which no JSON Schema can state.
 
 A schema's own parts (`$defs`) become components of the document, with their
 references pointed there. Two different parts with one name are told apart by

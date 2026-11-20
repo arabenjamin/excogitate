@@ -5,7 +5,8 @@
 # find it again in a new session, that a hostile model can't crash it or get
 # it past its budgets or make a chat write what no profile may, that Harness² adopts only what the evidence supports
 # and can be reverted, that the Neo4j store keeps what it's given, and that
-# an export from it imports into a new DuckDB store.
+# an export from it imports into a new DuckDB store, and that every reply
+# matches the OpenAPI document the server serves.
 #
 # Set DONE_TEST_NO_BUILD=1 if the images are already built.
 set -euo pipefail
@@ -316,6 +317,12 @@ moved_found="$work/moved_found"
 } | compose run --rm --no-deps -T moved_session >"$moved_found"
 check "what was stored in the graph is found in the new store" "$moved_found" \
   'map(select(.id==1))[0].result.structuredContent.result.hits[0].text | contains("Honey badgers")'
+
+# The contract: every reply matches the document the server serves.
+contract="$work/contract"
+scripts/contract_check.sh >"$contract" 2>&1 \
+  || fail "a reply doesn't match the document, or a request was handled as it doesn't say" "$contract"
+ok "every operation does what the document says, by Schemathesis's fixed requests"
 
 passed=1
 echo "The done-test passed."

@@ -21,6 +21,7 @@ compose.yaml
 .env.example
 tests/done/*
 scripts/done_test.sh
+scripts/contract_check.sh
 scripts/name-allowlist
 scripts/check_name.sh
 templates/plugin/**

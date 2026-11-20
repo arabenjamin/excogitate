@@ -150,7 +150,51 @@ services:
       - ./tests/done/config.yaml:/config/config.yaml:ro
       - moved-data:/data
 
+  # The contract check: a server alone on a network with no way out, and
+  # Schemathesis calling it. Only in the contract profile.
+  contract_server:
+    image: excogitate:local
+    profiles: [contract]
+    command: [server]
+    init: true
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    environment:
+      EXCOGITATE_OWNER_KEY: contract-owner-key-of-sufficient-length
+      EXCOGITATE_BIND: 0.0.0.0:8080
+    volumes:
+      - ./tests/done/models.yaml:/config/models.yaml:ro
+      - ./tests/done/config.yaml:/config/config.yaml:ro
+      - contract-data:/data
+    networks: [contract]
+
+  contract:
+    build:
+      context: tests/contract
+    image: excogitate-contract:local
+    profiles: [contract]
+    depends_on:
+      contract_server:
+        condition: service_healthy
+    environment:
+      CONTRACT_URL: http://contract_server:8080
+      CONTRACT_KEY: contract-owner-key-of-sufficient-length
+      CONTRACT_RANDOM: ${CONTRACT_RANDOM:-}
+      CONTRACT_SEED: ${CONTRACT_SEED:-}
+      CONTRACT_EXAMPLES: ${CONTRACT_EXAMPLES:-25}
+    networks: [contract]
+
+networks:
+  contract:
+    internal: true
+
 volumes:
+  contract-data:
   chaos-data:
   moved-data:
   harness-data:

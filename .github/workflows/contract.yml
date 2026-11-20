@@ -1,0 +1,75 @@
+name: Contract
+
+# The contract check with new requests each week: Schemathesis calls every
+# operation of a server alone on a network with no way out, and checks each
+# reply against the document it serves. The done-test runs it with the same
+# requests every time; this one looks for what those miss, and opens an issue
+# with the requests to repeat it. Actions are pinned by commit SHA.
+on:
+  schedule:
+    - cron: "17 6 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
+jobs:
+  contract:
+    name: Contract, new requests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: docker/setup-buildx-action@594f3bf4285d9ea8dc53c9a0c9c4092420091003 # v4.4.0
+      - uses: docker/bake-action@018cb6412ab401ebaa809aa5f85966b74628600f # v7.4.0
+        env:
+          FEATURES: app/neo4j
+          DONE_DEFINITIONS: /tmp
+        with:
+          files: |
+            compose.yaml
+            tests/done/compose.yaml
+          targets: server
+          load: true
+          set: |
+            *.cache-from=type=gha
+            *.cache-to=type=gha,mode=max
+      - name: Check, with new requests
+        id: check
+        shell: bash
+        env:
+          CONTRACT_RANDOM: "1"
+          CONTRACT_EXAMPLES: "100"
+        run: scripts/contract_check.sh 2>&1 | tee contract.log
+      - name: Open an issue with what it found
+        if: failure() && steps.check.outcome == 'failure'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh label create contract --force --description "The weekly contract check" >/dev/null
+          open=$(gh issue list --label contract --state open --json number --jq '.[0].number // empty')
+          if [[ -n $open ]]; then
+            gh issue comment "$open" --body "Found again: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+            exit 0
+          fi
+          {
+            echo "The weekly contract check found a reply that doesn't match the document, or a request handled as it doesn't say."
+            echo
+            echo "Run: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+            echo
+            echo '```'
+            sed -n '/FAILURES/,$p' contract.log | tail -c 50000
+            echo '```'
+            echo
+            echo "Repeat it with \`CONTRACT_RANDOM=1 CONTRACT_SEED=<the seed above> scripts/contract_check.sh\`."
+          } > issue.md
+          gh issue create --title "Contract check: a reply doesn't match the document" \
+            --label contract --body-file issue.md
