@@ -133,6 +133,7 @@ async fn harness(script: Vec<ChaosStep>, extra: Vec<Arc<Fake>>, log: Arc<Recorde
         stop: dispatch::StopSignal::new(),
         sources: workflow::SourceChoices::default(),
         requested_by: None,
+        private: false,
     };
     Harness {
         engine,
@@ -207,7 +208,7 @@ async fn every_step_of_a_run_names_who_asked_for_it() {
     define(&harness, steps, json!({})).await;
     let asking = harness
         .engine
-        .for_requester(Some("schedule:daily".to_owned()));
+        .for_requester(Some("schedule:daily".to_owned()), false);
     let run = asking.run("flow", subject()).await.unwrap();
     assert_eq!(run.outcome, RunOutcome::Completed, "{run:?}");
     let listed = harness

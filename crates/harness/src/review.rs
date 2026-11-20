@@ -202,6 +202,7 @@ mod tests {
             agent: Some("chat".to_owned()),
             harness: Some("h".to_owned()),
             requested_by: None,
+            private: false,
             calls: "todos_list ran".to_owned(),
             steps: vec![
                 timed(Step::Message {

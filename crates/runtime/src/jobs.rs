@@ -23,6 +23,12 @@ const SCHEDULE_PURPOSE: &str = "schedule";
 /// Time past a run's own budget for it to finish and be recorded.
 const MARGIN: Duration = Duration::from_secs(10);
 
+/// Whether a job's runs are private to whoever asked: its payload says so,
+/// as a chat's or a workflow's does.
+pub(crate) fn is_private(job: &Job) -> bool {
+    job.payload.get("private").and_then(Value::as_bool) == Some(true)
+}
+
 /// The kind of job that runs a workflow.
 pub(crate) const WORKFLOW_KIND: &str = "workflow";
 
@@ -34,6 +40,7 @@ pub(crate) fn workflow_job(
     inputs: Value,
     priority: i32,
     requested_by: Actor,
+    private: bool,
     key: Option<(&str, &str)>,
 ) -> Job {
     let id = key.map_or_else(JobId::generate, |(scope, key)| {
@@ -43,10 +50,12 @@ pub(crate) fn workflow_job(
     Job {
         id,
         kind: WORKFLOW_KIND.to_owned(),
-        payload: Value::Object(serde_json::Map::from_iter([
-            ("workflow".to_owned(), Value::String(workflow.to_owned())),
-            ("inputs".to_owned(), inputs),
-        ])),
+        payload: serde_json::to_value(WorkflowArgs {
+            workflow: workflow.to_owned(),
+            inputs,
+            private,
+        })
+        .unwrap_or_default(),
         priority,
         status: JobStatus::Queued,
         requested_by,
@@ -70,6 +79,9 @@ pub struct WorkflowArgs {
     /// Its inputs, which must fit what it declares.
     #[schemars(extend("x-extension" = "checked against the workflow's inputs schema"))]
     pub inputs: Value,
+    /// True if its runs are private to whoever asked. False if left out.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub private: bool,
 }
 
 /// Runs a chat as a job. A run that doesn't end in an answer is a failed
@@ -104,6 +116,7 @@ impl JobHandler for ChatJob {
                 SCHEDULE_PURPOSE,
                 Some(cap),
                 Some(job.requested_by.to_string()),
+                args.private.unwrap_or(false),
             )
             .await
             .map_err(|failure| failure.message().to_owned())?;
@@ -150,7 +163,7 @@ impl JobHandler for WorkflowJob {
         let run = self
             .0
             .workflows
-            .for_requester(Some(job.requested_by.to_string()))
+            .for_requester(Some(job.requested_by.to_string()), args.private)
             .run(&args.workflow, args.inputs)
             .await
             .map_err(|error| error.to_string())?;

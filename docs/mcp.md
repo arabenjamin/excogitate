@@ -35,7 +35,7 @@ scope it needs. It isn't reported as an unknown tool, so the reason is clear.
 
 | Tool | What it does |
 |---|---|
-| `chat` | Asks Excogitate, such as where a matter stands: a [routed turn](workflows.md#the-routed-front-door) looks up what it needs and a writer answers. Returns `answer`, `stopped_because` and the full `receipt`. |
+| `chat` | Asks Excogitate, such as where a matter stands: a [routed turn](workflows.md#the-routed-front-door) looks up what it needs and a writer answers. Returns `answer`, `stopped_because` and the full `receipt`. `"private": true` keeps the run to whoever asked ([private runs](api.md#private-runs)). |
 | `memory` | [The memory tool](tools.md), called directly. |
 | `http_request` | [The fetch tool](tools.md), called directly. |
 | `job_history` | [What the job queue ran](tools.md#job_history), the latest first. |

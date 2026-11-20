@@ -58,12 +58,16 @@
           "type": "integer"
         },
         "payload": {
-          "description": "Its input.",
+          "description": "Its input. Null for someone else's private job.",
           "x-extension": "the job kind's own payload"
         },
         "priority": {
           "description": "Higher runs first.",
           "type": "integer"
+        },
+        "private": {
+          "description": "True if its runs are private to whoever asked. Someone else's\nprivate job is listed, but its payload, result and error are left\nout: that it ran isn't private, what it was asked is.",
+          "type": "boolean"
         },
         "requested_by": {
           "description": "Who asked for it.",
@@ -88,6 +92,7 @@
         "id",
         "kind",
         "payload",
+        "private",
         "priority",
         "status",
         "requested_by",

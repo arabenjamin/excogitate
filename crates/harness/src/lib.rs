@@ -42,7 +42,7 @@ pub use lesson::{
 };
 pub use pick::{
     Evidence, Finding, MARKED_BAD, MIN_REPEATS, Marked, Pick, Recent, Reviewed, best,
-    chat_evidence, chat_failures, evidence, failure, pick, profile_at, task,
+    chat_evidence, chat_failures, evidence, failure, pick, private_only, profile_at, task,
 };
 pub use records::{
     ATTEMPT_TYPE, CALIBRATION_TYPE, CHANGE_TYPE, HOLD_TYPE, declarations, hold_id, record,

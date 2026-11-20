@@ -103,8 +103,9 @@ pub const MARKED_BAD: &str = "the owner marked it bad";
 pub struct Finding {
     /// How, in the words runs that went wrong the same way share.
     pub failure: String,
-    /// What the run was asked.
-    pub task: String,
+    /// What the run was asked. None for a private run: it counts as
+    /// evidence, but its words are never taken from it.
+    pub task: Option<String>,
     /// The run's calls line.
     pub calls: String,
     /// The owner's note, when the owner marked the run bad.
@@ -132,12 +133,49 @@ pub type Marked = std::collections::BTreeMap<String, Option<String>>;
 pub type Reviewed = std::collections::BTreeMap<String, (String, String)>;
 
 fn finding(run: &Trajectory, failure: String, note: Option<String>) -> Option<Finding> {
+    let task = if run.private { None } else { Some(task(run)?) };
     Some(Finding {
         failure,
-        task: task(run)?,
+        task,
         calls: run.calls.clone(),
         note,
     })
+}
+
+/// How many findings an agent needs for `why` to be a pattern.
+fn needed(why: &str) -> usize {
+    if why == MARKED_BAD { 1 } else { MIN_REPEATS }
+}
+
+/// The patterns that are evidence enough but whose runs are all private, so
+/// there's no task to replay without quoting one: one line each, to say why
+/// nothing was attempted for them.
+#[must_use]
+pub fn private_only(evidence: &[Evidence]) -> Vec<String> {
+    let mut lines = Vec::new();
+    for agent in evidence {
+        let mut seen = std::collections::BTreeSet::new();
+        for finding in &agent.findings {
+            let why = &finding.failure;
+            if !seen.insert(why.clone()) {
+                continue;
+            }
+            let same: Vec<&Finding> = agent
+                .findings
+                .iter()
+                .filter(|other| &other.failure == why)
+                .collect();
+            if same.len() >= needed(why) && same.iter().all(|found| found.task.is_none()) {
+                lines.push(format!(
+                    "{}: {} private runs went wrong the same way ({why}); there's no task \
+                     to replay without quoting one",
+                    agent.agent,
+                    same.len()
+                ));
+            }
+        }
+    }
+    lines
 }
 
 /// An agent's own runs as evidence: each run's failure, and each run the
@@ -348,10 +386,20 @@ pub fn best(evidence: &[Evidence]) -> Option<Pick> {
                 .iter()
                 .filter(|other| &other.failure == why)
                 .count();
-            let needed = if why == MARKED_BAD { 1 } else { MIN_REPEATS };
-            if repeats < needed || best.as_ref().is_some_and(|b| b.repeats as usize >= repeats) {
+            if repeats < needed(why) || best.as_ref().is_some_and(|b| b.repeats as usize >= repeats)
+            {
                 continue;
             }
+            // The task is the newest of these runs that isn't private; a
+            // private run counts, but its words never become a task.
+            let Some(task) = agent
+                .findings
+                .iter()
+                .filter(|other| &other.failure == why)
+                .find_map(|other| other.task.clone())
+            else {
+                continue;
+            };
             let runs = if agent.from_chats {
                 "chats it took part in"
             } else {
@@ -371,7 +419,7 @@ pub fn best(evidence: &[Evidence]) -> Option<Pick> {
             best = Some(Pick {
                 request: Request {
                     agent: agent.agent.clone(),
-                    task: newest.task.clone(),
+                    task,
                     inputs: None,
                     target: crate::Target::Agent,
                     routed: agent.from_chats,
@@ -428,6 +476,7 @@ mod tests {
                 },
                 skills: vec![],
                 requested_by: None,
+                private: false,
             }),
             timed(Step::Message {
                 role: Speaker::User,
@@ -458,6 +507,7 @@ mod tests {
             agent: Some("agent:helper".to_owned()),
             harness: Some("h".to_owned()),
             requested_by: None,
+            private: false,
             calls: "calls".to_owned(),
             steps,
             unreadable: 0,
@@ -480,6 +530,47 @@ mod tests {
         assert_eq!(failure(&failed).as_deref(), Some("memory failed"));
         let silent = run("q", None, Outcome::ModelFailed);
         assert_eq!(failure(&silent).as_deref(), Some("ended model_failed"));
+    }
+
+    fn private(question: &str, tool: Option<CallStatus>, outcome: Outcome) -> Trajectory {
+        let mut run = run(question, tool, outcome);
+        run.private = true;
+        run
+    }
+
+    #[test]
+    fn a_private_run_counts_but_its_words_are_never_the_task() {
+        // The newest failure is private: it counts toward the pattern, and
+        // the task is the newest one that isn't.
+        let agents = [recent(
+            "helper",
+            vec![
+                private("secret", Some(CallStatus::Failed), Outcome::Answered),
+                run("shared", Some(CallStatus::Failed), Outcome::Answered),
+            ],
+        )];
+        let picked = pick(&agents).unwrap();
+        assert_eq!(picked.repeats, 2);
+        assert_eq!(picked.request.task, "shared");
+        let said = serde_json::to_string(&picked).unwrap();
+        assert!(!said.contains("secret"), "{said}");
+
+        // All private: evidence enough, but nothing to replay without
+        // quoting one, so nothing is picked and the skip says why.
+        let only = [recent(
+            "helper",
+            vec![
+                private("alpha-secret", Some(CallStatus::Failed), Outcome::Answered),
+                private("beta-secret", Some(CallStatus::Failed), Outcome::Answered),
+            ],
+        )];
+        assert_eq!(pick(&only), None);
+        let none = Marked::new();
+        let evidence = [evidence(&only[0], &none)];
+        let lines = private_only(&evidence);
+        assert_eq!(lines.len(), 1, "{lines:?}");
+        assert!(lines[0].contains("2 private runs"), "{lines:?}");
+        assert!(!lines[0].contains("secret"), "{lines:?}");
     }
 
     #[test]

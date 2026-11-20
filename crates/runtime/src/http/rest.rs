@@ -41,6 +41,10 @@ pub struct RunRequest {
     /// Send the same key again and no second run starts, so a retry is safe.
     #[schemars(length(min = 1, max = 128))]
     pub idempotency_key: Option<String>,
+    /// True to keep its runs to whoever asked, and the owner, so their words
+    /// never reach Harness². Left out, the key's default decides.
+    #[serde(default)]
+    pub private: Option<bool>,
 }
 
 /// A run that was asked for.
@@ -89,9 +93,13 @@ pub struct JobView {
     /// What kind of work it is.
     #[schemars(length(max = 64))]
     pub kind: String,
-    /// Its input.
+    /// Its input. Null for someone else's private job.
     #[schemars(extend("x-extension" = "the job kind's own payload"))]
     pub payload: Value,
+    /// True if its runs are private to whoever asked. Someone else's
+    /// private job is listed, but its payload, result and error are left
+    /// out: that it ran isn't private, what it was asked is.
+    pub private: bool,
     /// Higher runs first.
     pub priority: i32,
     /// Where it stands.
@@ -113,9 +121,26 @@ pub struct JobView {
     pub result: Option<Value>,
 }
 
+impl JobView {
+    /// The job as `caller` may see it.
+    pub(super) fn for_caller(job: Job, caller: &Caller) -> Self {
+        let private = crate::jobs::is_private(&job);
+        let shown = caller.sees(private, Some(job.requested_by.as_str()));
+        let mut view = Self::from(job);
+        view.private = private;
+        if !shown {
+            view.payload = Value::Null;
+            view.result = None;
+            view.last_error = None;
+        }
+        view
+    }
+}
+
 impl From<Job> for JobView {
     fn from(job: Job) -> Self {
         Self {
+            private: crate::jobs::is_private(&job),
             id: job.id.to_string(),
             kind: job.kind,
             payload: job.payload,
@@ -242,6 +267,7 @@ fn kind_named(name: &str) -> Result<DefinitionKind, ApiError> {
 
 async fn list_jobs(
     State(app): State<App>,
+    Extension(caller): Extension<Caller>,
     Query(params): Params,
 ) -> Result<Json<JobList>, ApiError> {
     only(&params, &["status", "limit", "offset"])?;
@@ -257,13 +283,18 @@ async fn list_jobs(
         .await
         .map_err(|error| ApiError::internal(&error))?;
     Ok(Json(JobList {
-        items: found.items.into_iter().map(JobView::from).collect(),
+        items: found
+            .items
+            .into_iter()
+            .map(|job| JobView::for_caller(job, &caller))
+            .collect(),
         has_more: found.has_more,
     }))
 }
 
 async fn get_job(
     State(app): State<App>,
+    Extension(caller): Extension<Caller>,
     Path(id): Path<String>,
 ) -> Result<Json<JobView>, ApiError> {
     let id = Uuid::parse_str(&id).map_err(|_| ApiError::invalid("a job id is a UUID"))?;
@@ -273,7 +304,7 @@ async fn get_job(
         .get_job(JobId::from_uuid(id))
         .await
         .map_err(|error| ApiError::internal(&error))?
-        .map(|job| Json(job.into()))
+        .map(|job| Json(JobView::for_caller(job, &caller)))
         .ok_or_else(|| ApiError::not_found("there's no job with that id"))
 }
 
@@ -342,6 +373,7 @@ async fn start_run(
         request.inputs,
         request.priority,
         caller.actor.clone(),
+        caller.private(request.private),
         key,
     );
     let id = job.id;

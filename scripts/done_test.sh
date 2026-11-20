@@ -221,6 +221,16 @@ sams_runs="$work/sams_runs"
 as_sam "$base/api/v1/runs?requested_by=person:sam" >"$sams_runs"
 check "a run names who asked for it" "$sams_runs" \
   '.[0].items | length == 1 and .[0].agent == "tool:calculate" and .[0].requested_by == "person:sam"'
+# A key that keeps what it starts private: another person can't see the run.
+private_key=$(api "$base/api/v1/keys" -d '{"person":"person:sam","scopes":["read"],"name":"private","private_by_default":true}' | jq -r .secret)
+compose exec -T server excogitate people put ada Ada viewer >/dev/null
+ada_key=$(compose exec -T server excogitate keys make person:ada read "done test" 2>/dev/null | jq -r .secret)
+curl --silent --header "authorization: Bearer $private_key" --header 'content-type: application/json' \
+  "$base/mcp" -d "$(call 8 calculate '{"expression":"7 * 7"}')" >/dev/null
+adas_runs="$work/adas_runs"
+curl --silent --header "authorization: Bearer $ada_key" "$base/api/v1/runs?requested_by=person:sam" >"$adas_runs"
+check "a private run is left out for someone else, and counted" "$adas_runs" \
+  '.[0].hidden == 1 and (.[0].items | all(.private == false))'
 refused=$(as_sam --output /dev/null --write-out '%{http_code}' "$base/api/v1/workflows/nothing/runs" -d '{"inputs":{}}')
 [[ $refused == 403 ]] || fail "a key without the run scope started a run ($refused)"
 ok "a key without the run scope can't start a run"

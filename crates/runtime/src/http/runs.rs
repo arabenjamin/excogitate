@@ -1,10 +1,10 @@
 //! Runs and their trajectories, as Harness² and a person read them.
 
-use axum::Json;
 use axum::body::Bytes;
 use axum::extract::{Path, Query, State};
 use axum::http::HeaderMap;
 use axum::routing::{get, put};
+use axum::{Extension, Json};
 use chrono::{DateTime, Utc};
 use dispatch::{Trajectory, read_trajectory};
 use events::{RunQuery, RunSummary};
@@ -17,6 +17,7 @@ use schema::schema_of;
 
 use super::spec::{Body, ID, Kind, LIMIT, OFFSET, Param, Route};
 use super::{ApiError, App, json_body};
+use crate::auth::Caller;
 
 /// The most steps of one trajectory served. A run's budget caps its calls at
 /// 512 each, so a whole run fits.
@@ -43,6 +44,8 @@ pub struct RunView {
     /// started where no one asked, such as over stdio.
     #[schemars(length(max = 128))]
     pub requested_by: Option<String>,
+    /// True if only whoever asked for it, and the owner, may see it.
+    pub private: bool,
     /// When it started.
     pub started_at: DateTime<Utc>,
     /// When it ended. None while it runs, or if it was cut short.
@@ -59,6 +62,7 @@ impl From<RunSummary> for RunView {
             agent: run.agent,
             harness: run.harness,
             requested_by: run.requested_by,
+            private: run.private,
             started_at: run.started_at,
             ended_at: run.ended_at,
             outcome: run.outcome,
@@ -75,6 +79,8 @@ pub struct RunList {
     pub items: Vec<RunView>,
     /// True if there are more past this page.
     pub has_more: bool,
+    /// How many runs that match are someone else's private runs, left out.
+    pub hidden: u64,
 }
 
 fn filter(
@@ -93,6 +99,7 @@ fn filter(
 
 async fn list_runs(
     State(app): State<App>,
+    Extension(caller): Extension<Caller>,
     Query(params): Params,
 ) -> Result<Json<RunList>, ApiError> {
     only(
@@ -111,6 +118,7 @@ async fn list_runs(
         requested_by: filter(&params, "requested_by")?,
         offset: usize::try_from(number(&params, "offset", 0)?).unwrap_or(usize::MAX),
         limit: usize::try_from(limit).unwrap_or(usize::MAX),
+        visible: caller.visibility(),
     };
     let found = app
         .runtime
@@ -121,11 +129,13 @@ async fn list_runs(
     Ok(Json(RunList {
         items: found.runs.into_iter().map(RunView::from).collect(),
         has_more: found.has_more,
+        hidden: found.hidden,
     }))
 }
 
 async fn get_run(
     State(app): State<App>,
+    Extension(caller): Extension<Caller>,
     Path(id): Path<String>,
 ) -> Result<Json<Trajectory>, ApiError> {
     let run: RunId = id
@@ -134,6 +144,9 @@ async fn get_run(
     read_trajectory(app.runtime.sink.as_ref(), run, MAX_STEPS)
         .await
         .map_err(|error| ApiError::internal(&error))?
+        // Someone else's private run isn't there, as far as this caller can
+        // tell: the same answer as no run, so a guess learns nothing.
+        .filter(|found| caller.sees(found.private, found.requested_by.as_deref()))
         .map(Json)
         .ok_or_else(|| ApiError::not_found("there's no run with that id"))
 }
@@ -142,6 +155,7 @@ async fn get_run(
 /// bad is evidence for Harness²'s picker on its own.
 async fn put_feedback(
     State(app): State<App>,
+    Extension(caller): Extension<Caller>,
     Path(id): Path<String>,
     headers: HeaderMap,
     body: Bytes,
@@ -157,6 +171,7 @@ async fn put_feedback(
     let found = read_trajectory(app.runtime.sink.as_ref(), run, 1)
         .await
         .map_err(|error| ApiError::internal(&error))?
+        .filter(|found| caller.sees(found.private, found.requested_by.as_deref()))
         .ok_or_else(|| ApiError::not_found("there's no run with that id"))?;
     let agent = found.agent.unwrap_or_default();
     Ok(Json(

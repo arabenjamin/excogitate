@@ -34,6 +34,9 @@ pub struct RunSubject {
     /// Who asked for the run, when it's known: `owner`, a person, or a
     /// schedule.
     pub requested_by: Option<String>,
+    /// True if only whoever asked for it, and the owner, may see it. Its
+    /// words never reach Harness².
+    pub private: bool,
 }
 
 impl RunSubject {
@@ -44,7 +47,15 @@ impl RunSubject {
             agent: agent.into(),
             harness: harness.into(),
             requested_by: None,
+            private: false,
         }
+    }
+
+    /// The same subject, private to whoever asked, or not.
+    #[must_use]
+    pub const fn private(mut self, private: bool) -> Self {
+        self.private = private;
+        self
     }
 
     /// The same subject, with who asked for the run.
@@ -141,6 +152,9 @@ pub enum Step {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         #[schemars(length(max = 128))]
         requested_by: Option<String>,
+        /// True if only whoever asked for it, and the owner, may see it.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        private: bool,
     },
     /// A message the model was given: at the start, such as its instructions
     /// or the question, or later by the harness, such as a guardrail's
@@ -348,6 +362,8 @@ pub struct Trajectory {
     /// Who asked for the run, if it's known.
     #[schemars(length(max = 128))]
     pub requested_by: Option<String>,
+    /// True if only whoever asked for it, and the owner, may see it.
+    pub private: bool,
     /// The run in one line: each tool call and how it went, then how the run
     /// ended. Read this first; it keeps runs from being confused.
     #[schemars(length(max = 4200))]
@@ -455,19 +471,28 @@ pub async fn read_trajectory(
             agent,
             harness,
             requested_by,
+            private,
             ..
-        } => Some((agent.clone(), harness.clone(), requested_by.clone())),
+        } => Some((
+            agent.clone(),
+            harness.clone(),
+            requested_by.clone(),
+            *private,
+        )),
         _ => None,
     });
-    let (agent, harness, requested_by) = match started {
-        Some((agent, harness, requested_by)) => (Some(agent), Some(harness), requested_by),
-        None => (None, None, None),
+    let (agent, harness, requested_by, private) = match started {
+        Some((agent, harness, requested_by, private)) => {
+            (Some(agent), Some(harness), requested_by, private)
+        }
+        None => (None, None, None, false),
     };
     Ok(Some(Trajectory {
         run: run.to_string(),
         agent,
         harness,
         requested_by,
+        private,
         calls: calls_line(&steps, complete),
         steps,
         unreadable,
@@ -545,6 +570,7 @@ mod tests {
                 budget: budget(),
                 skills: Vec::new(),
                 requested_by: Some("person:sam".to_owned()),
+                private: false,
             },
             tool(0, "memory", CallStatus::Ran, true),
             Step::Message {

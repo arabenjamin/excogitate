@@ -8,6 +8,13 @@
       "maxLength": 32000,
       "minLength": 1,
       "type": "string"
+    },
+    "private": {
+      "description": "True to keep the run to whoever asked, and the owner: its words never\nreach Harness². Left out, the key's default decides.",
+      "type": [
+        "boolean",
+        "null"
+      ]
     }
   },
   "required": [

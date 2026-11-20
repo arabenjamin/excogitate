@@ -612,6 +612,12 @@ impl Loop<'_> {
         if let Ok(Some(trajectory)) =
             read_trajectory(self.engine.sink.as_ref(), run, MAX_STEPS).await
         {
+            // A judge is never shown a private run. A probe is never one, so
+            // this is a check that it stays so, and a refusal if it doesn't.
+            if trajectory.private {
+                attempt.problem("a probe's run was private, so no judge may read it");
+                return None;
+            }
             return Some((probed, trajectory));
         }
         attempt.problem("a probe's trajectory couldn't be read");

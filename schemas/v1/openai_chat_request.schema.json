@@ -147,6 +147,14 @@
         "null"
       ]
     },
+    "private": {
+      "default": null,
+      "description": "Not `OpenAI`'s: true to keep the run to whoever asked, and the owner,\nso its words never reach Harness². Left out, the key's default\ndecides.",
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
     "response_format": {
       "anyOf": [
         {

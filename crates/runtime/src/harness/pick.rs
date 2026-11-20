@@ -140,6 +140,9 @@ impl Runtime {
                 offset: 0,
                 limit: RECENT_RUNS,
                 requested_by: None,
+                // Every run counts as evidence; a private one's words are
+                // never taken from it (see `task_of` in harness::pick).
+                visible: events::Visibility::All,
             })
             .await
             .map_err(|error| error.to_string())?;
@@ -175,6 +178,9 @@ impl Runtime {
                 offset: 0,
                 limit: RECENT_CHATS,
                 requested_by: None,
+                // Every run counts as evidence; a private one's words are
+                // never taken from it (see `task_of` in harness::pick).
+                visible: events::Visibility::All,
             })
             .await
             .map_err(|error| error.to_string())?;
@@ -211,6 +217,7 @@ impl Runtime {
                         found.push(chatted);
                     }
                 }
+                skipped.extend(harness::private_only(&found));
                 best(&found)
             }
             Err(why) => {
@@ -245,7 +252,12 @@ impl Runtime {
                 .unwrap_or_default()
         };
         let mut tasks: Vec<String> = Vec::new();
-        for task in runs.iter().filter_map(harness::task) {
+        // A private run's words are never replayed.
+        for task in runs
+            .iter()
+            .filter(|run| !run.private)
+            .filter_map(harness::task)
+        {
             if task != attempt.request.task && !tasks.contains(&task) {
                 tasks.push(task);
             }
@@ -304,6 +316,7 @@ impl Runtime {
             Some(chatted) => Some(self.queue(chatted, &mut skipped).await?),
             None => None,
         };
+        skipped.extend(harness::private_only(&own));
         let Some(picked) = best(&own) else {
             return Ok(Picked {
                 pick: None,

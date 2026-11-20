@@ -394,7 +394,8 @@ impl Runtime {
             purpose,
             self.config.max_result_chars,
             dispatch::RunSubject::new(subject.to_owned(), harness)
-                .requested_by(input.requested_by.clone()),
+                .requested_by(input.requested_by.clone())
+                .private(input.private),
             probe,
         )?;
         let question = input.question;

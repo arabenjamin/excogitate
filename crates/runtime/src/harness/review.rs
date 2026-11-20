@@ -56,6 +56,37 @@ pub struct ReviewResult {
 }
 
 impl Runtime {
+    /// The last day's answered chats, newest first, that may be reviewed. A
+    /// review must quote its chat, so a private one is left out, and how
+    /// many were is noted in `skipped`.
+    async fn chats_to_review(
+        &self,
+        skipped: &mut Vec<String>,
+    ) -> Result<Vec<events::RunSummary>, String> {
+        let since = Utc::now() - Span::hours(REVIEW_HOURS);
+        let listed = self
+            .sink
+            .list_runs(&RunQuery {
+                agent: Some("chat".to_owned()),
+                limit: MAX_LOOKED_AT,
+                visible: events::Visibility::Shared,
+                ..RunQuery::default()
+            })
+            .await
+            .map_err(|error| error.to_string())?;
+        if listed.hidden > 0 {
+            skipped.push(format!(
+                "{} private chats weren't reviewed: a review quotes its chat",
+                listed.hidden
+            ));
+        }
+        Ok(listed
+            .runs
+            .into_iter()
+            .filter(|run| run.started_at >= since && run.outcome.as_deref() == Some("answered"))
+            .collect())
+    }
+
     /// Reviews up to `harness.review_chats` of the last day's answered chats
     /// not yet reviewed, newest first, within `harness.review_usd_micros`.
     pub(crate) async fn review_chats(&self) -> Result<ReviewResult, String> {
@@ -83,25 +114,12 @@ impl Runtime {
             .map_err(|failure| failure.to_string())?
             .writer
             .0;
-        let since = Utc::now() - Span::hours(REVIEW_HOURS);
-        let listed = self
-            .sink
-            .list_runs(&RunQuery {
-                agent: Some("chat".to_owned()),
-                limit: MAX_LOOKED_AT,
-                ..RunQuery::default()
-            })
-            .await
-            .map_err(|error| error.to_string())?;
+        let chats = self.chats_to_review(&mut result.skipped).await?;
         let judges = Judges {
             gateway: &self.gateway,
             max_output_tokens: config.judge_output_tokens,
         };
-        for summary in listed
-            .runs
-            .iter()
-            .filter(|run| run.started_at >= since && run.outcome.as_deref() == Some("answered"))
-        {
+        for summary in &chats {
             if result.reviewed.len() >= most {
                 break;
             }
@@ -128,6 +146,7 @@ impl Runtime {
             let Some(chat) = read_trajectory(self.sink.as_ref(), summary.run, MAX_STEPS)
                 .await
                 .map_err(|error| error.to_string())?
+                .filter(|chat| !chat.private)
             else {
                 continue;
             };

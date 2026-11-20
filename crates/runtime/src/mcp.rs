@@ -92,6 +92,16 @@ pub(crate) struct ChatInput {
     pub(crate) time_cap_ms: Option<u64>,
     /// Who asked, if it's known: the actor recorded on the run.
     pub(crate) requested_by: Option<String>,
+    /// True if the run is private to whoever asked.
+    pub(crate) private: bool,
+}
+
+/// Who's calling a core tool over HTTP: their actor, and whether what they
+/// start is private by default.
+#[derive(Debug, Clone)]
+pub(crate) struct Asking {
+    pub(crate) actor: String,
+    pub(crate) private_by_default: bool,
 }
 
 tokio::task_local! {
@@ -99,11 +109,11 @@ tokio::task_local! {
     /// it (a plugin's `ToolContext` is `Copy`), so the HTTP layer sets it
     /// around one call, and the core's own tools read it as they start and
     /// put it on the run. Nothing deeper reads it.
-    pub(crate) static CALLER: String;
+    pub(crate) static CALLER: Asking;
 }
 
 /// Who's calling, if the HTTP layer said.
-fn caller() -> Option<String> {
+fn caller() -> Option<Asking> {
     CALLER.try_with(Clone::clone).ok()
 }
 
@@ -114,6 +124,10 @@ pub struct ChatArgs {
     /// The question or request.
     #[schemars(length(min = 1, max = MAX_MESSAGE))]
     pub message: String,
+    /// True to keep the run to whoever asked, and the owner: its words never
+    /// reach Harness². Left out, the key's default decides.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub private: Option<bool>,
 }
 
 /// How a chat ended.
@@ -159,9 +173,21 @@ impl Tool for ChatTool {
     async fn run(&self, arguments: Value, _: ToolContext) -> Result<ToolOutput, ToolFailure> {
         let args: ChatArgs = serde_json::from_value(arguments)
             .map_err(|error| ToolFailure::new(schema::bounded(&error.to_string())))?;
+        let asking = caller();
+        let private = args.private.unwrap_or_else(|| {
+            asking
+                .as_ref()
+                .is_some_and(|asking| asking.private_by_default)
+        });
         let result = self
             .0
-            .chat(args.message, CHAT_PURPOSE, None, caller())
+            .chat(
+                args.message,
+                CHAT_PURPOSE,
+                None,
+                asking.map(|asking| asking.actor),
+                private,
+            )
             .await?;
         let cost_usd_micros = result.receipt.totals.cost_usd_micros;
         let reply = ChatReply::from(result);
@@ -181,6 +207,7 @@ impl Runtime {
         purpose: &str,
         time_cap_ms: Option<u64>,
         requested_by: Option<String>,
+        private: bool,
     ) -> Result<ChatResult, ToolFailure> {
         let input = ChatInput {
             extra_system: None,
@@ -190,6 +217,7 @@ impl Runtime {
             max_output_tokens: self.config.max_output_tokens,
             time_cap_ms,
             requested_by,
+            private,
         };
         self.chat_with(input, purpose).await
     }
@@ -272,7 +300,8 @@ impl Tool for DispatchedTool {
             format!("tool:{name}"),
             harness_id(&json!({ "tool": name, "budget": self.runtime.config.budget })),
         )
-        .requested_by(caller());
+        .requested_by(caller().map(|asking| asking.actor))
+        .private(caller().is_some_and(|asking| asking.private_by_default));
         let mut session = session_for(
             &self.runtime,
             vec![name.clone()],

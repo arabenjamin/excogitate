@@ -51,6 +51,11 @@
       "pattern": "^person:[a-z0-9][a-z0-9-]{0,47}$",
       "type": "string"
     },
+    "private_by_default": {
+      "default": false,
+      "description": "True if what it starts is private to its person unless a request\nsays otherwise. False if left out.",
+      "type": "boolean"
+    },
     "scopes": {
       "description": "What it may be used for. Each must be one the person's role allows.",
       "items": {

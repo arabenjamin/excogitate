@@ -354,6 +354,10 @@ impl Loop<'_> {
                 attempt.problem("a probe's trajectory couldn't be read");
                 return None;
             };
+            if trajectory.private {
+                attempt.problem("a probe's run was private, so no judge may read it");
+                return None;
+            }
             parts.push((id, trajectory));
             runs.push(receipt.run.clone());
         }

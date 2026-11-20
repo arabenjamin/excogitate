@@ -200,6 +200,8 @@ pub(crate) struct KeyRecord {
     pub(crate) made_at: DateTime<Utc>,
     pub(crate) revoked_at: Option<DateTime<Utc>>,
     pub(crate) expires_at: Option<DateTime<Utc>>,
+    #[serde(default)]
+    pub(crate) private_by_default: bool,
 }
 
 /// When a key was last used.
@@ -233,6 +235,8 @@ pub struct KeyView {
     pub revoked_at: Option<DateTime<Utc>>,
     /// When it stops working, if it was given an end.
     pub expires_at: Option<DateTime<Utc>>,
+    /// True if what it starts is private unless a request says otherwise.
+    pub private_by_default: bool,
 }
 
 /// A key to make.
@@ -251,6 +255,10 @@ pub struct KeyRequest {
     /// When it stops working. It never does if left out.
     #[serde(default)]
     pub expires_at: Option<DateTime<Utc>>,
+    /// True if what it starts is private to its person unless a request
+    /// says otherwise. False if left out.
+    #[serde(default)]
+    pub private_by_default: bool,
 }
 
 /// A key just made, with its secret. This is the only time the secret is
@@ -291,6 +299,8 @@ pub struct CallerView {
     /// The key's id. None for the owner key.
     #[schemars(length(max = 36))]
     pub key: Option<String>,
+    /// True if what it starts is private unless a request says otherwise.
+    pub private_by_default: bool,
 }
 
 /// Who a request came from. The guard puts one on every request it lets
@@ -302,6 +312,8 @@ pub(crate) struct Caller {
     pub(crate) role: Option<Role>,
     pub(crate) scopes: BTreeSet<Scope>,
     pub(crate) key: Option<RecordId>,
+    /// Whether what it starts is private unless a request says otherwise.
+    pub(crate) private_by_default: bool,
 }
 
 impl Caller {
@@ -312,7 +324,29 @@ impl Caller {
             role: None,
             scopes: [Scope::Read, Scope::Chat, Scope::Run, Scope::Admin].into(),
             key: None,
+            private_by_default: false,
         }
+    }
+
+    /// Whether what this caller starts is private: what the request says,
+    /// or the key's default.
+    pub(crate) fn private(&self, asked: Option<bool>) -> bool {
+        asked.unwrap_or(self.private_by_default)
+    }
+
+    /// Whose private runs this caller may see: everyone's for the owner,
+    /// otherwise only their own.
+    pub(crate) fn visibility(&self) -> events::Visibility {
+        if self.is_owner() {
+            events::Visibility::All
+        } else {
+            events::Visibility::Own(self.actor.to_string())
+        }
+    }
+
+    /// Whether this caller may see a run or job asked for by `requested_by`.
+    pub(crate) fn sees(&self, private: bool, requested_by: Option<&str>) -> bool {
+        self.visibility().shows(private, requested_by)
     }
 
     pub(crate) const fn is_owner(&self) -> bool {
@@ -349,6 +383,7 @@ impl Caller {
                 .filter(|scope| self.may(*scope).is_ok())
                 .collect(),
             key: self.key.map(|key| key.to_string()),
+            private_by_default: self.private_by_default,
         }
     }
 }
@@ -573,6 +608,7 @@ pub(crate) async fn make_key(
         made_at: Utc::now(),
         revoked_at: None,
         expires_at: request.expires_at,
+        private_by_default: request.private_by_default,
     };
     let record = Record::new(KEY_TYPE.to_owned(), id, to_data(&key)?, provenance(by));
     store.apply(WriteOp::PutRecord(record).into()).await?;
@@ -592,6 +628,7 @@ fn key_view(key: KeyRecord, last_used_at: Option<DateTime<Utc>>) -> KeyView {
         last_used_at,
         revoked_at: key.revoked_at,
         expires_at: key.expires_at,
+        private_by_default: key.private_by_default,
     }
 }
 
@@ -722,6 +759,7 @@ pub(crate) async fn authenticate(
         role: Some(owner.role),
         scopes: found.scopes.into_iter().collect(),
         key: Some(id),
+        private_by_default: found.private_by_default,
     }))
 }
 
@@ -760,6 +798,7 @@ mod tests {
             scopes: scopes.to_vec(),
             name: "laptop".to_owned(),
             expires_at: None,
+            private_by_default: false,
         }
     }
 

@@ -572,6 +572,7 @@ impl Session {
                 budget: self.config.budget,
                 skills: self.skills.clone(),
                 requested_by: self.config.subject.requested_by.clone(),
+                private: self.config.subject.private,
             }));
         }
         let count = u32::try_from(events.len() + 1).unwrap_or(u32::MAX);

@@ -17,7 +17,8 @@ use serde_json::Value;
 ///
 /// Two kinds feed the run index, so their bodies have fields a sink reads: a
 /// [`EventKind::RunStarted`] body has string `agent` and `harness` fields, and
-/// a string `requested_by` when who asked is known, and a
+/// a string `requested_by` when who asked is known and a true `private` when
+/// it's private, and a
 /// [`EventKind::RunEnded`] body has a string `outcome`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum EventKind {
@@ -73,6 +74,8 @@ pub struct RunSummary {
     /// Who asked for it, if that's known: `owner`, a person such as
     /// `person:sam`, or a schedule.
     pub requested_by: Option<String>,
+    /// True if only whoever asked for it, and the owner, may see it.
+    pub private: bool,
     /// When it started.
     pub started_at: DateTime<Utc>,
     /// When it ended. A run with none is still going, or was cut short.
@@ -90,10 +93,38 @@ pub struct RunQuery {
     pub harness: Option<String>,
     /// Only runs this actor asked for.
     pub requested_by: Option<String>,
+    /// Whose private runs it may show.
+    pub visible: Visibility,
     /// How many to skip.
     pub offset: usize,
     /// The most to return.
     pub limit: usize,
+}
+
+/// Whose private runs a list may show. A private run left out is counted in
+/// [`RunPage::hidden`], so a list never looks shorter than it is without
+/// saying why.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub enum Visibility {
+    /// Every run: the owner's view, and the runtime's own bookkeeping.
+    #[default]
+    All,
+    /// Runs that aren't private, and this actor's private ones.
+    Own(String),
+    /// Only runs that aren't private.
+    Shared,
+}
+
+impl Visibility {
+    /// Whether a run asked for by `requested_by`, private or not, is shown.
+    #[must_use]
+    pub fn shows(&self, private: bool, requested_by: Option<&str>) -> bool {
+        match self {
+            Self::All => true,
+            Self::Own(actor) => !private || requested_by == Some(actor.as_str()),
+            Self::Shared => !private,
+        }
+    }
 }
 
 /// A page of runs.
@@ -103,6 +134,8 @@ pub struct RunPage {
     pub runs: Vec<RunSummary>,
     /// True when more match.
     pub has_more: bool,
+    /// How many runs that match were left out because they're private.
+    pub hidden: u64,
 }
 
 /// What the run index reads from an event, if it's one the index keeps.
@@ -116,6 +149,8 @@ pub enum IndexEntry {
         harness: String,
         /// Who asked for it, if that's known.
         requested_by: Option<String>,
+        /// True if it's private.
+        private: bool,
     },
     /// A run ended.
     Ended {
@@ -140,6 +175,7 @@ impl Event {
                 agent: text("agent")?,
                 harness: text("harness")?,
                 requested_by: text("requested_by"),
+                private: self.body.get("private").and_then(Value::as_bool) == Some(true),
             }),
             EventKind::RunEnded => Some(IndexEntry::Ended {
                 outcome: text("outcome")?,
@@ -239,11 +275,13 @@ impl EventSink for MemorySink {
                     agent,
                     harness,
                     requested_by,
+                    private,
                 }) => runs.push(RunSummary {
                     run: event.run,
                     agent,
                     harness,
                     requested_by,
+                    private,
                     started_at: event.at,
                     ended_at: None,
                     outcome: None,
@@ -257,7 +295,7 @@ impl EventSink for MemorySink {
                 None => {}
             }
         }
-        let mut matching = runs
+        let matching = runs
             .into_iter()
             .rev()
             .filter(|run| query.agent.as_ref().is_none_or(|agent| *agent == run.agent))
@@ -272,11 +310,20 @@ impl EventSink for MemorySink {
                     .requested_by
                     .as_ref()
                     .is_none_or(|asked| run.requested_by.as_ref() == Some(asked))
-            })
-            .skip(query.offset);
-        let runs: Vec<RunSummary> = matching.by_ref().take(query.limit).collect();
-        let has_more = matching.next().is_some();
-        Ok(RunPage { runs, has_more })
+            });
+        let (shown, hidden): (Vec<RunSummary>, Vec<RunSummary>) = matching.partition(|run| {
+            query
+                .visible
+                .shows(run.private, run.requested_by.as_deref())
+        });
+        let mut shown = shown.into_iter().skip(query.offset);
+        let runs: Vec<RunSummary> = shown.by_ref().take(query.limit).collect();
+        let has_more = shown.next().is_some();
+        Ok(RunPage {
+            runs,
+            has_more,
+            hidden: u64::try_from(hidden.len()).unwrap_or(u64::MAX),
+        })
     }
 
     async fn prune_runs(&self, before: DateTime<Utc>, limit: u32) -> Result<u32, EventError> {
@@ -431,5 +478,39 @@ mod tests {
             [new]
         );
         assert_eq!(sink.prune_runs(cutoff, 10).await.unwrap(), 0);
+    }
+
+    #[tokio::test]
+    async fn the_memory_sink_hides_a_private_run_as_the_store_does() {
+        let sink = MemorySink::new();
+        let mine = RunId::generate();
+        sink.append(vec![Event {
+            run: mine,
+            at: Utc::now(),
+            kind: EventKind::RunStarted,
+            data_class: DataClass::Private,
+            body: serde_json::json!({ "agent": "chat", "harness": "h",
+                                      "requested_by": "person:sam", "private": true }),
+        }])
+        .await
+        .unwrap();
+        let others = sink
+            .list_runs(&RunQuery {
+                limit: 10,
+                visible: Visibility::Own("person:ada".to_owned()),
+                ..RunQuery::default()
+            })
+            .await
+            .unwrap();
+        assert_eq!((others.runs.len(), others.hidden), (0, 1));
+        let own = sink
+            .list_runs(&RunQuery {
+                limit: 10,
+                visible: Visibility::Own("person:sam".to_owned()),
+                ..RunQuery::default()
+            })
+            .await
+            .unwrap();
+        assert_eq!((own.runs.len(), own.hidden), (1, 0));
     }
 }

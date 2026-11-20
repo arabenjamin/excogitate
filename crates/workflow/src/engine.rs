@@ -267,6 +267,8 @@ pub struct Engine {
     /// Who asked for the runs this engine starts, if it's known. Set per run
     /// with [`Engine::for_requester`].
     pub requested_by: Option<String>,
+    /// True if the runs it starts are private to whoever asked.
+    pub private: bool,
 }
 
 /// The workflow named, once `inputs` are checked against it.
@@ -361,11 +363,12 @@ impl Engine {
     }
 
     /// The same engine, recording `requested_by` as who asked for each run it
-    /// starts.
+    /// starts, and each of them private to them when `private` is set.
     #[must_use]
-    pub fn for_requester(&self, requested_by: Option<String>) -> Self {
+    pub fn for_requester(&self, requested_by: Option<String>, private: bool) -> Self {
         Self {
             requested_by,
+            private,
             ..self.clone()
         }
     }
@@ -641,7 +644,8 @@ impl Engine {
             format!("{prefix}tool:{tool}"),
             harness_id(&json!({ "tool": tool, "result_chars": STEP_RESULT_CHARS })),
         )
-        .requested_by(self.requested_by.clone());
+        .requested_by(self.requested_by.clone())
+        .private(self.private);
         let mut session = self.session(
             vec![tool.to_owned()],
             budget,
@@ -752,7 +756,8 @@ impl Engine {
         let instructions = crate::instructions(agent, &question);
         let own = agent.budget.unwrap_or(self.limits.agent_budget);
         let subject = RunSubject::new(subject.to_owned(), self.agent_harness(agent))
-            .requested_by(self.requested_by.clone());
+            .requested_by(self.requested_by.clone())
+            .private(self.private);
         let session = self.session(
             agent.tools.clone(),
             left.clip(own),

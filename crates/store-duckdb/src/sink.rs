@@ -9,6 +9,7 @@ use chrono::{DateTime, Utc};
 use duckdb::{Connection, params};
 use events::{
     Event, EventError, EventKind, EventPage, EventSink, IndexEntry, RunPage, RunQuery, RunSummary,
+    Visibility,
 };
 use protocol::{DataClass, RunId};
 use serde_json::Value;
@@ -73,7 +74,9 @@ impl DuckDbSink {
                      ended_at TIMESTAMP, outcome VARCHAR);
                  -- Who asked for a run, kept since 0.24; a log from before
                  -- gains the column, and its runs have none.
-                 ALTER TABLE runs ADD COLUMN IF NOT EXISTS requested_by VARCHAR;",
+                 ALTER TABLE runs ADD COLUMN IF NOT EXISTS requested_by VARCHAR;
+                 -- Whether only whoever asked, and the owner, may see it.
+                 ALTER TABLE runs ADD COLUMN IF NOT EXISTS private BOOLEAN;",
             )
             .map_err(sink_error)?;
         let next_sequence = connection
@@ -142,17 +145,19 @@ fn index(connection: &Connection, sequence: i64, event: &Event) -> duckdb::Resul
             agent,
             harness,
             requested_by,
+            private,
         }) => connection
             .execute(
-                "INSERT INTO runs (sequence, run, agent, harness, started_at, requested_by)
-                 VALUES (?, ?, ?, ?, ?, ?)",
+                "INSERT INTO runs (sequence, run, agent, harness, started_at, requested_by, private)
+                 VALUES (?, ?, ?, ?, ?, ?, ?)",
                 params![
                     sequence,
                     event.run.to_string(),
                     agent,
                     harness,
                     event.at,
-                    requested_by
+                    requested_by,
+                    private
                 ],
             )
             .map(|_| ()),
@@ -166,17 +171,46 @@ fn index(connection: &Connection, sequence: i64, event: &Event) -> duckdb::Resul
     }
 }
 
+/// The filters every run listing shares, in SQL, then whether a run is shown:
+/// the same parameters, in the same order, for the page and for the count of
+/// what was hidden.
+const RUN_FILTERS: &str =
+    "(?::VARCHAR IS NULL OR agent = ?) AND (?::VARCHAR IS NULL OR harness = ?)
+     AND (?::VARCHAR IS NULL OR requested_by = ?)";
+const RUN_SHOWN: &str = "(? = 'all' OR NOT coalesce(private, false)
+     OR (? = 'own' AND requested_by = ?))";
+
+/// A visibility as the SQL above takes it: its mode and its actor.
+fn visibility(visible: &Visibility) -> (&'static str, Option<&str>) {
+    match visible {
+        Visibility::All => ("all", None),
+        Visibility::Own(actor) => ("own", Some(actor.as_str())),
+        Visibility::Shared => ("shared", None),
+    }
+}
+
+type RunRow = (
+    String,
+    String,
+    String,
+    DateTime<Utc>,
+    Option<DateTime<Utc>>,
+    Option<String>,
+    Option<String>,
+    Option<bool>,
+);
+
 fn list_page(inner: &Inner, query: &RunQuery) -> Result<RunPage, EventError> {
     let limit = i64::try_from(query.limit).map_err(sink_error)?;
     let offset = i64::try_from(query.offset).map_err(sink_error)?;
+    let (mode, actor) = visibility(&query.visible);
     let mut statement = inner
         .connection
-        .prepare(
-            "SELECT run, agent, harness, started_at, ended_at, outcome, requested_by FROM runs
-             WHERE (?::VARCHAR IS NULL OR agent = ?) AND (?::VARCHAR IS NULL OR harness = ?)
-               AND (?::VARCHAR IS NULL OR requested_by = ?)
-             ORDER BY sequence DESC LIMIT ? OFFSET ?",
-        )
+        .prepare(&format!(
+            "SELECT run, agent, harness, started_at, ended_at, outcome, requested_by, private
+             FROM runs WHERE {RUN_FILTERS} AND {RUN_SHOWN}
+             ORDER BY sequence DESC LIMIT ? OFFSET ?"
+        ))
         .map_err(sink_error)?;
     let rows = statement
         .query_map(
@@ -187,31 +221,36 @@ fn list_page(inner: &Inner, query: &RunQuery) -> Result<RunPage, EventError> {
                 query.harness,
                 query.requested_by,
                 query.requested_by,
+                mode,
+                mode,
+                actor,
                 limit + 1,
                 offset
             ],
-            |row| {
+            |row| -> duckdb::Result<RunRow> {
                 Ok((
-                    row.get::<_, String>(0)?,
-                    row.get::<_, String>(1)?,
-                    row.get::<_, String>(2)?,
-                    row.get::<_, DateTime<Utc>>(3)?,
-                    row.get::<_, Option<DateTime<Utc>>>(4)?,
-                    row.get::<_, Option<String>>(5)?,
-                    row.get::<_, Option<String>>(6)?,
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                    row.get(5)?,
+                    row.get(6)?,
+                    row.get(7)?,
                 ))
             },
         )
         .map_err(sink_error)?;
     let mut runs = Vec::new();
     for row in rows {
-        let (run, agent, harness, started_at, ended_at, outcome, requested_by) =
+        let (run, agent, harness, started_at, ended_at, outcome, requested_by, private) =
             row.map_err(sink_error)?;
         runs.push(RunSummary {
             run: run.parse().map_err(sink_error)?,
             agent,
             harness,
             requested_by,
+            private: private.unwrap_or(false),
             started_at,
             ended_at,
             outcome,
@@ -219,7 +258,29 @@ fn list_page(inner: &Inner, query: &RunQuery) -> Result<RunPage, EventError> {
     }
     let has_more = runs.len() > query.limit;
     runs.truncate(query.limit);
-    Ok(RunPage { runs, has_more })
+    let hidden: i64 = inner
+        .connection
+        .query_row(
+            &format!("SELECT count(*) FROM runs WHERE {RUN_FILTERS} AND NOT {RUN_SHOWN}"),
+            params![
+                query.agent,
+                query.agent,
+                query.harness,
+                query.harness,
+                query.requested_by,
+                query.requested_by,
+                mode,
+                mode,
+                actor
+            ],
+            |row| row.get(0),
+        )
+        .map_err(sink_error)?;
+    Ok(RunPage {
+        runs,
+        has_more,
+        hidden: u64::try_from(hidden).unwrap_or(0),
+    })
 }
 
 fn read_page(inner: &Inner, run: RunId, offset: i64, limit: i64) -> Result<EventPage, EventError> {
@@ -556,6 +617,62 @@ mod tests {
             .unwrap();
         assert_eq!(sams.runs.len(), 1);
         std::fs::remove_dir_all(&directory).unwrap();
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_private_run_shows_to_whoever_asked_and_is_counted_for_others() {
+        let sink = DuckDbSink::open(None).unwrap();
+        let (sams, shared) = (RunId::generate(), RunId::generate());
+        sink.append(vec![
+            marker(
+                sams,
+                EventKind::RunStarted,
+                1_900_000_000,
+                json!({ "agent": "chat", "harness": "h", "requested_by": "person:sam",
+                        "private": true }),
+            ),
+            marker(
+                shared,
+                EventKind::RunStarted,
+                1_900_000_001,
+                json!({ "agent": "chat", "harness": "h", "requested_by": "person:ada" }),
+            ),
+        ])
+        .await
+        .unwrap();
+        let seen = |visible: Visibility| {
+            let sink = &sink;
+            async move {
+                let page = sink
+                    .list_runs(&RunQuery {
+                        limit: 10,
+                        visible,
+                        ..RunQuery::default()
+                    })
+                    .await
+                    .unwrap();
+                let runs: Vec<RunId> = page.runs.iter().map(|run| run.run).collect();
+                (runs, page.hidden)
+            }
+        };
+        assert_eq!(seen(Visibility::All).await, (vec![shared, sams], 0));
+        assert_eq!(
+            seen(Visibility::Own("person:sam".to_owned())).await,
+            (vec![shared, sams], 0)
+        );
+        assert_eq!(
+            seen(Visibility::Own("person:ada".to_owned())).await,
+            (vec![shared], 1)
+        );
+        assert_eq!(seen(Visibility::Shared).await, (vec![shared], 1));
+        let all = sink
+            .list_runs(&RunQuery {
+                limit: 10,
+                ..RunQuery::default()
+            })
+            .await
+            .unwrap();
+        assert!(all.runs.iter().any(|run| run.run == sams && run.private));
     }
 
     #[tokio::test(flavor = "multi_thread")]

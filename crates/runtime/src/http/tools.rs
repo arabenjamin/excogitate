@@ -54,7 +54,10 @@ async fn call_tool(
     let handler = Arc::clone(&app.mcp);
     // A caller from outside, as over MCP: private, and the call's own run.
     let context = ToolContext::new(RunId::generate(), DataClass::Private, 0);
-    let asking = caller.actor.to_string();
+    let asking = crate::mcp::Asking {
+        actor: caller.actor.to_string(),
+        private_by_default: caller.private_by_default,
+    };
     let outcome = detached(
         permit,
         crate::mcp::CALLER.scope(asking, async move {

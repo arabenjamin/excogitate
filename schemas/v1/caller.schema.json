@@ -68,6 +68,10 @@
         "null"
       ]
     },
+    "private_by_default": {
+      "description": "True if what it starts is private unless a request says otherwise.",
+      "type": "boolean"
+    },
     "role": {
       "$ref": "#/$defs/CallerRole",
       "description": "The owner, or the person's role."
@@ -84,7 +88,8 @@
   "required": [
     "actor",
     "role",
-    "scopes"
+    "scopes",
+    "private_by_default"
   ],
   "title": "CallerView",
   "type": "object"

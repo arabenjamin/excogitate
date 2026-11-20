@@ -375,6 +375,7 @@ impl PluginJobs {
             run.inputs,
             run.priority,
             self.requested_by.clone(),
+            false,
             key,
         );
         let id = job.id;

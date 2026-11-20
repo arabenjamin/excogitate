@@ -285,6 +285,10 @@
               "maxItems": 64,
               "type": "array"
             },
+            "private": {
+              "description": "True if only whoever asked for it, and the owner, may see it.",
+              "type": "boolean"
+            },
             "purpose": {
               "description": "What the work was for.",
               "maxLength": 128,
@@ -754,6 +758,10 @@
         "null"
       ]
     },
+    "private": {
+      "description": "True if only whoever asked for it, and the owner, may see it.",
+      "type": "boolean"
+    },
     "requested_by": {
       "description": "Who asked for the run, if it's known.",
       "maxLength": 128,
@@ -783,6 +791,7 @@
   },
   "required": [
     "run",
+    "private",
     "calls",
     "steps",
     "unreadable",

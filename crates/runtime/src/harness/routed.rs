@@ -69,6 +69,7 @@ impl RouteProbe for Runtime {
             max_output_tokens: self.config.max_output_tokens,
             time_cap_ms: None,
             requested_by: Some("harness".to_owned()),
+            private: false,
         };
         let result = self
             .routed_as(

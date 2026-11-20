@@ -127,6 +127,11 @@ pub struct OpenAiRequest {
     #[serde(default)]
     #[schemars(schema_with = "plain_text")]
     pub response_format: Option<Value>,
+    /// Not `OpenAI`'s: true to keep the run to whoever asked, and the owner,
+    /// so its words never reach Harness². Left out, the key's default
+    /// decides.
+    #[serde(default)]
+    pub private: Option<bool>,
 }
 
 /// A list that must be empty, or null.
@@ -325,6 +330,7 @@ fn chat_input(
         max_output_tokens,
         time_cap_ms: None,
         requested_by: None,
+        private: false,
     })
 }
 
@@ -461,12 +467,14 @@ async fn chat_completions(
         Err(refusal) => return invalid(&refusal.to_string()),
     };
     let streaming = request.stream.unwrap_or(false);
+    let private = caller.private(request.private);
     let server_limit = app.runtime.config.max_output_tokens;
     let mut input = match chat_input(request, &app.model_id, server_limit) {
         Ok(input) => input,
         Err(why) => return invalid(&why),
     };
     input.requested_by = Some(caller.actor.to_string());
+    input.private = private;
     let permit = match app.permit() {
         Ok(permit) => permit,
         Err(error) => return from_api(&error),

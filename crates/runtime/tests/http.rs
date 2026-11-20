@@ -693,6 +693,60 @@ fn inputs() -> Value {
 }
 
 #[tokio::test]
+async fn a_private_workflow_keeps_its_job_and_runs_to_whoever_asked() {
+    let running = with_workflow("private", vec![ChaosStep::Text("Otters!".to_owned())]).await;
+    let mut body = inputs();
+    body["private"] = json!(true);
+    let response = running.post("/api/v1/workflows/flow/runs", &body).await;
+    assert_eq!(response.status(), StatusCode::ACCEPTED);
+    let job = body_of(response).await["job_id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    running.work_off(&job).await;
+
+    // Someone else with a key sees that the job ran, not what it was asked.
+    let person = json!({ "name": "Ada", "role": "viewer" });
+    let added = running
+        .client
+        .put(format!("{}/api/v1/people/ada", running.url))
+        .bearer_auth(KEY)
+        .header("content-type", "application/json")
+        .body(person.to_string())
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(added.status(), StatusCode::CREATED);
+    let key = json!({ "person": "person:ada", "scopes": ["read"], "name": "t" });
+    let made = body_of(running.post("/api/v1/keys", &key).await).await;
+    let ada = made["secret"].as_str().unwrap().to_owned();
+    let as_ada = |path: String| {
+        let request = running
+            .client
+            .get(format!("{}{path}", running.url))
+            .bearer_auth(&ada);
+        async move { body_of(request.send().await.unwrap()).await }
+    };
+    let seen = as_ada(format!("/api/v1/jobs/{job}")).await;
+    assert_eq!(seen["private"], true, "{seen}");
+    assert_eq!(seen["payload"], Value::Null, "{seen}");
+    assert_eq!(seen["result"], Value::Null, "{seen}");
+    let owners = body_of(running.get(&format!("/api/v1/jobs/{job}")).await).await;
+    assert_eq!(owners["payload"]["inputs"]["subject"], "otters");
+
+    // Its step's run is private too: the owner's, hidden from Ada.
+    let runs = body_of(running.get("/api/v1/runs").await).await;
+    let items = runs["items"].as_array().unwrap();
+    assert!(
+        !items.is_empty() && items.iter().all(|run| run["private"] == true),
+        "{runs}"
+    );
+    let hers = as_ada("/api/v1/runs".to_owned()).await;
+    assert_eq!(hers["items"], json!([]), "{hers}");
+    assert_eq!(hers["hidden"], json!(items.len()), "{hers}");
+}
+
+#[tokio::test]
 async fn a_workflow_started_over_rest_runs_and_reports() {
     let running = with_workflow("run", vec![ChaosStep::Text("Otters!".to_owned())]).await;
     let response = running.post("/api/v1/workflows/flow/runs", &inputs()).await;

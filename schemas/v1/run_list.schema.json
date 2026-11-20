@@ -30,6 +30,10 @@
             "null"
           ]
         },
+        "private": {
+          "description": "True if only whoever asked for it, and the owner, may see it.",
+          "type": "boolean"
+        },
         "requested_by": {
           "description": "Who asked for it: `owner`, a person such as `person:sam`, a schedule,\nor `harness`. None for a run from before this was kept, or one\nstarted where no one asked, such as over stdio.",
           "maxLength": 128,
@@ -53,6 +57,7 @@
         "run",
         "agent",
         "harness",
+        "private",
         "started_at"
       ],
       "type": "object"
@@ -66,6 +71,11 @@
       "description": "True if there are more past this page.",
       "type": "boolean"
     },
+    "hidden": {
+      "description": "How many runs that match are someone else's private runs, left out.",
+      "minimum": 0,
+      "type": "integer"
+    },
     "items": {
       "description": "The runs.",
       "items": {
@@ -77,7 +87,8 @@
   },
   "required": [
     "items",
-    "has_more"
+    "has_more",
+    "hidden"
   ],
   "title": "RunList",
   "type": "object"

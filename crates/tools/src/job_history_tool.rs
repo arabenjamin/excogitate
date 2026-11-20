@@ -115,6 +115,9 @@ struct JobHistoryResult {
 }
 
 fn row(job: Job, private: bool) -> JobRow {
+    // A job a person kept private keeps its error text to itself too: it
+    // can hold what was asked.
+    let kept = job.payload.get("private").and_then(Value::as_bool) == Some(true);
     let workflow = job
         .payload
         .get("workflow")
@@ -132,7 +135,7 @@ fn row(job: Job, private: bool) -> JobRow {
         max_attempts: job.max_attempts,
         last_error: job
             .last_error
-            .filter(|_| private)
+            .filter(|_| private && !kept)
             .map(|error| clamped(error, MAX_ERROR)),
     }
 }

@@ -394,6 +394,7 @@ impl Runtime {
             stop,
             sources: choices,
             requested_by: None,
+            private: false,
         };
         Ok(Self {
             registry,

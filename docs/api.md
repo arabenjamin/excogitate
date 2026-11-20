@@ -58,6 +58,25 @@ has the scope but its person's role no longer allows it.
 There's no rate limit per key. `server.max_concurrent_requests` is the limit
 for everyone.
 
+### Private runs
+
+A person can keep a run to themselves: `"private": true` on the `chat` tool's
+arguments, the front door's request, or `POST /api/v1/workflows/{name}/runs`.
+Left out, the key's `private_by_default` decides. A workflow's steps and a
+job's runs are private when their start was. Nothing a model writes can set
+it.
+
+- **Only whoever asked, and the owner, see it.** Someone else's private run
+  is left out of `GET /api/v1/runs`, which says how many it left out in
+  `hidden`, and `GET /api/v1/runs/{id}` answers 404, as for no run at all.
+- **A private job is still listed,** since that it ran isn't private, but
+  for anyone else its `payload`, `result` and `last_error` are null, and
+  `private` is true. `job_history` never shows a private job's error.
+- **Harness² never repeats its words.** A private run counts as evidence,
+  by how it failed and the owner's mark, but its question is never an
+  attempt's task or a replay, no judge is shown it, and the daily review
+  skips it. See [Harness²](harness.md#private-runs).
+
 **There's no TLS.** Compose publishes the port to this machine only. Put a TLS
 proxy in front before exposing it, or the key crosses the network in clear text.
 
@@ -100,6 +119,8 @@ models that actually answer are the ones in `models.yaml`.
   instructions and don't replace them; only the writer sees them.
 - `max_tokens` can only lower the server's own limit.
 - Replies carry an extra `receipt` of what actually ran.
+- `"private": true`, which isn't OpenAI's, keeps the run to whoever asked
+  (see [private runs](#private-runs)).
 - With `stream: true`, the answer arrives as one chunk when the run ends. Excogitate
   doesn't stream tokens, and sends keep-alive comments while it works.
 - A run that ends without an answer is a 502 of type `run_stopped`, with its
@@ -179,7 +200,8 @@ A run isn't retried, because that would repeat what its earlier steps did.
 `queued`, `claimed`, `succeeded` or `dead`, and `limit` goes up to 200.
 
 `GET /api/v1/jobs/{id}` is one [job](../schemas/v1/job_view.schema.json). `result`
-is what it produced. For a workflow, that's the
+is what it produced. Someone else's [private](#private-runs) job has its
+`payload`, `result` and `last_error` left out. For a workflow, that's the
 [run report](workflows.md#a-run), including each step of a run that failed.
 
 ### Runs
@@ -239,7 +261,7 @@ old record always resolves; disable one instead, and their keys all stop.
 |---|---|
 | `PUT /api/v1/people/{slug}` | Adds a person (201) or changes one (200): `{"name", "role", "disabled"}` ([schema](../schemas/v1/person_request.schema.json)). Their id is `person:<slug>`, which is the actor on what they start. |
 | `GET /api/v1/people?limit=&offset=` | The people. |
-| `POST /api/v1/keys` | Makes a key: `{"person", "scopes", "name", "expires_at"}` ([schema](../schemas/v1/key_request.schema.json)). The reply has the `secret`, shown this once. A scope the person's role doesn't allow is a 403. A key doesn't expire unless `expires_at` is given. |
+| `POST /api/v1/keys` | Makes a key: `{"person", "scopes", "name", "expires_at", "private_by_default"}` ([schema](../schemas/v1/key_request.schema.json)). With `private_by_default`, what the key starts is [private](#private-runs) unless a request says otherwise. The reply has the `secret`, shown this once. A scope the person's role doesn't allow is a 403. A key doesn't expire unless `expires_at` is given. |
 | `GET /api/v1/keys?person=&limit=&offset=` | The keys, never their secrets, each with `last_used_at` (written at most once a minute), so a stale one is easy to find. |
 | `DELETE /api/v1/keys/{id}` | Revokes a key, at once. |
 

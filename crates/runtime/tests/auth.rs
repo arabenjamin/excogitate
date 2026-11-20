@@ -293,3 +293,44 @@ async fn a_run_names_who_asked_for_it() {
     assert_eq!(trajectory["requested_by"], "person:sam");
     assert_eq!(trajectory["steps"][0]["step"]["requested_by"], "person:sam");
 }
+
+#[tokio::test]
+async fn a_private_run_is_seen_by_whoever_asked_and_the_owner_only() {
+    let server = serve().await;
+    server.person("sam", "member").await;
+    server.person("ada", "member").await;
+    let body = json!({ "person": "person:sam", "scopes": ["read"], "name": "own",
+                       "private_by_default": true });
+    let (status, made) = server
+        .call(Method::POST, "/api/v1/keys", OWNER_KEY, Some(body))
+        .await;
+    assert_eq!(status, StatusCode::CREATED, "{made}");
+    assert_eq!(made["key"]["private_by_default"], true);
+    let sam = made["secret"].as_str().unwrap().to_owned();
+    let (_, ada) = server.key("person:ada", &["read"]).await;
+
+    let sum = json!({ "name": "calculate", "arguments": { "expression": "2 * 3" } });
+    let ran = server.mcp(&sam, "tools/call", sum).await;
+    assert_eq!(ran["result"]["isError"], false, "{ran}");
+
+    let (_, mine) = server.call(Method::GET, "/api/v1/runs", &sam, None).await;
+    assert_eq!(mine["items"].as_array().unwrap().len(), 1, "{mine}");
+    assert_eq!(mine["items"][0]["private"], true);
+    let run = mine["items"][0]["run"].as_str().unwrap().to_owned();
+
+    let (_, theirs) = server.call(Method::GET, "/api/v1/runs", &ada, None).await;
+    assert_eq!(theirs["items"], json!([]), "{theirs}");
+    assert_eq!(theirs["hidden"], 1);
+    let path = format!("/api/v1/runs/{run}");
+    let (status, _) = server.call(Method::GET, &path, &ada, None).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    let (status, trajectory) = server.call(Method::GET, &path, &sam, None).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(trajectory["private"], true);
+
+    let (_, everything) = server
+        .call(Method::GET, "/api/v1/runs", OWNER_KEY, None)
+        .await;
+    assert_eq!(everything["items"].as_array().unwrap().len(), 1);
+    assert_eq!(everything["hidden"], 0);
+}

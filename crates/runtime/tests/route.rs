@@ -622,10 +622,8 @@ async fn a_routed_probe_swaps_in_the_candidate_and_stubs_its_writes() {
         .sink
         .list_runs(&events::RunQuery {
             agent: Some("probe:keeper".to_owned()),
-            harness: None,
-            offset: 0,
             limit: 10,
-            requested_by: None,
+            ..events::RunQuery::default()
         })
         .await
         .unwrap();

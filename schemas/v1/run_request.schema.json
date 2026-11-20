@@ -22,6 +22,14 @@
       "maximum": 1000,
       "minimum": -1000,
       "type": "integer"
+    },
+    "private": {
+      "default": null,
+      "description": "True to keep its runs to whoever asked, and the owner, so their words\nnever reach Harness². Left out, the key's default decides.",
+      "type": [
+        "boolean",
+        "null"
+      ]
     }
   },
   "required": [

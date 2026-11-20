@@ -66,6 +66,10 @@
       "maxLength": 55,
       "type": "string"
     },
+    "private_by_default": {
+      "description": "True if what it starts is private unless a request says otherwise.",
+      "type": "boolean"
+    },
     "revoked_at": {
       "description": "When it was revoked, if it was.",
       "format": "date-time",
@@ -88,7 +92,8 @@
     "person",
     "scopes",
     "name",
-    "made_at"
+    "made_at",
+    "private_by_default"
   ],
   "title": "KeyView",
   "type": "object"

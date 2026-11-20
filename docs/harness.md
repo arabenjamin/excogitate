@@ -285,6 +285,25 @@ the routed chat runs it.
 - **Only an agent the route runs** can be attempted this way: an attempt on
   any other fails and says so, and a workflow is refused.
 
+## Private runs
+
+A person can keep a run [private](api.md#private-runs). Harness² still learns
+from it, but never repeats its words: its messages, its model's replies and
+its tools' results.
+
+- **It counts.** A private run that failed counts toward "the same failure
+  twice", by its failure pattern and calls line, which are tool names and
+  statuses, and the owner's mark on it counts as always.
+- **It's never the task.** An attempt's task is the newest run in the
+  pattern that isn't private, and a replay never takes a private run's
+  question. When every run in a pattern is private, nothing is attempted,
+  and the picker's `skipped` says how many private runs failed that way.
+- **No judge is shown one.** Judges read only an attempt's own probes, and
+  a probe whose run is private is refused, so no citation can quote a
+  private run, and nothing needs cleaning up afterwards.
+- **The daily review skips it,** since a review quotes its chat, and says
+  how many it skipped.
+
 ## Reviewing answers
 
 An agent's run can end well and still answer badly, which no failed call
