@@ -568,9 +568,11 @@ mod tests {
         let none = Marked::new();
         let evidence = [evidence(&only[0], &none)];
         let lines = private_only(&evidence);
-        assert_eq!(lines.len(), 1, "{lines:?}");
-        assert!(lines[0].contains("2 private runs"), "{lines:?}");
-        assert!(!lines[0].contains("secret"), "{lines:?}");
+        let [line] = lines.as_slice() else {
+            panic!("one line, not {lines:?}");
+        };
+        assert!(line.contains("2 private runs"), "{line}");
+        assert!(!line.contains("secret"), "{line}");
     }
 
     #[test]
