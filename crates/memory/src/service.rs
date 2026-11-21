@@ -247,12 +247,13 @@ pub fn derived_title(text: &str) -> String {
 /// The body's SHA-256 in lowercase hex. It's stored, so its form mustn't
 /// change.
 fn content_hash(body: &str) -> String {
-    Sha256::digest(body.trim().as_bytes())
-        .iter()
-        .fold(String::with_capacity(64), |mut text, byte| {
+    Sha256::digest(body.trim().as_bytes()).iter().fold(
+        String::with_capacity(64),
+        |mut text, byte| {
             let _ = write!(text, "{byte:02x}");
             text
-        })
+        },
+    )
 }
 
 fn check_body(body: &str) -> Result<(), MemoryError> {
