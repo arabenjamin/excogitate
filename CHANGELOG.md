@@ -3,6 +3,16 @@
 All notable changes are listed here. The file is generated from the
 Conventional Commits by [git-cliff](https://git-cliff.org) (`cliff.toml`).
 
+## [0.27.0] - 2026-11-20
+
+### Features
+
+- Each person has a day cap on priced models, one total across providers
+  inside each provider's cap; $0 unless set on the person or by
+  `people.default_day_cap_usd_micros` (breaking for code that builds
+  `RoutePolicy`, `EmbedScope` or `workflow::Engine` by hand, or matches
+  every `Rejection`)
+
 ## [0.26.0] - 2026-11-20
 
 ### Features
