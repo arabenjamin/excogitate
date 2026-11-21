@@ -1,5 +1,6 @@
 //! The memory service: what the `memory` tool and the runtime's own loops use.
 
+use std::fmt::Write as _;
 use std::sync::{Arc, OnceLock};
 
 use chrono::{DateTime, Utc};
@@ -243,8 +244,15 @@ pub fn derived_title(text: &str) -> String {
         .collect()
 }
 
+/// The body's SHA-256 in lowercase hex. It's stored, so its form mustn't
+/// change.
 fn content_hash(body: &str) -> String {
-    format!("{:x}", Sha256::digest(body.trim().as_bytes()))
+    Sha256::digest(body.trim().as_bytes())
+        .iter()
+        .fold(String::with_capacity(64), |mut text, byte| {
+            let _ = write!(text, "{byte:02x}");
+            text
+        })
 }
 
 fn check_body(body: &str) -> Result<(), MemoryError> {

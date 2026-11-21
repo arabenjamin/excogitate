@@ -70,6 +70,15 @@ impl Embedder for Fake {
     }
 }
 
+#[test]
+fn a_content_hash_is_the_trimmed_bodys_sha256_in_lowercase_hex() {
+    // Stored with every note, so a dependency bump mustn't change it.
+    assert_eq!(
+        content_hash("  hello\n"),
+        "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"
+    );
+}
+
 fn now() -> DateTime<Utc> {
     DateTime::from_timestamp(1_800_000_000, 0).unwrap()
 }
