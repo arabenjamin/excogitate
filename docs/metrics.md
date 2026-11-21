@@ -39,8 +39,8 @@ uncounted.
 
 The HTTP layer times each request under its route's pattern
 (`/api/v1/runs/{id}`, never the path asked for), and `other` for a path no
-route matched. The jobs gauge is read from the store when Prometheus
-scrapes.
+route matched. The jobs and spend gauges are read from the store when
+Prometheus scrapes. The worker counts each job attempt as it's recorded.
 
 **Labels never carry a run id, an argument or a reply.** Their values are
 agent, tool, model and capability names. Each label keeps at most 256 values,
@@ -69,6 +69,9 @@ Counters end in `_total`.
 | `http_request_duration_seconds` | `route`, `status` | Histogram |
 | `sink_append_failures_total` | | Event appends the sink failed: each is a piece of a trajectory lost |
 | `jobs` | `state` | Jobs `queued` and `claimed`, counted up to 10,000 each |
+| `jobs_finished_total` | `kind`, `workflow`, `outcome` | Job attempts ended: `succeeded`, `retried` (it will run again) or `dead` (its last attempt failed). `workflow` is the workflow a `workflow` job runs, `none` for other kinds |
+| `spend_today_usd_micros` | `account`, `name` | What each priced provider (`account="provider"`) and each person (`account="person"`, `name` their id) has spent or reserved today, UTC |
+| `day_cap_usd_micros` | `account`, `name` | Each one's day cap: a provider's `spend_cap_usd_micros_per_day`, a person's [own or the default](api.md#what-a-person-may-spend) |
 
 A run whose agent isn't known when it ends, such as one that started before
 a restart, is counted under `agent="unknown"`.
@@ -76,3 +79,14 @@ a restart, is counted under `agent="unknown"`.
 Counters start from zero when the server starts, as Prometheus expects;
 `rate()` and `increase()` handle the reset. The event sink keeps the
 history.
+
+## What to alert on
+
+- **Jobs dying:** `increase(jobs_finished_total{outcome="dead"}[1h])` by
+  `workflow`. A source or sidecar that breaks shows here first, since a
+  dead job only leaves the `jobs` gauge.
+- **A tool failing most calls:** `tool_calls_total` with `status="failed"`
+  over all of that tool's calls.
+- **A cap filling:** `spend_today_usd_micros / day_cap_usd_micros` above
+  0.8, where the cap isn't 0.
+- **Lost events:** any increase in `sink_append_failures_total`.

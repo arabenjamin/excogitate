@@ -503,7 +503,9 @@ pub async fn run_server(
         options,
         format!("{product}-{}", std::process::id()),
     )
-    .map(Arc::new)?;
+    .map(|worker| {
+        Arc::new(worker.observed(Arc::clone(&runtime.metrics) as Arc<dyn work::JobObserver>))
+    })?;
     let scheduler = Scheduler::new(store.shared(), transport);
     let (stop, shutdown) = watch::channel(false);
     let mut http_stop = shutdown.clone();

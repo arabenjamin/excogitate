@@ -464,12 +464,13 @@ async fn health() -> Json<Value> {
     Json(serde_json::json!({ "status": "ok" }))
 }
 
-/// The metrics, with the jobs gauge read now.
+/// The metrics, with the jobs and spend gauges read now.
 async fn metrics_page(State(app): State<App>) -> Response {
     let metrics = &app.runtime.metrics;
     metrics
         .read_jobs(app.runtime.workflows.store.as_ref())
         .await;
+    metrics.set_spend(&app.runtime.spend_today().await);
     (
         [(
             CONTENT_TYPE,

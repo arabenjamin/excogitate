@@ -438,7 +438,72 @@ pub(crate) async fn payer(
     Some(Payer::new(actor, cap))
 }
 
+/// The most people the spend gauges read.
+const MAX_PEOPLE_COUNTED: u32 = 1_000;
+
 impl crate::Runtime {
+    /// Today's spend and day cap of each priced provider and each person,
+    /// for the metrics. What can't be read is left out, and says so.
+    pub(crate) async fn spend_today(&self) -> Vec<crate::metrics::DaySpend> {
+        let store = self.workflows.store.as_ref();
+        let day = Utc::now().date_naive();
+        let mut days = Vec::new();
+        let mut seen = std::collections::BTreeSet::new();
+        for model in self.gateway.catalog().models() {
+            let provider = &model.provider;
+            let Some(cap) = provider.daily_cap_usd_micros else {
+                continue;
+            };
+            if !seen.insert(provider.name.clone()) {
+                continue;
+            }
+            match store.spent_on(&provider.name, day).await {
+                Ok(spent) => days.push(crate::metrics::DaySpend {
+                    account: "provider",
+                    name: provider.name.clone(),
+                    spent_usd_micros: spent,
+                    cap_usd_micros: cap,
+                }),
+                Err(error) => {
+                    eprintln!("metrics: couldn't read {}'s spend: {error}", provider.name);
+                }
+            }
+        }
+        let mut offset = 0;
+        while offset < MAX_PEOPLE_COUNTED {
+            let Ok(page) = PageRequest::new(store::MAX_PAGE_LIMIT, offset) else {
+                break;
+            };
+            let found = match people(store, page).await {
+                Ok(found) => found,
+                Err(error) => {
+                    eprintln!("metrics: couldn't list people: {error}");
+                    break;
+                }
+            };
+            for person in &found.items {
+                if let Some(payer) = self.payer_for(Some(&person.id)).await {
+                    match spend_today(store, payer).await {
+                        Ok(spend) => days.push(crate::metrics::DaySpend {
+                            account: "person",
+                            name: person.id.clone(),
+                            spent_usd_micros: spend.spent_usd_micros,
+                            cap_usd_micros: spend.day_cap_usd_micros,
+                        }),
+                        Err(error) => {
+                            eprintln!("metrics: couldn't read {}'s spend: {error}", person.id);
+                        }
+                    }
+                }
+            }
+            if !found.has_more {
+                break;
+            }
+            offset = offset.saturating_add(u32::try_from(found.items.len()).unwrap_or(u32::MAX));
+        }
+        days
+    }
+
     /// Who pays for what `requested_by` starts, as [`payer`] says.
     pub(crate) async fn payer_for(&self, requested_by: Option<&str>) -> Option<Payer> {
         payer(

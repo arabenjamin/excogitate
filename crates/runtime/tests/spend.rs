@@ -173,6 +173,38 @@ async fn a_persons_cap_lets_them_spend_and_their_spend_shows() {
         .call(Method::GET, "/api/v1/people", OWNER_KEY, None)
         .await;
     assert_eq!(people["items"][0]["day_cap_usd_micros"], 50_000, "{people}");
+
+    // The metrics show the day too, the person's and the provider's.
+    let text = server
+        .client
+        .get(format!("{}/metrics", server.url))
+        .bearer_auth(OWNER_KEY)
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    let value = |line_start: &str| {
+        text.lines()
+            .find(|line| line.starts_with(line_start))
+            .and_then(|line| line.rsplit(' ').next())
+            .and_then(|value| value.parse::<u64>().ok())
+            .unwrap_or_else(|| panic!("{line_start} not in:\n{text}"))
+    };
+    assert_eq!(
+        value(r#"test_spend_today_usd_micros{account="person",name="person:ana"}"#),
+        spent
+    );
+    assert_eq!(
+        value(r#"test_day_cap_usd_micros{account="person",name="person:ana"}"#),
+        50_000
+    );
+    assert!(value(r#"test_spend_today_usd_micros{account="provider",name="paid"}"#) >= spent);
+    assert_eq!(
+        value(r#"test_day_cap_usd_micros{account="provider",name="paid"}"#),
+        1_000_000
+    );
 }
 
 #[tokio::test]

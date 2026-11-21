@@ -19,4 +19,6 @@ pub use definitions::{
 };
 pub use schedule::{MIN_CATCH_UP_SECONDS, Schedule, Scheduler};
 pub use transport::{Enqueued, JobTransport, StoreTransport};
-pub use worker::{JobFailure, JobHandler, Worker, WorkerError, WorkerOptions};
+pub use worker::{
+    JobFailure, JobHandler, JobObserver, JobOutcome, Worker, WorkerError, WorkerOptions,
+};

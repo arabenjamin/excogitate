@@ -369,3 +369,55 @@ fn one_kind_has_one_handler() {
     .unwrap_err();
     assert_eq!(error, WorkerError::DuplicateKind("test".to_owned()));
 }
+
+/// Remembers each job attempt's outcome, in order.
+#[derive(Debug, Default)]
+struct Outcomes(std::sync::Mutex<Vec<(JobId, work::JobOutcome)>>);
+
+impl work::JobObserver for Outcomes {
+    fn finished(&self, job: &Job, outcome: work::JobOutcome) {
+        self.0.lock().unwrap().push((job.id, outcome));
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn an_observer_hears_how_each_attempt_ended() {
+    let outcomes = Arc::new(Outcomes::default());
+    let store = Arc::new(MemoryStore::new(3));
+    let transport = Arc::new(StoreTransport(Arc::clone(&store) as _));
+    let handlers: Vec<Arc<dyn JobHandler>> = vec![Fixture::new(Does::Fail)];
+    let worker = Worker::new(Arc::clone(&transport) as _, handlers, quick(), "w")
+        .unwrap()
+        .observed(Arc::clone(&outcomes) as Arc<dyn work::JobObserver>);
+    let (stop, shutdown) = watch::channel(false);
+    let running = tokio::spawn(Arc::new(worker).run(shutdown));
+    let failing = job("test", json!({}), 2);
+    transport.enqueue(failing.clone()).await.unwrap();
+    for _ in 0..600 {
+        if outcomes.0.lock().unwrap().len() == 2 {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(5)).await;
+    }
+    stop.send(true).unwrap();
+    tokio::time::timeout(Duration::from_secs(5), running)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        *outcomes.0.lock().unwrap(),
+        [
+            (failing.id, work::JobOutcome::Retried),
+            (failing.id, work::JobOutcome::Dead)
+        ]
+    );
+    let dead = store.get_job(failing.id).await.unwrap().unwrap();
+    assert_eq!(dead.status, JobStatus::Dead, "the store agrees");
+}
+
+#[test]
+fn an_outcome_is_one_word() {
+    assert_eq!(work::JobOutcome::Succeeded.as_str(), "succeeded");
+    assert_eq!(work::JobOutcome::Retried.as_str(), "retried");
+    assert_eq!(work::JobOutcome::Dead.as_str(), "dead");
+}

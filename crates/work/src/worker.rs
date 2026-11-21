@@ -100,6 +100,36 @@ pub enum WorkerError {
     },
 }
 
+/// How a job's attempt ended, as recorded.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum JobOutcome {
+    /// It succeeded.
+    Succeeded,
+    /// It failed and will be tried again.
+    Retried,
+    /// It failed on its last attempt, and won't be tried again.
+    Dead,
+}
+
+impl JobOutcome {
+    /// The outcome as a word: `succeeded`, `retried` or `dead`.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Succeeded => "succeeded",
+            Self::Retried => "retried",
+            Self::Dead => "dead",
+        }
+    }
+}
+
+/// Told how each job's attempt ended once it's recorded, as metrics are.
+pub trait JobObserver: Send + Sync + std::fmt::Debug {
+    /// `job`'s attempt ended as `outcome`.
+    fn finished(&self, job: &Job, outcome: JobOutcome);
+}
+
 #[derive(Debug)]
 struct Registered {
     handler: Arc<dyn JobHandler>,
@@ -116,6 +146,7 @@ pub struct Worker {
     options: WorkerOptions,
     lease: Duration,
     name: String,
+    observer: Option<Arc<dyn JobObserver>>,
 }
 
 impl Worker {
@@ -159,7 +190,21 @@ impl Worker {
             options,
             lease: longest.saturating_add(options.lease_margin),
             name: name.into(),
+            observer: None,
         })
+    }
+
+    /// The same worker, telling `observer` how each job's attempt ended.
+    #[must_use]
+    pub fn observed(mut self, observer: Arc<dyn JobObserver>) -> Self {
+        self.observer = Some(observer);
+        self
+    }
+
+    fn tell(&self, job: &Job, outcome: JobOutcome) {
+        if let Some(observer) = &self.observer {
+            observer.finished(job, outcome);
+        }
     }
 
     /// Runs until `shutdown` turns true. Jobs under way finish first, or are
@@ -209,7 +254,10 @@ impl Worker {
     async fn process(&self, name: &str, job: Job) {
         match self.run_job(&job).await {
             Ok(result) => match self.transport.complete(job.id, name, result).await {
-                Ok(()) => eprintln!("job {} ({}) succeeded", job.id, job.kind),
+                Ok(()) => {
+                    eprintln!("job {} ({}) succeeded", job.id, job.kind);
+                    self.tell(&job, JobOutcome::Succeeded);
+                }
                 Err(error) => eprintln!("job {} finished but wasn't recorded: {error}", job.id),
             },
             Err(failure) => {
@@ -275,6 +323,15 @@ impl Worker {
             .await
         {
             eprintln!("job {} failed but wasn't recorded: {error}", job.id);
+            return;
         }
+        // The attempt being counted is the job's last when it reaches its
+        // most, and then the store marks it dead.
+        let outcome = if job.attempts >= job.max_attempts {
+            JobOutcome::Dead
+        } else {
+            JobOutcome::Retried
+        };
+        self.tell(job, outcome);
     }
 }

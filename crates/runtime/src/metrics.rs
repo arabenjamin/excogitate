@@ -81,6 +81,9 @@ pub struct Metrics {
     http_seconds: Timings,
     sink_failures: Counter,
     jobs: Family<Labels, Gauge>,
+    jobs_finished: Counters,
+    spend_today: Family<Labels, Gauge>,
+    day_caps: Family<Labels, Gauge>,
     /// Each label's values so far.
     seen: Mutex<HashMap<&'static str, HashSet<String>>>,
     /// Each open run's agent, oldest first, so a run's end is labelled too.
@@ -106,6 +109,9 @@ impl Default for Metrics {
             http_seconds: timings(),
             sink_failures: Counter::default(),
             jobs: Family::default(),
+            jobs_finished: Family::default(),
+            spend_today: Family::default(),
+            day_caps: Family::default(),
             seen: Mutex::new(HashMap::new()),
             open: Mutex::new((HashMap::new(), VecDeque::new())),
         }
@@ -282,6 +288,40 @@ impl Metrics {
             .observe(started.elapsed().as_secs_f64());
     }
 
+    /// Counts one job's attempt ending, by its kind, its workflow when it
+    /// runs one, and how it ended.
+    pub fn job_finished(&self, job: &store::Job, outcome: work::JobOutcome) {
+        let workflow = job
+            .payload
+            .get("workflow")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("none");
+        self.jobs_finished
+            .get_or_create(&vec![
+                ("kind", self.label("kind", &job.kind)),
+                ("workflow", self.label("workflow", workflow)),
+                ("outcome", outcome.as_str().to_owned()),
+            ])
+            .inc();
+    }
+
+    /// Sets today's spend and day cap of each account: each priced
+    /// provider, and each person.
+    pub(crate) fn set_spend(&self, days: &[DaySpend]) {
+        for day in days {
+            let labels = vec![
+                ("account", day.account.to_owned()),
+                ("name", self.label("account_name", &day.name)),
+            ];
+            self.spend_today
+                .get_or_create(&labels)
+                .set(i64::try_from(day.spent_usd_micros).unwrap_or(i64::MAX));
+            self.day_caps
+                .get_or_create(&labels)
+                .set(i64::try_from(day.cap_usd_micros).unwrap_or(i64::MAX));
+        }
+    }
+
     /// Reads how many jobs are queued and claimed, up to
     /// [`MAX_JOBS_COUNTED`] each. A store that fails leaves the last count.
     pub async fn read_jobs(&self, store: &dyn Store) {
@@ -316,6 +356,33 @@ impl Metrics {
                     .set(i64::from(counted.min(MAX_JOBS_COUNTED)));
             }
         }
+    }
+
+    /// The jobs and spend metrics, registered on `registry`.
+    fn register_queue_and_spend(&self, registry: &mut Registry) {
+        registry.register(
+            "jobs",
+            "Jobs queued or claimed, read when scraped",
+            self.jobs.clone(),
+        );
+        registry.register(
+            "jobs_finished",
+            "Job attempts ended, by kind, workflow (none for a job that runs none) \
+             and outcome: succeeded, retried or dead",
+            self.jobs_finished.clone(),
+        );
+        registry.register(
+            "spend_today_usd_micros",
+            "What each priced provider and each person has spent or reserved \
+             today (UTC), in millionths of a dollar, read when scraped",
+            self.spend_today.clone(),
+        );
+        registry.register(
+            "day_cap_usd_micros",
+            "Each priced provider's and each person's day cap, in millionths of \
+             a dollar, read when scraped",
+            self.day_caps.clone(),
+        );
     }
 
     /// The metrics in the `OpenMetrics` text format, each name after
@@ -395,16 +462,29 @@ impl Metrics {
             "Event appends the sink failed, each a lost piece of a trajectory",
             self.sink_failures.clone(),
         );
-        registry.register(
-            "jobs",
-            "Jobs queued or claimed, read when scraped",
-            self.jobs.clone(),
-        );
+        self.register_queue_and_spend(&mut registry);
         let mut out = String::new();
         if let Err(error) = encode(&mut out, &registry) {
             let _ = writeln!(out, "# metrics couldn't be written: {error}");
         }
         out
+    }
+}
+
+/// One account's day, for the spend gauges.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct DaySpend {
+    /// `provider` or `person`.
+    pub(crate) account: &'static str,
+    /// The provider's name, or the person's id.
+    pub(crate) name: String,
+    pub(crate) spent_usd_micros: u64,
+    pub(crate) cap_usd_micros: u64,
+}
+
+impl work::JobObserver for Metrics {
+    fn finished(&self, job: &store::Job, outcome: work::JobOutcome) {
+        self.job_finished(job, outcome);
     }
 }
 
@@ -592,6 +672,59 @@ mod tests {
             metrics.open.lock().unwrap().0.is_empty(),
             "the run's end forgets it"
         );
+    }
+
+    #[test]
+    fn a_jobs_end_and_each_accounts_day_are_counted() {
+        let metrics = Metrics::new();
+        let mut job = store::Job {
+            id: store::JobId::generate(),
+            kind: "workflow".to_owned(),
+            payload: serde_json::json!({ "workflow": "media-learning", "inputs": {} }),
+            priority: 0,
+            status: store::JobStatus::Dead,
+            requested_by: protocol::Actor::new("test"),
+            run_at: Utc::now(),
+            attempts: 1,
+            max_attempts: 1,
+            lease: None,
+            last_error: None,
+            result: None,
+            finished_at: None,
+        };
+        metrics.job_finished(&job, work::JobOutcome::Dead);
+        metrics.job_finished(&job, work::JobOutcome::Dead);
+        job.kind = "harness".to_owned();
+        job.payload = serde_json::json!({});
+        metrics.job_finished(&job, work::JobOutcome::Succeeded);
+        metrics.set_spend(&[
+            DaySpend {
+                account: "provider",
+                name: "openrouter".to_owned(),
+                spent_usd_micros: 1200,
+                cap_usd_micros: 500_000,
+            },
+            DaySpend {
+                account: "person",
+                name: "person:sam".to_owned(),
+                spent_usd_micros: 0,
+                cap_usd_micros: 0,
+            },
+        ]);
+        let text = metrics.render("rt");
+        for expected in [
+            r#"rt_jobs_finished_total{kind="workflow",workflow="media-learning",outcome="dead"} 2"#,
+            r#"rt_jobs_finished_total{kind="harness",workflow="none",outcome="succeeded"} 1"#,
+            r#"rt_spend_today_usd_micros{account="provider",name="openrouter"} 1200"#,
+            r#"rt_day_cap_usd_micros{account="provider",name="openrouter"} 500000"#,
+            r#"rt_spend_today_usd_micros{account="person",name="person:sam"} 0"#,
+            r#"rt_day_cap_usd_micros{account="person",name="person:sam"} 0"#,
+        ] {
+            assert!(
+                line(&text, expected).is_some(),
+                "{expected} not in:\n{text}"
+            );
+        }
     }
 
     #[test]
