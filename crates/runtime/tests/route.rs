@@ -256,6 +256,11 @@ async fn a_turn_chooses_a_profile_fills_its_call_and_the_writer_answers_from_the
     let options = user_text(&seen[0]);
     assert!(options.contains("What's stored in memory."), "{options}");
     assert!(options.contains("small_talk"), "{options}");
+    // What was done or learned is looked up, never taken for small talk.
+    assert!(
+        options.contains("what we did, ran, stored, learned or found"),
+        "{options}"
+    );
     assert!(user_text(&seen[1]).contains("Fill in the arguments for one call to memory"));
     assert_eq!(
         seen[1]["messages"][0]["content"],

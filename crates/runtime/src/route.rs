@@ -32,10 +32,14 @@ const MAX_AGENTS_READ: u32 = 1000;
 
 /// The bundled arithmetic tool, which needs numbers a result gives.
 const CALCULATE: &str = "calculate";
-/// The choice that answers without looking anything up.
+/// The choice that answers without looking anything up. Its description
+/// was measured on the choice model against the owner's own questions: the
+/// old one ("a question about this chat itself") took "what did we do
+/// today?" and "how many tools does the brain have?" for small talk.
 pub(crate) const SMALL_TALK: &str = "small_talk";
-const SMALL_TALK_ABOUT: &str =
-    "Small talk, a greeting, or a question about this chat itself that needs no records.";
+const SMALL_TALK_ABOUT: &str = "Only a greeting, thanks, chatter, or a question about this \
+conversation's own earlier messages, none of which needs anything looked up. A question about \
+what we did, ran, stored, learned or found, on any day, is never small talk.";
 /// The next-call choice that stops.
 const DONE: &str = "done";
 const DONE_ABOUT: &str = "The results answer the question, or nothing more here would.";
