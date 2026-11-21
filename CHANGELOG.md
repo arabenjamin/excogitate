@@ -3,6 +3,22 @@
 All notable changes are listed here. The file is generated from the
 Conventional Commits by [git-cliff](https://git-cliff.org) (`cliff.toml`).
 
+## [0.28.0] - 2026-11-21
+
+### Features
+
+- MCP is served in revisions 2026-07-28 (stateless), 2025-11-25 and
+  2025-06-18, on stdio and over HTTP; `mcp-remote` speaks 2026-07-28 to a
+  remote server that offers it and opens a handshake otherwise
+
+### Build
+
+- Bump `sha2` to 0.11, `jsonschema` to 0.61.2 and the CI actions
+
+### Fixed
+
+- The content hash is formatted as rustfmt does
+
 ## [0.27.0] - 2026-11-20
 
 ### Features
