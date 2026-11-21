@@ -127,6 +127,62 @@ fn only_callable(app: &App, caller: &Caller, mut reply: Value) -> Value {
     reply
 }
 
+/// The request's headers checked against the document and its body: the
+/// revision it names if it's stateless, or the JSON-RPC error to refuse it
+/// with, as a 400.
+fn checked_headers(
+    headers: &HeaderMap,
+    message: &Value,
+    id: &Value,
+) -> Result<Option<String>, Value> {
+    // The headers that repeat a body hold to what the document says of
+    // them, whichever revision the request is.
+    for (name, longest) in [("mcp-method", METHOD_CHARS), ("mcp-name", TOOL_CHARS)] {
+        if let Some(value) = headers.get(name) {
+            let fits = value
+                .to_str()
+                .is_ok_and(|text| !text.is_empty() && text.chars().count() <= longest);
+            if !fits {
+                let detail = format!("{name} must be 1 to {longest} characters");
+                return Err(failure(id, INVALID_REQUEST, &detail));
+            }
+        }
+    }
+    if let Some(version) = headers.get("mcp-protocol-version") {
+        let version = version.to_str().unwrap_or("");
+        if !SUPPORTED_VERSIONS.contains(&version) {
+            let refused = json!({
+                "jsonrpc": "2.0",
+                "id": id,
+                "error": {
+                    "code": UNSUPPORTED_VERSION,
+                    "message": "Unsupported protocol version",
+                    "data": {
+                        "supported": SUPPORTED_VERSIONS,
+                        "requested": version.chars().take(64).collect::<String>(),
+                    },
+                },
+            });
+            return Err(refused);
+        }
+    }
+    let stateless = stateless_version(message).map(str::to_owned);
+    if let Some(version) = &stateless {
+        if let Some(detail) = header_mismatch(headers, message, version) {
+            let refused = failure(id, HEADER_MISMATCH, &detail);
+            return Err(refused);
+        }
+    } else if header(headers, "mcp-protocol-version") == Some(STATELESS_VERSION)
+        && message.get("id").is_some()
+    {
+        let detail = format!(
+            "a {STATELESS_VERSION} request names its revision and the client's capabilities in `params._meta`"
+        );
+        return Err(failure(id, INVALID_PARAMS, &detail));
+    }
+    Ok(stateless)
+}
+
 async fn post_message(
     State(app): State<App>,
     Extension(caller): Extension<Caller>,
@@ -146,42 +202,10 @@ async fn post_message(
         return rpc_error(StatusCode::BAD_REQUEST, INVALID_REQUEST, detail);
     }
     let id = message.get("id").cloned().unwrap_or(Value::Null);
-    if let Some(version) = headers.get("mcp-protocol-version") {
-        let version = version.to_str().unwrap_or("");
-        if !SUPPORTED_VERSIONS.contains(&version) {
-            let refused = json!({
-                "jsonrpc": "2.0",
-                "id": id,
-                "error": {
-                    "code": UNSUPPORTED_VERSION,
-                    "message": "Unsupported protocol version",
-                    "data": {
-                        "supported": SUPPORTED_VERSIONS,
-                        "requested": version.chars().take(64).collect::<String>(),
-                    },
-                },
-            });
-            return (StatusCode::BAD_REQUEST, axum::Json(refused)).into_response();
-        }
-    }
-    let stateless = stateless_version(&message).map(str::to_owned);
-    if let Some(version) = &stateless {
-        if let Some(detail) = header_mismatch(&headers, &message, version) {
-            let refused = failure(&id, HEADER_MISMATCH, &detail);
-            return (StatusCode::BAD_REQUEST, axum::Json(refused)).into_response();
-        }
-    } else if header(&headers, "mcp-protocol-version") == Some(STATELESS_VERSION)
-        && message.get("id").is_some()
-    {
-        let detail = format!(
-            "a {STATELESS_VERSION} request names its revision and the client's capabilities in `params._meta`"
-        );
-        return (
-            StatusCode::BAD_REQUEST,
-            axum::Json(failure(&id, INVALID_PARAMS, &detail)),
-        )
-            .into_response();
-    }
+    let stateless = match checked_headers(&headers, &message, &id) {
+        Ok(stateless) => stateless,
+        Err(refused) => return (StatusCode::BAD_REQUEST, axum::Json(refused)).into_response(),
+    };
     // A notification, or the client's reply to something: nothing to answer.
     if message.get("id").is_none() || message.get("method").is_none() {
         return StatusCode::ACCEPTED.into_response();
@@ -292,6 +316,11 @@ const PROTOCOL: Param = Param {
             its `_meta` says; any revision not served is refused.",
     kind: Kind::OneOf(&SUPPORTED_VERSIONS),
 };
+
+/// The longest `mcp-method` header taken.
+const METHOD_CHARS: usize = 64;
+/// The longest `mcp-name` header taken.
+const TOOL_CHARS: usize = 128;
 
 const METHOD: Param = Param {
     name: "mcp-method",

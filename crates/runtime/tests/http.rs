@@ -578,6 +578,19 @@ async fn a_stateless_error_has_the_status_its_revision_gives() {
         .mcp(&rpc(4, "resources/list", &json!({})), &[])
         .await;
     assert_eq!(legacy.status(), StatusCode::OK);
+
+    // Whatever the revision, a header the document limits is held to it.
+    let long = "x".repeat(129);
+    for (name, value) in [
+        ("mcp-name", ""),
+        ("mcp-method", ""),
+        ("mcp-name", long.as_str()),
+    ] {
+        let refused = running
+            .mcp(&rpc(5, "tools/list", &json!({})), &[(name, value)])
+            .await;
+        assert_eq!(refused.status(), StatusCode::BAD_REQUEST, "{name}: {value}");
+    }
 }
 
 #[tokio::test]
