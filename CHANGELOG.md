@@ -3,6 +3,19 @@
 All notable changes are listed here. The file is generated from the
 Conventional Commits by [git-cliff](https://git-cliff.org) (`cliff.toml`).
 
+## [0.29.0] - 2026-11-21
+
+### Features
+
+- The metrics count how each job attempt ended (`jobs_finished_total`, by
+  kind, workflow and outcome) and show each priced provider's and each
+  person's spend today against its day cap; the worker gains a
+  `JobObserver` hook
+
+### Fixed
+
+- An empty structured reply says when the model used its whole output limit
+
 ## [0.28.0] - 2026-11-21
 
 ### Features
