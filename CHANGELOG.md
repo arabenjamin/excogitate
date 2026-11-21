@@ -3,6 +3,14 @@
 All notable changes are listed here. The file is generated from the
 Conventional Commits by [git-cliff](https://git-cliff.org) (`cliff.toml`).
 
+## [0.29.1] - 2026-11-21
+
+### Fixed
+
+- The server declares how people and keys are kept when it starts. Before,
+  until a key was checked, `/metrics` left out every person's spend and a
+  person's queued job read its day cap as $0
+
 ## [0.29.0] - 2026-11-21
 
 ### Features
