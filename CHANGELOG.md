@@ -3,6 +3,14 @@
 All notable changes are listed here. The file is generated from the
 Conventional Commits by [git-cliff](https://git-cliff.org) (`cliff.toml`).
 
+## [0.29.2] - 2026-11-21
+
+### Fixed
+
+- The front door no longer takes a question about what was done, run,
+  stored, learned or found for small talk; small talk is greetings, thanks,
+  chatter and the conversation's own earlier messages
+
 ## [0.29.1] - 2026-11-21
 
 ### Fixed
