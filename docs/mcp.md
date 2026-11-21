@@ -72,7 +72,9 @@ if yours is a different width.
 A priced provider's daily cap is kept in the store, so a restart can't reset
 it. If Excogitate dies mid-call, that call's reservation stays on the books
 until the day ends: it can overcount a day's spend, and never undercount it.
-If the store can't be reached, priced calls are refused.
+If the store can't be reached, priced calls are refused. A person's calls are
+also held to their own day cap, which is 0 unless set; see
+[what a person may spend](api.md#what-a-person-may-spend).
 
 ## Remote servers
 

@@ -17,7 +17,7 @@ use std::collections::BTreeSet;
 use std::fmt::Write as _;
 
 use chrono::{DateTime, Utc};
-use protocol::{Actor, DataClass, Trust};
+use protocol::{Actor, DataClass, Payer, Trust};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -155,6 +155,11 @@ pub struct PersonView {
     /// Who added them.
     #[schemars(length(max = 64))]
     pub made_by: String,
+    /// What they may spend on priced models a UTC day, across all
+    /// providers, in millionths of a dollar. Left out, they get the
+    /// server's `people.default_day_cap_usd_micros`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub day_cap_usd_micros: Option<u64>,
 }
 
 /// A person to add, or what to change about one. People are never deleted,
@@ -170,6 +175,11 @@ pub struct PersonRequest {
     /// Whether their keys stop working. False if left out.
     #[serde(default)]
     pub disabled: bool,
+    /// What they may spend on priced models a UTC day, across all
+    /// providers, in millionths of a dollar. Left out, they get the
+    /// server's `people.default_day_cap_usd_micros`.
+    #[serde(default)]
+    pub day_cap_usd_micros: Option<u64>,
 }
 
 /// A page of people, by slug.
@@ -301,6 +311,22 @@ pub struct CallerView {
     pub key: Option<String>,
     /// True if what it starts is private unless a request says otherwise.
     pub private_by_default: bool,
+    /// What a person may spend today and has spent. None for the owner,
+    /// whom only the providers' caps hold.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub spend: Option<SpendView>,
+}
+
+/// A person's spend on priced models today (UTC), across all providers.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, JsonSchema)]
+#[schemars(deny_unknown_fields)]
+pub struct SpendView {
+    /// The day, as `YYYY-MM-DD`.
+    pub day: chrono::NaiveDate,
+    /// What they may spend that day, in millionths of a dollar.
+    pub day_cap_usd_micros: u64,
+    /// What they've spent or have reserved for calls still running.
+    pub spent_usd_micros: u64,
 }
 
 /// Who a request came from. The guard puts one on every request it lets
@@ -384,8 +410,58 @@ impl Caller {
                 .collect(),
             key: self.key.map(|key| key.to_string()),
             private_by_default: self.private_by_default,
+            spend: None,
         }
     }
+}
+
+/// Who pays for what `requested_by` starts: a person, at their own day cap
+/// or the server's default. A disabled or unknown person may spend nothing,
+/// and so may one whose record can't be read: a cap fails closed. The owner,
+/// schedules and the runtime have no payer.
+pub(crate) async fn payer(
+    store: &dyn Store,
+    default_day_cap_usd_micros: u64,
+    requested_by: Option<&str>,
+) -> Option<Payer> {
+    let actor = requested_by.filter(|actor| actor.starts_with("person:"))?;
+    let cap = match person(store, actor).await {
+        Ok(Some(found)) if !found.disabled => found
+            .day_cap_usd_micros
+            .unwrap_or(default_day_cap_usd_micros),
+        Ok(_) => 0,
+        Err(error) => {
+            eprintln!("couldn't read {actor}'s day cap, so they may spend nothing: {error}");
+            0
+        }
+    };
+    Some(Payer::new(actor, cap))
+}
+
+impl crate::Runtime {
+    /// Who pays for what `requested_by` starts, as [`payer`] says.
+    pub(crate) async fn payer_for(&self, requested_by: Option<&str>) -> Option<Payer> {
+        payer(
+            self.workflows.store.as_ref(),
+            self.config.people.default_day_cap_usd_micros,
+            requested_by,
+        )
+        .await
+    }
+}
+
+/// What `payer` has spent today.
+///
+/// # Errors
+///
+/// [`StoreError`] if the store fails.
+pub(crate) async fn spend_today(store: &dyn Store, payer: Payer) -> Result<SpendView, StoreError> {
+    let day = Utc::now().date_naive();
+    Ok(SpendView {
+        day,
+        day_cap_usd_micros: payer.day_cap_usd_micros(),
+        spent_usd_micros: store.spent_on(&payer.account(), day).await?,
+    })
 }
 
 /// Why a key was refused. Each says which, except that a key whose id is
@@ -551,6 +627,7 @@ pub(crate) async fn put_person(
         name: request.name,
         role: request.role,
         disabled: request.disabled,
+        day_cap_usd_micros: request.day_cap_usd_micros,
     };
     let record = Record::new(
         PERSON_TYPE.to_owned(),
@@ -784,6 +861,7 @@ mod tests {
             name: "Sam".to_owned(),
             role,
             disabled: false,
+            day_cap_usd_micros: None,
         };
         let (person, is_new) = put_person(store, "sam", request, &Actor::new(OWNER))
             .await
@@ -887,6 +965,7 @@ mod tests {
             name: "Sam".to_owned(),
             role: Role::Admin,
             disabled: true,
+            day_cap_usd_micros: None,
         };
         put_person(store.as_ref(), "sam", disable, &by)
             .await
@@ -930,6 +1009,7 @@ mod tests {
             name: "Sam".to_owned(),
             role: Role::Viewer,
             disabled: false,
+            day_cap_usd_micros: None,
         };
         let (changed, is_new) = put_person(store.as_ref(), "sam", lower, &by).await.unwrap();
         assert!(!is_new);
@@ -940,6 +1020,36 @@ mod tests {
             .unwrap();
         assert!(caller.may(Scope::Admin).unwrap_err().contains("viewer"));
         assert_eq!(caller.view().scopes, [Scope::Read]);
+    }
+
+    #[tokio::test]
+    async fn only_a_person_pays_and_a_disabled_or_unknown_one_may_spend_nothing() {
+        let store = store().await;
+        let store = store.as_ref();
+        for actor in [None, Some(OWNER), Some("schedule:daily"), Some("harness")] {
+            assert_eq!(payer(store, 9, actor).await, None, "{actor:?}");
+        }
+        let person = someone(store, Role::Member).await;
+        let found = payer(store, 9, Some(&person)).await.unwrap();
+        assert_eq!(
+            found.day_cap_usd_micros(),
+            9,
+            "the default, without their own"
+        );
+        assert_eq!(found.account(), Payer::account_of(&person));
+        let unknown = payer(store, 9, Some("person:nobody")).await.unwrap();
+        assert_eq!(unknown.day_cap_usd_micros(), 0);
+        let disable = PersonRequest {
+            name: "Sam".to_owned(),
+            role: Role::Member,
+            disabled: true,
+            day_cap_usd_micros: Some(5),
+        };
+        put_person(store, "sam", disable, &Actor::new(OWNER))
+            .await
+            .unwrap();
+        let disabled = payer(store, 9, Some(&person)).await.unwrap();
+        assert_eq!(disabled.day_cap_usd_micros(), 0);
     }
 
     #[tokio::test]

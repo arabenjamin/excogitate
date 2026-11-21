@@ -272,6 +272,15 @@ impl Catalog {
             if providers.iter().any(|known| known.name == provider.name) {
                 return Err(invalid(format!("provider {} repeats", provider.name)));
             }
+            // A person's spend is kept under this prefix, beside the
+            // providers' own.
+            if provider.name.starts_with(protocol::Payer::PREFIX) {
+                return Err(invalid(format!(
+                    "provider {}: a name may not start with {}",
+                    provider.name,
+                    protocol::Payer::PREFIX
+                )));
+            }
             providers.push(Arc::new(resolve_provider(provider, &env)?));
         }
         let mut names = HashSet::new();
@@ -521,6 +530,15 @@ mod tests {
             price,
         ));
         assert!(capped.unwrap().models()[0].is_paid());
+    }
+
+    #[test]
+    fn a_provider_cant_be_named_like_a_payers_account() {
+        let yaml = base("", "")
+            .replace("name: p,", "name: 'payer:p',")
+            .replace("provider: p,", "provider: 'payer:p',");
+        let error = load(&yaml).unwrap_err();
+        assert!(error.to_string().contains("payer:"), "{error}");
     }
 
     #[test]

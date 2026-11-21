@@ -301,7 +301,12 @@ impl Tool for DispatchedTool {
             harness_id(&json!({ "tool": name, "budget": self.runtime.config.budget })),
         )
         .requested_by(caller().map(|asking| asking.actor))
-        .private(caller().is_some_and(|asking| asking.private_by_default));
+        .private(caller().is_some_and(|asking| asking.private_by_default))
+        .paid_by(
+            self.runtime
+                .payer_for(caller().map(|asking| asking.actor).as_deref())
+                .await,
+        );
         let mut session = session_for(
             &self.runtime,
             vec![name.clone()],

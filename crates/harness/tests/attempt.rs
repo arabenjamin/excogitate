@@ -118,6 +118,7 @@ async fn setup_agent(body: Value, script: Vec<ChaosStep>) -> Setup {
         sources: workflow::SourceChoices::default(),
         requested_by: None,
         private: false,
+        payer: None,
     };
     Setup {
         engine,

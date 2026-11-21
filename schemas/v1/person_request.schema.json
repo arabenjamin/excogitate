@@ -25,6 +25,15 @@
   "additionalProperties": false,
   "description": "A person to add, or what to change about one. People are never deleted,\nso an actor on an old record always resolves; disable one instead.",
   "properties": {
+    "day_cap_usd_micros": {
+      "default": null,
+      "description": "What they may spend on priced models a UTC day, across all\nproviders, in millionths of a dollar. Left out, they get the\nserver's `people.default_day_cap_usd_micros`.",
+      "minimum": 0,
+      "type": [
+        "integer",
+        "null"
+      ]
+    },
     "disabled": {
       "default": false,
       "description": "Whether their keys stop working. False if left out.",

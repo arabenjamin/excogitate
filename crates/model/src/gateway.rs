@@ -8,6 +8,8 @@ use std::sync::{Arc, Mutex, PoisonError};
 
 use chrono::{DateTime, Utc};
 
+use protocol::Payer;
+
 use crate::route::{Candidate, NoRoute, Rejection, RoutePolicy, TokenEstimate, plan};
 use crate::{
     Capability, Catalog, ChatRequest, ChatResponse, ModelClient, ModelError, SpendLedger,
@@ -134,8 +136,9 @@ impl Abandoned {
 /// the worst case would fill the day's cap with spend that never happened.
 struct Reservation {
     ledger: Arc<dyn SpendLedger>,
-    /// The provider, for a paid model; nothing to settle otherwise.
-    provider: Option<String>,
+    /// The provider's account and the payer's, for a paid model; nothing to
+    /// settle otherwise.
+    accounts: Vec<String>,
     reserved: u64,
     abandoned: u64,
     at: DateTime<Utc>,
@@ -146,15 +149,16 @@ struct Reservation {
 impl Reservation {
     /// The call finished: it'll be settled the ordinary way.
     fn close(mut self) {
-        self.provider = None;
+        self.accounts.clear();
     }
 }
 
 impl Drop for Reservation {
     fn drop(&mut self) {
-        let Some(provider) = self.provider.take() else {
+        let accounts = std::mem::take(&mut self.accounts);
+        if accounts.is_empty() {
             return;
-        };
+        }
         if let Some(tally) = &self.tally {
             tally.add(self.abandoned);
         }
@@ -167,7 +171,11 @@ impl Drop for Reservation {
             self.abandoned,
             self.at,
         );
-        handle.spawn(async move { ledger.settle(&provider, reserved, actual, at).await });
+        handle.spawn(async move {
+            for account in accounts {
+                ledger.settle(&account, reserved, actual, at).await;
+            }
+        });
     }
 }
 
@@ -306,35 +314,64 @@ impl Gateway {
         Ok((ready, rejected.into_iter().map(|(name, _)| name).collect()))
     }
 
-    /// Reserves the worst case on a priced model. Returns false at the cap.
-    async fn reserve(&self, candidate: &Candidate, at: DateTime<Utc>) -> bool {
+    /// Reserves the worst case on a priced model, from the payer's day cap
+    /// and then the provider's. Returns the cap that refused it, having
+    /// reserved nothing.
+    async fn reserve(
+        &self,
+        candidate: &Candidate,
+        payer: Option<Payer>,
+        at: DateTime<Utc>,
+    ) -> Option<Rejection> {
         let model = &candidate.model;
         if !model.is_paid() {
-            return true;
+            return None;
+        }
+        let amount = candidate.worst_case_usd_micros;
+        if let Some(payer) = payer
+            && !self
+                .ledger
+                .reserve(&payer.account(), amount, payer.day_cap_usd_micros(), at)
+                .await
+        {
+            return Some(Rejection::OverPayerCap);
         }
         // Loading the catalog guarantees a priced model's provider has a cap.
         let cap = model.provider.daily_cap_usd_micros.unwrap_or(0);
-        self.ledger
-            .reserve(
-                &model.provider.name,
-                candidate.worst_case_usd_micros,
-                cap,
-                at,
-            )
+        if self
+            .ledger
+            .reserve(&model.provider.name, amount, cap, at)
             .await
+        {
+            return None;
+        }
+        if let Some(payer) = payer {
+            self.ledger.settle(&payer.account(), amount, 0, at).await;
+        }
+        Some(Rejection::OverDailyCap)
+    }
+
+    /// The accounts a call on `candidate` is charged to.
+    fn accounts(candidate: &Candidate, payer: Option<Payer>) -> Vec<String> {
+        if !candidate.model.is_paid() {
+            return Vec::new();
+        }
+        let mut accounts = vec![candidate.model.provider.name.clone()];
+        accounts.extend(payer.map(|payer| payer.account()));
+        accounts
     }
 
     /// Settles on the day of the reservation, even past midnight.
-    async fn settle(&self, candidate: &Candidate, actual: u64, at: DateTime<Utc>) {
-        let model = &candidate.model;
-        if model.is_paid() {
+    async fn settle(
+        &self,
+        candidate: &Candidate,
+        payer: Option<Payer>,
+        actual: u64,
+        at: DateTime<Utc>,
+    ) {
+        for account in Self::accounts(candidate, payer) {
             self.ledger
-                .settle(
-                    &model.provider.name,
-                    candidate.worst_case_usd_micros,
-                    actual,
-                    at,
-                )
+                .settle(&account, candidate.worst_case_usd_micros, actual, at)
                 .await;
         }
     }
@@ -344,15 +381,13 @@ impl Gateway {
     fn open_reservation(
         &self,
         candidate: &Candidate,
+        payer: Option<Payer>,
         at: DateTime<Utc>,
         tally: Option<&Abandoned>,
     ) -> Reservation {
         Reservation {
             ledger: Arc::clone(&self.ledger),
-            provider: candidate
-                .model
-                .is_paid()
-                .then(|| candidate.model.provider.name.clone()),
+            accounts: Self::accounts(candidate, payer),
             reserved: candidate.worst_case_usd_micros,
             abandoned: candidate.input_usd_micros,
             at,
@@ -365,6 +400,7 @@ impl Gateway {
     async fn first_success<T, F, Fut>(
         &self,
         candidates: Vec<Candidate>,
+        payer: Option<Payer>,
         tally: Option<&Abandoned>,
         call: F,
     ) -> Result<Answered<T>, GatewayError>
@@ -380,17 +416,18 @@ impl Gateway {
             }
             let model_name = candidate.model.name.clone();
             let reserved_at = Utc::now();
-            if !self.reserve(&candidate, reserved_at).await {
-                at_cap.push((model_name, Rejection::OverDailyCap));
+            if let Some(refused) = self.reserve(&candidate, payer, reserved_at).await {
+                at_cap.push((model_name, refused));
                 continue;
             }
-            let open = self.open_reservation(&candidate, reserved_at, tally);
+            let open = self.open_reservation(&candidate, payer, reserved_at, tally);
             let answer = call(candidate.clone()).await;
             open.close();
             match answer {
                 Ok((value, cost_usd_micros)) => {
                     self.cooling.end(&model_name);
-                    self.settle(&candidate, cost_usd_micros, reserved_at).await;
+                    self.settle(&candidate, payer, cost_usd_micros, reserved_at)
+                        .await;
                     return Ok(Answered {
                         value,
                         model: model_name,
@@ -408,7 +445,7 @@ impl Gateway {
                     } else {
                         0
                     };
-                    self.settle(&candidate, charged, reserved_at).await;
+                    self.settle(&candidate, payer, charged, reserved_at).await;
                     // Counted now: if a later attempt is cut off, this one's
                     // charge is still the run's.
                     if let Some(tally) = tally {
@@ -473,21 +510,26 @@ impl Gateway {
             self.not_cooling(plan(&self.catalog, &required, policy, estimate)?)?;
         let client = &self.client;
         let answered = self
-            .first_success(candidates, abandoned, |candidate| async move {
-                let model = &candidate.model;
-                let response = client.chat(model, request, candidate.output_tokens).await?;
-                let cost = response
-                    .usage
-                    .map_or(candidate.worst_case_usd_micros, |usage| {
-                        // Charge the higher of the price and what the server
-                        // billed, so a cap never undercounts.
-                        model
-                            .price
-                            .cost(usage.input_tokens, usage.output_tokens)
-                            .max(usage.reported_cost_usd_micros.unwrap_or(0))
-                    });
-                Ok((response, cost))
-            })
+            .first_success(
+                candidates,
+                policy.payer,
+                abandoned,
+                |candidate| async move {
+                    let model = &candidate.model;
+                    let response = client.chat(model, request, candidate.output_tokens).await?;
+                    let cost = response
+                        .usage
+                        .map_or(candidate.worst_case_usd_micros, |usage| {
+                            // Charge the higher of the price and what the server
+                            // billed, so a cap never undercounts.
+                            model
+                                .price
+                                .cost(usage.input_tokens, usage.output_tokens)
+                                .max(usage.reported_cost_usd_micros.unwrap_or(0))
+                        });
+                    Ok((response, cost))
+                },
+            )
             .await?;
         Ok(Completion {
             response: answered.value,
@@ -525,7 +567,7 @@ impl Gateway {
         )?)?;
         let client = &self.client;
         let answered = self
-            .first_success(candidates, None, |candidate| async move {
+            .first_success(candidates, policy.payer, None, |candidate| async move {
                 let vectors = client.embed(&candidate.model, inputs).await?;
                 Ok((vectors, candidate.worst_case_usd_micros))
             })
@@ -658,6 +700,7 @@ models:
             embedding_dimension: None,
             only_model: None,
             role: None,
+            payer: None,
         }
     }
 
@@ -1028,6 +1071,80 @@ models:
         let error = gateway.chat(&policy, &request()).await.unwrap_err();
         assert!(error.to_string().contains("daily cap"), "{error}");
         assert_eq!(client.called().len(), 2);
+    }
+
+    fn paid_by(cap: u64) -> (RoutePolicy, protocol::Payer) {
+        let payer = protocol::Payer::new("person:sam", cap);
+        let policy = RoutePolicy {
+            payer: Some(payer),
+            ..priced_policy()
+        };
+        (policy, payer)
+    }
+
+    #[tokio::test]
+    async fn a_payer_is_held_to_their_day_cap_and_charged_what_was_spent() {
+        let client = Arc::new(Scripted::new([Ok(text("a")), Ok(text("b"))]));
+        let ledger = Arc::new(MemoryLedger::new());
+        let gateway = Gateway::new(
+            catalog(YAML),
+            Arc::clone(&client) as Arc<dyn ModelClient>,
+            Arc::clone(&ledger) as Arc<dyn SpendLedger>,
+        );
+        let (policy, payer) = paid_by(50);
+        let first = gateway.chat(&policy, &request()).await.unwrap();
+        assert_eq!(first.cost_usd_micros, 40);
+        let today = Utc::now().date_naive();
+        assert_eq!(ledger.spent(&payer.account(), today), 40);
+        assert_eq!(ledger.spent("paid", today), 40);
+        // A second call could cost 41, past the payer's 50 though within the
+        // provider's 100.
+        let error = gateway.chat(&policy, &request()).await.unwrap_err();
+        assert!(error.to_string().contains("person who asked"), "{error}");
+        assert_eq!(client.called().len(), 1);
+        assert_eq!(ledger.spent(&payer.account(), today), 40);
+        assert_eq!(ledger.spent("paid", today), 40, "nothing was left reserved");
+    }
+
+    #[tokio::test]
+    async fn a_refusal_by_the_provider_gives_the_payer_back_their_reservation() {
+        let script = [Ok(text("a")), Ok(text("b")), Ok(text("c"))];
+        let client = Arc::new(Scripted::new(script));
+        let ledger = Arc::new(MemoryLedger::new());
+        let gateway = Gateway::new(
+            catalog(YAML),
+            Arc::clone(&client) as Arc<dyn ModelClient>,
+            Arc::clone(&ledger) as Arc<dyn SpendLedger>,
+        );
+        let (policy, payer) = paid_by(1_000);
+        gateway.chat(&policy, &request()).await.unwrap();
+        gateway.chat(&policy, &request()).await.unwrap();
+        let error = gateway.chat(&policy, &request()).await.unwrap_err();
+        assert!(
+            error.to_string().contains("provider's daily cap"),
+            "{error}"
+        );
+        let today = Utc::now().date_naive();
+        assert_eq!(ledger.spent(&payer.account(), today), 80);
+    }
+
+    #[tokio::test]
+    async fn a_payer_isnt_charged_for_a_free_model() {
+        let client = Arc::new(Scripted::new([Ok(text("a"))]));
+        let ledger = Arc::new(MemoryLedger::new());
+        let gateway = Gateway::new(
+            catalog(YAML),
+            Arc::clone(&client) as Arc<dyn ModelClient>,
+            Arc::clone(&ledger) as Arc<dyn SpendLedger>,
+        );
+        let payer = protocol::Payer::new("person:sam", 0);
+        let policy = RoutePolicy {
+            payer: Some(payer),
+            ..policy()
+        };
+        let done = gateway.chat(&policy, &request()).await.unwrap();
+        assert_eq!(done.model, "first");
+        assert_eq!(ledger.spent(&payer.account(), Utc::now().date_naive()), 0);
     }
 
     #[tokio::test]

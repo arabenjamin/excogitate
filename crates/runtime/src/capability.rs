@@ -171,6 +171,7 @@ impl ModelCapability for PluginModel {
             embedding_dimension: None,
             only_model: None,
             role: None,
+            payer: context.payer,
         };
         let request = ChatRequest {
             messages: vec![Message::user(prompt)],
@@ -257,7 +258,15 @@ impl MemoryCapability for PluginMemory {
         };
         let result = self
             .memory
-            .store(new, origin, Some(budget), Utc::now())
+            .store(
+                new,
+                origin,
+                memory::Spend {
+                    budget_usd_micros: Some(budget),
+                    payer: context.payer,
+                },
+                Utc::now(),
+            )
             .await;
         let (ok, cost) = match &result {
             Ok(stored) => (true, stored.cost_usd_micros),
@@ -528,6 +537,7 @@ mod tests {
                 memory::EmbedScope {
                     data_class: DataClass::Public,
                     budget_usd_micros: None,
+                    payer: None,
                 },
                 5,
             )

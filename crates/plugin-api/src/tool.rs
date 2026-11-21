@@ -105,6 +105,10 @@ pub struct ToolContext {
     /// Who what the run stores is private to: whoever asked for a private
     /// run. None keeps it shared.
     pub private_to: Option<protocol::Reader>,
+    /// Who pays for the run's priced model calls, inside the providers'
+    /// caps: the person who asked. None for the owner, schedules and the
+    /// runtime. A plugin process never sees it.
+    pub payer: Option<protocol::Payer>,
     /// In a plugin process, the host's token for this one tool call, which
     /// its capability calls carry back.
     pub(crate) call: Option<uuid::Uuid>,
@@ -124,6 +128,7 @@ impl ToolContext {
             reading: false,
             reader: None,
             private_to: None,
+            payer: None,
             call: None,
         }
     }
@@ -145,6 +150,13 @@ impl ToolContext {
     ) -> Self {
         self.reader = reader;
         self.private_to = private_to;
+        self
+    }
+
+    /// The same context, with who pays for its priced model calls.
+    #[must_use]
+    pub const fn with_payer(mut self, payer: Option<protocol::Payer>) -> Self {
+        self.payer = payer;
         self
     }
 

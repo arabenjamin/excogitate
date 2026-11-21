@@ -142,6 +142,7 @@ async fn embedding_is_paid_for_by_the_run() {
     let want = EmbedScope {
         data_class: DataClass::Public,
         budget_usd_micros: Some(1000),
+        payer: None,
     };
     assert_eq!(*metered.scopes.lock().unwrap(), vec![want, want, want]);
 }

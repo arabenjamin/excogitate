@@ -134,6 +134,7 @@ async fn harness(script: Vec<ChaosStep>, extra: Vec<Arc<Fake>>, log: Arc<Recorde
         sources: workflow::SourceChoices::default(),
         requested_by: None,
         private: false,
+        payer: None,
     };
     Harness {
         engine,

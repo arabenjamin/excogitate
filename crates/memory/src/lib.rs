@@ -13,7 +13,7 @@ mod fuse;
 mod service;
 
 pub use chunk::{ChunkConfig, Piece, chunk_text, estimate_tokens};
-pub use embed::{EmbedError, EmbedScope, Embedder, Embedding, GatewayEmbedder};
+pub use embed::{EmbedError, EmbedScope, Embedder, Embedding, GatewayEmbedder, Spend};
 pub use fuse::{FusedChunk, RRF_K, fuse};
 pub use service::{
     ChoiceHeld, DERIVED_TITLE_CHARS, Found, ItemHit, LakeResults, LakeSearch, LakeSource,

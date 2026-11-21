@@ -126,6 +126,7 @@ fn config(offered: &[&str], budget: Budget) -> SessionConfig {
             harness: "test".to_owned(),
             requested_by: None,
             private: false,
+            payer: None,
         },
         probe: None,
     }

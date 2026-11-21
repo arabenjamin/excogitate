@@ -395,7 +395,8 @@ impl Runtime {
             self.config.max_result_chars,
             dispatch::RunSubject::new(subject.to_owned(), harness)
                 .requested_by(input.requested_by.clone())
-                .private(input.private),
+                .private(input.private)
+                .paid_by(self.payer_for(input.requested_by.as_deref()).await),
             probe,
         )?;
         let question = input.question;

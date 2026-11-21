@@ -269,6 +269,9 @@ pub struct Engine {
     pub requested_by: Option<String>,
     /// True if the runs it starts are private to whoever asked.
     pub private: bool,
+    /// Who pays for the runs it starts, inside the providers' caps. Set per
+    /// run with [`Engine::paid_by`].
+    pub payer: Option<protocol::Payer>,
 }
 
 /// The workflow named, once `inputs` are checked against it.
@@ -369,6 +372,15 @@ impl Engine {
         Self {
             requested_by,
             private,
+            ..self.clone()
+        }
+    }
+
+    /// The same engine, with its runs paid for by `payer`.
+    #[must_use]
+    pub fn paid_by(&self, payer: Option<protocol::Payer>) -> Self {
+        Self {
+            payer,
             ..self.clone()
         }
     }
@@ -645,7 +657,8 @@ impl Engine {
             harness_id(&json!({ "tool": tool, "result_chars": STEP_RESULT_CHARS })),
         )
         .requested_by(self.requested_by.clone())
-        .private(self.private);
+        .private(self.private)
+        .paid_by(self.payer);
         let mut session = self.session(
             vec![tool.to_owned()],
             budget,
@@ -757,7 +770,8 @@ impl Engine {
         let own = agent.budget.unwrap_or(self.limits.agent_budget);
         let subject = RunSubject::new(subject.to_owned(), self.agent_harness(agent))
             .requested_by(self.requested_by.clone())
-            .private(self.private);
+            .private(self.private)
+            .paid_by(self.payer);
         let session = self.session(
             agent.tools.clone(),
             left.clip(own),

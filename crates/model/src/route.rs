@@ -27,6 +27,9 @@ pub struct RoutePolicy {
     /// The role whose models this call tries, in the role's order instead
     /// of cheapest first. A model outside it isn't used.
     pub role: Option<String>,
+    /// Who pays for a priced model, inside the provider's cap: the person
+    /// who asked for the run. None for the owner, schedules and the runtime.
+    pub payer: Option<protocol::Payer>,
 }
 
 /// How many tokens a call could use, at most.
@@ -64,6 +67,8 @@ pub enum Rejection {
     OverRunBudget,
     /// The provider's daily cap can't cover the call.
     OverDailyCap,
+    /// The day cap of whoever pays for the run can't cover the call.
+    OverPayerCap,
     /// The call is pinned to another model.
     NotPinned,
     /// The call asks for a role this model isn't in, or that isn't defined.
@@ -87,6 +92,7 @@ impl fmt::Display for Rejection {
             Self::PaidNotAllowed => f.write_str("priced, and this purpose may not pay"),
             Self::OverRunBudget => f.write_str("could cost more than the run has left"),
             Self::OverDailyCap => f.write_str("the provider's daily cap can't cover it"),
+            Self::OverPayerCap => f.write_str("the day cap of the person who asked can't cover it"),
             Self::NotPinned => f.write_str("the call is pinned to another model"),
             Self::NotInRole(role) => write!(f, "not in the role {role}"),
             Self::Cooling { until } => write!(
@@ -266,6 +272,7 @@ models:
             embedding_dimension: None,
             only_model: None,
             role: None,
+            payer: None,
         }
     }
 

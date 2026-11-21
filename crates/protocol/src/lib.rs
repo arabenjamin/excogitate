@@ -94,6 +94,51 @@ impl fmt::Display for Reader {
     }
 }
 
+/// Who a run's paid model calls are charged to, beyond the provider's own
+/// day cap, and how much they may spend a UTC day across all providers.
+/// Only a person pays: the owner, a schedule and the runtime are held by
+/// the providers' caps alone, so they have no payer. The cap is read when
+/// the run starts.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct Payer {
+    account: uuid::Uuid,
+    day_cap_usd_micros: u64,
+}
+
+impl Payer {
+    /// What a spend account's name starts with, so it can't be taken for a
+    /// provider's.
+    pub const PREFIX: &'static str = "payer:";
+
+    /// `actor`, allowed `day_cap_usd_micros` a day.
+    #[must_use]
+    pub fn new(actor: &str, day_cap_usd_micros: u64) -> Self {
+        let seed = format!("payer|{actor}");
+        Self {
+            account: uuid::Uuid::new_v5(&uuid::Uuid::NAMESPACE_OID, seed.as_bytes()),
+            day_cap_usd_micros,
+        }
+    }
+
+    /// The spend account `actor`'s calls are charged to.
+    #[must_use]
+    pub fn account_of(actor: &str) -> String {
+        Self::new(actor, 0).account()
+    }
+
+    /// The spend account, as the ledger names it: never a provider's name.
+    #[must_use]
+    pub fn account(&self) -> String {
+        format!("{}{}", Self::PREFIX, self.account)
+    }
+
+    /// The most the payer may spend a UTC day, in millionths of a dollar.
+    #[must_use]
+    pub const fn day_cap_usd_micros(&self) -> u64 {
+        self.day_cap_usd_micros
+    }
+}
+
 /// One agent run.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct RunId(uuid::Uuid);

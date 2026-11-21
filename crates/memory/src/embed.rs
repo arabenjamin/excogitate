@@ -27,6 +27,27 @@ pub struct EmbedScope {
     pub data_class: DataClass,
     /// The most it may cost, in millionths of a dollar, if it's limited.
     pub budget_usd_micros: Option<u64>,
+    /// Who pays for a priced embedding, inside the provider's cap.
+    pub payer: Option<protocol::Payer>,
+}
+
+/// What storing or editing a note may spend on embeddings, and who pays.
+/// An `Option<u64>` budget converts into one with no payer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct Spend {
+    /// The most it may cost, in millionths of a dollar, if it's limited.
+    pub budget_usd_micros: Option<u64>,
+    /// Who pays for a priced embedding, inside the provider's cap.
+    pub payer: Option<protocol::Payer>,
+}
+
+impl From<Option<u64>> for Spend {
+    fn from(budget_usd_micros: Option<u64>) -> Self {
+        Self {
+            budget_usd_micros,
+            payer: None,
+        }
+    }
 }
 
 /// Vectors, and what they cost.
@@ -106,6 +127,7 @@ impl Embedder for GatewayEmbedder {
             embedding_dimension: Some(self.dimension),
             only_model: None,
             role: None,
+            payer: scope.payer,
         };
         self.gateway
             .embed(&policy, inputs)

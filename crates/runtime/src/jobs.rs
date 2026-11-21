@@ -160,10 +160,12 @@ impl JobHandler for WorkflowJob {
     async fn run(&self, job: &Job) -> Result<Value, JobFailure> {
         let args: WorkflowArgs =
             serde_json::from_value(job.payload.clone()).map_err(|error| error.to_string())?;
+        let payer = self.0.payer_for(Some(job.requested_by.as_str())).await;
         let run = self
             .0
             .workflows
             .for_requester(Some(job.requested_by.to_string()), args.private)
+            .paid_by(payer)
             .run(&args.workflow, args.inputs)
             .await
             .map_err(|error| error.to_string())?;

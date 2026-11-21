@@ -636,6 +636,7 @@ impl Session {
             embedding_dimension: None,
             only_model: None,
             role: self.model_role.clone(),
+            payer: self.config.subject.payer,
         };
         Ok((request, policy, estimate))
     }
@@ -1036,6 +1037,7 @@ impl Session {
                 .filter(|_| self.config.subject.private)
                 .map(protocol::Reader::of),
         )
+        .with_payer(self.config.subject.payer)
     }
 
     /// How a tool call that was waited for went.

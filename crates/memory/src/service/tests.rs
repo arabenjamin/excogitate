@@ -12,11 +12,13 @@ const DIM: usize = 3;
 const SCOPE_PRIVATE: EmbedScope = EmbedScope {
     data_class: DataClass::Private,
     budget_usd_micros: None,
+    payer: None,
 };
 
 const SCOPE_PUBLIC: EmbedScope = EmbedScope {
     data_class: DataClass::Public,
     budget_usd_micros: None,
+    payer: None,
 };
 
 /// Embeds by the first word. Records what it was asked.

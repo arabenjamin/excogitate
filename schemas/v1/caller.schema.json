@@ -49,6 +49,33 @@
           "type": "string"
         }
       ]
+    },
+    "SpendView": {
+      "additionalProperties": false,
+      "description": "A person's spend on priced models today (UTC), across all providers.",
+      "properties": {
+        "day": {
+          "description": "The day, as `YYYY-MM-DD`.",
+          "format": "date",
+          "type": "string"
+        },
+        "day_cap_usd_micros": {
+          "description": "What they may spend that day, in millionths of a dollar.",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "spent_usd_micros": {
+          "description": "What they've spent or have reserved for calls still running.",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "day",
+        "day_cap_usd_micros",
+        "spent_usd_micros"
+      ],
+      "type": "object"
     }
   },
   "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -83,6 +110,17 @@
       },
       "maxItems": 4,
       "type": "array"
+    },
+    "spend": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/SpendView"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "What a person may spend today and has spent. None for the owner,\nwhom only the providers' caps hold."
     }
   },
   "required": [

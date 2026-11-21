@@ -8,7 +8,7 @@ use async_trait::async_trait;
 use chrono::{DateTime, Duration, NaiveDate, Utc};
 use memory::{
     EmbedScope, Found, ItemHit, LakeSearch, Memory, MemoryError, NewNote, NoteEdit, NoteHit,
-    NoteOrigin, SearchMode, SourceChoices, StoredNote,
+    NoteOrigin, SearchMode, SourceChoices, Spend, StoredNote,
 };
 use plugin_api::{
     CapabilityUse, Effect, Tool, ToolContext, ToolDefinition, ToolFailure, ToolOutput,
@@ -514,6 +514,15 @@ fn missing(what: &str) -> ToolFailure {
     ToolFailure::new(format!("this operation needs `{what}`"))
 }
 
+/// What embedding a note may spend: what the run has left, paid for by
+/// whoever pays for the run.
+const fn spend_of(context: ToolContext) -> Spend {
+    Spend {
+        budget_usd_micros: Some(context.budget_usd_micros),
+        payer: context.payer,
+    }
+}
+
 /// What a run may see: a public run only sees what's public, and a person's
 /// run doesn't see someone else's private notes.
 const fn classes_for(context: ToolContext) -> ClassFilter {
@@ -579,7 +588,7 @@ impl MemoryTool {
         };
         let done = self
             .memory
-            .store(note, origin, Some(context.budget_usd_micros), Utc::now())
+            .store(note, origin, spend_of(context), Utc::now())
             .await
             .map_err(|error| failure(&error))?;
         Ok((stored(&done), Trust::Trusted, done.cost_usd_micros))
@@ -590,6 +599,7 @@ impl MemoryTool {
         let scope = EmbedScope {
             data_class: context.data_class,
             budget_usd_micros: Some(context.budget_usd_micros),
+            payer: context.payer,
         };
         let chosen = self.choices.of(context.run);
         let lake = LakeSearch {
@@ -725,7 +735,7 @@ impl MemoryTool {
                 edit,
                 classes_for(context),
                 Trust::Untrusted,
-                Some(context.budget_usd_micros),
+                spend_of(context),
                 Utc::now(),
             )
             .await

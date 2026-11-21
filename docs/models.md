@@ -21,7 +21,9 @@ the reason:
 
 The models left are tried cheapest first, and in configured order among equal
 prices. Before a call to a priced model, its worst case is reserved against
-the provider's daily cap, so concurrent calls can't overrun it together. The
+the day cap of the person who asked, if a person did
+([what a person may spend](api.md#what-a-person-may-spend)), and then against
+the provider's daily cap, so concurrent calls can't overrun either together. The
 call then settles at what it really cost, or at the worst case if the server
 doesn't report usage. When the server reports what it billed, as a router
 does, the call costs the higher of that and the listed price. A router can send

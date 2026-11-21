@@ -464,6 +464,19 @@
       ],
       "type": "object"
     },
+    "PeopleConfig": {
+      "additionalProperties": false,
+      "description": "What people may spend on priced models, inside each provider's day cap.\nThe owner, schedules and the runtime are held by the providers' caps\nalone.",
+      "properties": {
+        "default_day_cap_usd_micros": {
+          "default": 0,
+          "description": "What a person without a cap of their own may spend a UTC day, across\nall providers, in millionths of a dollar. Zero, the default, keeps\nthem to free models until the owner gives them a cap.",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "type": "object"
+    },
     "RetentionConfig": {
       "additionalProperties": false,
       "description": "How long what the runtime records is kept. The server prunes once an\nhour; `null` keeps that kind forever.",
@@ -705,6 +718,13 @@
       },
       "maxItems": 32,
       "type": "array"
+    },
+    "people": {
+      "$ref": "#/$defs/PeopleConfig",
+      "default": {
+        "default_day_cap_usd_micros": 0
+      },
+      "description": "What people may spend."
     },
     "retention": {
       "$ref": "#/$defs/RetentionConfig",

@@ -184,6 +184,7 @@ const K: u32 = 5;
 const SCOPE: EmbedScope = EmbedScope {
     data_class: DataClass::Private,
     budget_usd_micros: None,
+    payer: None,
 };
 
 /// Recall at K, and mean reciprocal rank, from each case's 1-based rank.

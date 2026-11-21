@@ -37,6 +37,9 @@ pub struct RunSubject {
     /// True if only whoever asked for it, and the owner, may see it. Its
     /// words never reach Harness².
     pub private: bool,
+    /// Who pays for the run's priced model calls, inside the providers'
+    /// caps: the person who asked, with their day cap.
+    pub payer: Option<protocol::Payer>,
 }
 
 impl RunSubject {
@@ -48,7 +51,15 @@ impl RunSubject {
             harness: harness.into(),
             requested_by: None,
             private: false,
+            payer: None,
         }
+    }
+
+    /// The same subject, paid for by `payer`.
+    #[must_use]
+    pub const fn paid_by(mut self, payer: Option<protocol::Payer>) -> Self {
+        self.payer = payer;
+        self
     }
 
     /// The same subject, private to whoever asked, or not.

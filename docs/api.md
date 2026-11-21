@@ -80,6 +80,26 @@ it.
   attempt's task or a replay, no judge is shown it, and the daily review
   skips it. See [Harness²](harness.md#private-runs).
 
+### What a person may spend
+
+Each person has a day cap on priced models, across every provider, inside
+each provider's own cap. Everything a person starts is charged to them: a
+chat, a tool call, a workflow run and its steps,
+and the embedding of notes they store. Set the cap with
+`day_cap_usd_micros` on the person. Without one, a person gets
+`people.default_day_cap_usd_micros` from `config.yaml`, which is 0. So a
+person uses only free models until you give them a cap.
+
+- **A call that would pass the cap goes to another model,** as with a
+  provider's cap. If no model will take it, the error says the person's day
+  cap can't cover it.
+- **The cap is read when a run starts,** so a change applies to the next run.
+  A disabled or unknown person may spend nothing.
+- **The owner, schedules and Harness² have no cap of their own.** Only the
+  providers' caps limit them.
+- **`GET /api/v1/me` shows a person's `spend`** for today (UTC): their
+  `day_cap_usd_micros` and what they've spent or reserved.
+
 **There's no TLS.** Compose publishes the port to this machine only. Put a TLS
 proxy in front before exposing it, or the key crosses the network in clear text.
 
@@ -265,7 +285,7 @@ old record always resolves; disable one instead, and their keys all stop.
 
 | Route | What it does |
 |---|---|
-| `PUT /api/v1/people/{slug}` | Adds a person (201) or changes one (200): `{"name", "role", "disabled"}` ([schema](../schemas/v1/person_request.schema.json)). Their id is `person:<slug>`, which is the actor on what they start. |
+| `PUT /api/v1/people/{slug}` | Adds a person (201) or changes one (200): `{"name", "role", "disabled", "day_cap_usd_micros"}` ([schema](../schemas/v1/person_request.schema.json)). Their id is `person:<slug>`, which is the actor on what they start. |
 | `GET /api/v1/people?limit=&offset=` | The people. |
 | `POST /api/v1/keys` | Makes a key: `{"person", "scopes", "name", "expires_at", "private_by_default"}` ([schema](../schemas/v1/key_request.schema.json)). With `private_by_default`, what the key starts is [private](#private-runs) unless a request says otherwise. The reply has the `secret`, shown this once. A scope the person's role doesn't allow is a 403. A key doesn't expire unless `expires_at` is given. |
 | `GET /api/v1/keys?person=&limit=&offset=` | The keys, never their secrets, each with `last_used_at` (written at most once a minute), so a stale one is easy to find. |
@@ -275,7 +295,7 @@ Any key reaches these, to see itself:
 
 | Route | What it does |
 |---|---|
-| `GET /api/v1/me` | Who the key is: `actor`, `role`, the `scopes` it may use now, and its id ([schema](../schemas/v1/caller.schema.json)). |
+| `GET /api/v1/me` | Who the key is: `actor`, `role`, the `scopes` it may use now, its id, and for a person, [what they've spent today](#what-a-person-may-spend) ([schema](../schemas/v1/caller.schema.json)). |
 | `GET /api/v1/me/keys` | Its person's keys. |
 | `DELETE /api/v1/me/keys/{id}` | Revokes one of them, such as a key that leaked. |
 

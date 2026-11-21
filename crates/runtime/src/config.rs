@@ -58,6 +58,20 @@ pub struct Config {
     pub harness: HarnessConfig,
     /// How long what the runtime records is kept.
     pub retention: RetentionConfig,
+    /// What people may spend.
+    pub people: PeopleConfig,
+}
+
+/// What people may spend on priced models, inside each provider's day cap.
+/// The owner, schedules and the runtime are held by the providers' caps
+/// alone.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields, default)]
+pub struct PeopleConfig {
+    /// What a person without a cap of their own may spend a UTC day, across
+    /// all providers, in millionths of a dollar. Zero, the default, keeps
+    /// them to free models until the owner gives them a cap.
+    pub default_day_cap_usd_micros: u64,
 }
 
 /// How Harness² improves agents.
@@ -198,6 +212,7 @@ impl Default for Config {
             server: ServerConfig::default(),
             harness: HarnessConfig::default(),
             retention: RetentionConfig::default(),
+            people: PeopleConfig::default(),
         }
     }
 }

@@ -12,7 +12,7 @@ use store::{
     Provenance, Store, StoreError, StoredWindow, UnitOfWork, WriteOp,
 };
 
-use crate::{ChunkConfig, EmbedError, EmbedScope, Embedder, Piece, chunk_text};
+use crate::{ChunkConfig, EmbedError, EmbedScope, Embedder, Piece, Spend, chunk_text};
 
 mod lake;
 
@@ -394,9 +394,10 @@ impl Memory {
         &self,
         note: NewNote,
         origin: NoteOrigin,
-        budget_usd_micros: Option<u64>,
+        spend: impl Into<Spend>,
         now: DateTime<Utc>,
     ) -> Result<StoredNote, MemoryError> {
+        let spend = spend.into();
         check_body(&note.body)?;
         let hash = content_hash(&note.body);
         if let Some(existing) = self
@@ -417,7 +418,8 @@ impl Memory {
         let id = NoteId::generate();
         let scope = EmbedScope {
             data_class: origin.data_class,
-            budget_usd_micros,
+            budget_usd_micros: spend.budget_usd_micros,
+            payer: spend.payer,
         };
         let (chunks, unembedded_chunks, cost_usd_micros) =
             self.build_chunks(id, &note.body, scope).await;
@@ -562,9 +564,10 @@ impl Memory {
         edit: NoteEdit,
         classes: ClassFilter,
         trust: Trust,
-        budget_usd_micros: Option<u64>,
+        spend: impl Into<Spend>,
         now: DateTime<Utc>,
     ) -> Result<StoredNote, MemoryError> {
+        let spend = spend.into();
         let mut note = self.visible(id, classes).await?;
         let expected_version = note.version;
         if let Some(tags) = edit.tags {
@@ -587,7 +590,8 @@ impl Memory {
             note.body.clone_from(&body);
             let scope = EmbedScope {
                 data_class: note.provenance.data_class,
-                budget_usd_micros,
+                budget_usd_micros: spend.budget_usd_micros,
+                payer: spend.payer,
             };
             let (chunks, unembedded, cost) = self.build_chunks(id, &body, scope).await;
             let count = u32::try_from(chunks.len()).unwrap_or(u32::MAX);

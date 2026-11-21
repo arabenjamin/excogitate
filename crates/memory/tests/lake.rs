@@ -91,6 +91,7 @@ fn lake(source: &Arc<Lake>, public: bool) -> LakeSource {
 const SCOPE: EmbedScope = EmbedScope {
     data_class: DataClass::Private,
     budget_usd_micros: None,
+    payer: None,
 };
 
 async fn memory(sources: Vec<LakeSource>) -> Memory {

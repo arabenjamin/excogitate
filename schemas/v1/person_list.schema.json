@@ -4,6 +4,14 @@
       "additionalProperties": false,
       "description": "A person, as kept and as the API shows them.",
       "properties": {
+        "day_cap_usd_micros": {
+          "description": "What they may spend on priced models a UTC day, across all\nproviders, in millionths of a dollar. Left out, they get the\nserver's `people.default_day_cap_usd_micros`.",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
         "disabled": {
           "description": "A disabled person's keys all stop working.",
           "type": "boolean"

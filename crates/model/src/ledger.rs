@@ -29,6 +29,14 @@ impl MemoryLedger {
     pub fn new() -> Self {
         Self::default()
     }
+
+    /// What `account` has spent or reserved on `day`.
+    #[must_use]
+    pub fn spent(&self, account: &str, day: NaiveDate) -> u64 {
+        self.0.lock().map_or(0, |spent| {
+            spent.get(&(account.to_owned(), day)).copied().unwrap_or(0)
+        })
+    }
 }
 
 #[async_trait]

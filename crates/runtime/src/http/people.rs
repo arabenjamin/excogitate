@@ -169,8 +169,20 @@ async fn revoke_key(
     revoked(&app, &id, None, &caller).await
 }
 
-async fn me(Extension(caller): Extension<Caller>) -> Json<CallerView> {
-    Json(caller.view())
+async fn me(
+    State(app): State<App>,
+    Extension(caller): Extension<Caller>,
+) -> Result<Json<CallerView>, ApiError> {
+    let mut view = caller.view();
+    if let Some(payer) = app.runtime.payer_for(Some(caller.actor.as_str())).await {
+        let store = app.runtime.workflows.store.as_ref();
+        view.spend = Some(
+            auth::spend_today(store, payer)
+                .await
+                .map_err(|error| ApiError::internal(&error))?,
+        );
+    }
+    Ok(Json(view))
 }
 
 async fn list_my_keys(

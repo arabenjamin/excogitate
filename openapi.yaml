@@ -362,6 +362,13 @@ components:
             $ref: "#/components/schemas/Scope"
           maxItems: 4
           type: array
+        spend:
+          anyOf:
+          - $ref: "#/components/schemas/SpendView"
+          - type: "null"
+          description: |-
+            What a person may spend today and has spent. None for the owner,
+            whom only the providers' caps hold.
       required:
       - actor
       - role
@@ -1366,6 +1373,16 @@ components:
         A person to add, or what to change about one. People are never deleted,
         so an actor on an old record always resolves; disable one instead.
       properties:
+        day_cap_usd_micros:
+          default: null
+          description: |-
+            What they may spend on priced models a UTC day, across all
+            providers, in millionths of a dollar. Left out, they get the
+            server's `people.default_day_cap_usd_micros`.
+          minimum: 0
+          type:
+          - integer
+          - "null"
         disabled:
           default: false
           description: Whether their keys stop working. False if left out.
@@ -1386,6 +1403,15 @@ components:
       additionalProperties: false
       description: A person, as kept and as the API shows them.
       properties:
+        day_cap_usd_micros:
+          description: |-
+            What they may spend on priced models a UTC day, across all
+            providers, in millionths of a dollar. Left out, they get the
+            server's `people.default_day_cap_usd_micros`.
+          minimum: 0
+          type:
+          - integer
+          - "null"
         disabled:
           description: A disabled person's keys all stop working.
           type: boolean
@@ -1875,6 +1901,27 @@ components:
       - const: tool
         description: A tool's result.
         type: string
+    SpendView:
+      additionalProperties: false
+      description: A person's spend on priced models today (UTC), across all providers.
+      properties:
+        day:
+          description: The day, as `YYYY-MM-DD`.
+          format: date
+          type: string
+        day_cap_usd_micros:
+          description: What they may spend that day, in millionths of a dollar.
+          minimum: 0
+          type: integer
+        spent_usd_micros:
+          description: What they've spent or have reserved for calls still running.
+          minimum: 0
+          type: integer
+      required:
+      - day
+      - day_cap_usd_micros
+      - spent_usd_micros
+      type: object
     Step:
       description: One thing in a trajectory.
       oneOf:

@@ -51,7 +51,7 @@ Items from a source are always untrusted, and a result holding one is too.
 | What a run can see | Everything for a private run, only public notes for a public one. |
 | Trust | Untrusted, for everything written through this tool. |
 | Who stored it | `run:<id>` |
-| Money | Embedding is charged to the run, and can't exceed what it has left. |
+| Money | Embedding is charged to the run, and to the person who asked for it, and can't exceed what either has left. |
 
 A note the owner wrote can't be changed or deleted through this tool, so a
 prompt injection can't rewrite it. An `update` that changes nothing is a

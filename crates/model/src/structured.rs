@@ -242,6 +242,7 @@ models:
             embedding_dimension: None,
             only_model: None,
             role: None,
+            payer: None,
         }
     }
 
