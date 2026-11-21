@@ -214,11 +214,10 @@ async fn install_one(
         let definition = definition(config, tool)?;
         names.push(definition.name.clone());
         registry
-            .register(Arc::new(RemoteTool::new(
-                Arc::clone(&server),
-                tool.name.clone(),
-                definition,
-            )))
+            .register(Arc::new(
+                RemoteTool::new(Arc::clone(&server), tool.name.clone(), definition)
+                    .with_param_headers(transport::param_headers(&tool.input_schema)),
+            ))
             .map_err(|error| RemoteError(format!("MCP server {}: {error}", config.name)))?;
     }
     Ok(Installed {

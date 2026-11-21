@@ -34,6 +34,7 @@ pub struct RemoteTool {
     server: Arc<Server>,
     remote: String,
     definition: ToolDefinition,
+    headers: Vec<(String, String)>,
 }
 
 impl RemoteTool {
@@ -44,7 +45,16 @@ impl RemoteTool {
             server,
             remote,
             definition,
+            headers: Vec::new(),
         }
+    }
+
+    /// The tool, sending the arguments its schema marks `x-mcp-header` in
+    /// headers too ([`crate::transport::param_headers`]).
+    #[must_use]
+    pub fn with_param_headers(mut self, headers: Vec<(String, String)>) -> Self {
+        self.headers = headers;
+        self
     }
 }
 
@@ -131,10 +141,11 @@ impl Tool for RemoteTool {
             )));
         }
         let limit = Duration::from_millis(context.time_left_ms);
+        let extra = crate::transport::param_header_values(&self.headers, &arguments);
         let params = json!({"name": self.remote, "arguments": arguments});
         let result = server
             .connection
-            .call("tools/call", &params, Some(limit))
+            .call_with_headers("tools/call", &params, Some(limit), &extra)
             .await
             .map_err(|error: McpError| {
                 ToolFailure::new(bounded(&format!("the MCP server {}: {error}", server.name)))

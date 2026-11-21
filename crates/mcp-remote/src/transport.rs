@@ -245,7 +245,12 @@ impl Connection {
         }
     }
 
-    async fn post(&self, message: &Value, session: Option<&Session>) -> Result<Answer, McpError> {
+    async fn post(
+        &self,
+        message: &Value,
+        session: Option<&Session>,
+        extra: &[(String, String)],
+    ) -> Result<Answer, McpError> {
         let mut request = self
             .client
             .post(self.url.clone())
@@ -257,6 +262,9 @@ impl Connection {
         }
         for (name, value) in plugin_api::stateless_headers(message) {
             request = request.header(name, value);
+        }
+        for (name, value) in extra {
+            request = request.header(name.as_str(), value.as_str());
         }
         if let Some(session) = session {
             request = request.header(VERSION_HEADER, session.version.as_str());
@@ -313,10 +321,11 @@ impl Connection {
         method: &str,
         params: &Value,
         session: Option<&Session>,
+        extra: &[(String, String)],
     ) -> Result<(Answer, Value), McpError> {
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
         let message = json!({"jsonrpc": "2.0", "id": id, "method": method, "params": params});
-        let answer = self.post(&message, session).await?;
+        let answer = self.post(&message, session, extra).await?;
         if !(200..300).contains(&answer.status) {
             return Err(self.status_error(&answer));
         }
@@ -346,7 +355,7 @@ impl Connection {
             "capabilities": {},
             "clientInfo": {"name": "mcp-remote", "version": env!("CARGO_PKG_VERSION")},
         });
-        let (answer, result) = self.exchange("initialize", &params, None).await?;
+        let (answer, result) = self.exchange("initialize", &params, None, &[]).await?;
         let session = Session {
             id: answer.session,
             version: result
@@ -358,7 +367,7 @@ impl Connection {
                 .collect(),
         };
         let initialized = json!({"jsonrpc": "2.0", "method": "notifications/initialized"});
-        let answer = self.post(&initialized, Some(&session)).await?;
+        let answer = self.post(&initialized, Some(&session), &[]).await?;
         if !(200..300).contains(&answer.status) {
             return Err(self.status_error(&answer));
         }
@@ -377,7 +386,7 @@ impl Connection {
             "method": "server/discover",
             "params": {"_meta": stateless_meta()},
         });
-        let answer = self.post(&probe, None).await?;
+        let answer = self.post(&probe, None, &[]).await?;
         let Some(response) = answer
             .messages
             .iter()
@@ -426,22 +435,33 @@ impl Connection {
         }
     }
 
-    async fn send(&self, era: &Era, method: &str, params: &Value) -> Result<Value, McpError> {
+    async fn send(
+        &self,
+        era: &Era,
+        method: &str,
+        params: &Value,
+        extra: &[(String, String)],
+    ) -> Result<Value, McpError> {
         match era {
             Era::Stateless => self
-                .exchange(method, &with_stateless_meta(params), None)
+                .exchange(method, &with_stateless_meta(params), None, extra)
                 .await
                 .map(|(_, result)| result),
             Era::Handshake(session) => self
-                .exchange(method, params, Some(session))
+                .exchange(method, params, Some(session), extra)
                 .await
                 .map(|(_, result)| result),
         }
     }
 
-    async fn call_once(&self, method: &str, params: &Value) -> Result<Value, McpError> {
+    async fn call_once(
+        &self,
+        method: &str,
+        params: &Value,
+        extra: &[(String, String)],
+    ) -> Result<Value, McpError> {
         let era = self.era().await?;
-        match self.send(&era, method, params).await {
+        match self.send(&era, method, params, extra).await {
             // The server forgot the session, or no longer takes stateless
             // requests: one more try, after asking again.
             Err(McpError::Status { status, .. })
@@ -451,7 +471,7 @@ impl Connection {
             {
                 self.forget(&era).await;
                 let era = self.era().await?;
-                self.send(&era, method, params).await
+                self.send(&era, method, params, extra).await
             }
             Err(error) => {
                 if matches!(error, McpError::Unreachable(_)) {
@@ -475,8 +495,24 @@ impl Connection {
         params: &Value,
         limit: Option<Duration>,
     ) -> Result<Value, McpError> {
+        self.call_with_headers(method, params, limit, &[]).await
+    }
+
+    /// [`Self::call`], with more headers on the request: a tool's
+    /// arguments that its schema says go in headers too ([`param_headers`]).
+    ///
+    /// # Errors
+    ///
+    /// [`McpError`] if it fails, naming why.
+    pub async fn call_with_headers(
+        &self,
+        method: &str,
+        params: &Value,
+        limit: Option<Duration>,
+        extra: &[(String, String)],
+    ) -> Result<Value, McpError> {
         let timeout = limit.map_or(self.timeout, |limit| limit.min(self.timeout));
-        tokio::time::timeout(timeout, self.call_once(method, params))
+        tokio::time::timeout(timeout, self.call_once(method, params, extra))
             .await
             .map_err(|_| McpError::Timeout(timeout.as_secs()))?
     }
@@ -523,6 +559,94 @@ fn describe(error: &reqwest::Error) -> String {
         source = cause.source();
     }
     text
+}
+
+/// The longest argument value sent in a header; a longer one is left to
+/// the body alone.
+const MAX_PARAM_HEADER_CHARS: usize = 1024;
+
+/// The arguments a tool's input schema marks with `x-mcp-header`, each with
+/// the header it goes in (`Mcp-Param-<name>`): the 2026-07-28 revision has
+/// a server ask for them, so it can route on them without reading the body.
+/// Only top-level properties, and only names a header can carry.
+#[must_use]
+pub fn param_headers(input_schema: &Value) -> Vec<(String, String)> {
+    let Some(properties) = input_schema.get("properties").and_then(Value::as_object) else {
+        return Vec::new();
+    };
+    let mut out: Vec<(String, String)> = properties
+        .iter()
+        .filter_map(|(argument, schema)| {
+            let name = schema.get("x-mcp-header")?.as_str()?;
+            let ok = !name.is_empty()
+                && name.len() <= 64
+                && name
+                    .bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_');
+            ok.then(|| {
+                (
+                    argument.clone(),
+                    format!("mcp-param-{}", name.to_ascii_lowercase()),
+                )
+            })
+        })
+        .collect();
+    out.sort();
+    out
+}
+
+/// The headers a call with `arguments` carries for `params`, from
+/// [`param_headers`]. A string goes as it is when it's visible ASCII,
+/// otherwise as `=?base64?<its UTF-8 in base64>?=`; a number or boolean as
+/// its JSON; anything else, or an argument left out, sends nothing.
+#[must_use]
+pub fn param_header_values(
+    params: &[(String, String)],
+    arguments: &Value,
+) -> Vec<(String, String)> {
+    params
+        .iter()
+        .filter_map(|(argument, header)| {
+            let value = match arguments.get(argument)? {
+                Value::String(s) => {
+                    if !s.is_empty()
+                        && s.bytes().all(|b| (0x21..=0x7e).contains(&b) || b == b' ')
+                        && !s.starts_with(' ')
+                        && !s.ends_with(' ')
+                    {
+                        s.clone()
+                    } else {
+                        format!("=?base64?{}?=", base64(s.as_bytes()))
+                    }
+                }
+                value @ (Value::Number(_) | Value::Bool(_)) => value.to_string(),
+                _ => return None,
+            };
+            (value.len() <= MAX_PARAM_HEADER_CHARS).then(|| (header.clone(), value))
+        })
+        .collect()
+}
+
+/// Standard base64, with padding.
+fn base64(bytes: &[u8]) -> String {
+    const TABLE: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);
+    for chunk in bytes.chunks(3) {
+        let b = [
+            chunk[0],
+            *chunk.get(1).unwrap_or(&0),
+            *chunk.get(2).unwrap_or(&0),
+        ];
+        let n = (u32::from(b[0]) << 16) | (u32::from(b[1]) << 8) | u32::from(b[2]);
+        for (i, shift) in [18, 12, 6, 0].into_iter().enumerate() {
+            if i <= chunk.len() {
+                out.push(char::from(TABLE[((n >> shift) & 63) as usize]));
+            } else {
+                out.push('=');
+            }
+        }
+    }
+    out
 }
 
 #[cfg(test)]
@@ -583,5 +707,59 @@ mod tests {
         let key =
             Key::new("x-api-key", "", "s3cret-value".to_owned()).unwrap_or_else(|e| panic!("{e}"));
         assert!(!format!("{key:?}").contains("s3cret"));
+    }
+}
+
+#[cfg(test)]
+mod param_tests {
+    #![allow(clippy::unwrap_used, reason = "a test: a panic is how it fails")]
+
+    use super::*;
+
+    #[test]
+    fn marked_arguments_go_in_headers() {
+        let schema = json!({"type": "object", "properties": {
+            "owner": {"type": "string", "x-mcp-header": "owner"},
+            "repo": {"type": "string", "x-mcp-header": "Repo"},
+            "page": {"type": "integer", "x-mcp-header": "page"},
+            "bad": {"type": "string", "x-mcp-header": "no spaces"},
+            "body": {"type": "string"}}});
+        let params = param_headers(&schema);
+        assert_eq!(
+            params,
+            [
+                ("owner".to_owned(), "mcp-param-owner".to_owned()),
+                ("page".to_owned(), "mcp-param-page".to_owned()),
+                ("repo".to_owned(), "mcp-param-repo".to_owned()),
+            ]
+        );
+        let values = param_header_values(
+            &params,
+            &json!({"owner": "arabenjamin", "repo": "café", "body": "x"}),
+        );
+        assert_eq!(
+            values,
+            [
+                ("mcp-param-owner".to_owned(), "arabenjamin".to_owned()),
+                (
+                    "mcp-param-repo".to_owned(),
+                    "=?base64?Y2Fmw6k=?=".to_owned()
+                ),
+            ]
+        );
+        assert_eq!(
+            param_header_values(&params, &json!({"page": 2})),
+            [("mcp-param-page".to_owned(), "2".to_owned())]
+        );
+        assert_eq!(param_headers(&json!({"type": "object"})), []);
+    }
+
+    #[test]
+    fn base64_pads() {
+        assert_eq!(base64(b""), "");
+        assert_eq!(base64(b"a"), "YQ==");
+        assert_eq!(base64(b"ab"), "YWI=");
+        assert_eq!(base64(b"abc"), "YWJj");
+        assert_eq!(base64(b"abcdef"), "YWJjZGVm");
     }
 }

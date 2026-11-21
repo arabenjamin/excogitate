@@ -145,6 +145,13 @@ session (a 404), or a stateless server starts refusing (a 400), it's asked
 again once. An answer can be JSON or an event stream, and at most 8 MiB is
 read.
 
+**Arguments in headers.** A tool whose input schema marks a top-level
+argument with `x-mcp-header: <Name>` (as GitHub's hosted server does for
+`owner` and `repo`) is sent that argument in an `Mcp-Param-<Name>` header
+too, so the server can route without reading the body: as it is when it's
+visible ASCII, as `=?base64?…?=` otherwise, a number or boolean as its
+JSON, and nothing when it's left out or over 1,024 characters.
+
 **A server that's down.** Each server's last good listing of the tools
 named is kept in the store (as `mcp_client.listing` records, so no plugin
 may be named `mcp_client`). If a server can't be listed at startup, its

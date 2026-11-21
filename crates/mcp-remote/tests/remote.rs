@@ -74,6 +74,16 @@ fn stateless_answer(script: &mut Script, headers: &HeaderMap, message: &Value) -
                                     "ttlMs": 0, "cacheScope": "public"}),
         "tools/list" => json!({"tools": tools(), "ttlMs": 0, "cacheScope": "public"}),
         "tools/call" => {
+            // As GitHub's server does: an argument the schema marks
+            // x-mcp-header must come in its Mcp-Param header too.
+            let query = &message["params"]["arguments"]["query"];
+            if message["params"]["name"] == "search-jobs"
+                && query.is_string()
+                && header("mcp-param-query") != query.as_str()
+            {
+                return refuse(json!({"code": -32020,
+                    "message": "header mismatch: missing Mcp-Param-Query header for parameter \"query\""}));
+            }
             script.calls.push(message["params"].clone());
             json!({"content": [{"type": "text", "text": "2 jobs"}],
                    "structuredContent": {"jobs": ["a", "b"]}})
@@ -94,7 +104,7 @@ fn tools() -> Value {
     json!([
         {"name": "search-jobs", "description": "Finds jobs.",
          "inputSchema": {"type": "object", "properties": {
-             "query": {"type": "string"}, "limit": {"type": "integer"}},
+             "query": {"type": "string", "x-mcp-header": "Query"}, "limit": {"type": "integer"}},
              "required": ["query"]}},
         {"name": "apply", "description": "Applies.",
          "inputSchema": {"type": "object", "properties": {"job": {"type": "string"}}}},
@@ -405,6 +415,24 @@ async fn a_stateless_server_is_spoken_to_without_a_handshake() {
         plugin_api::STATELESS_VERSION
     );
     assert!(sent["_meta"][plugin_api::CAPABILITIES_META].is_object());
+}
+
+/// The scripted server refuses a search-jobs call whose Mcp-Param-Query
+/// header doesn't match, as GitHub's does: the call above ran, so it came.
+#[tokio::test]
+async fn a_marked_argument_goes_in_its_header() {
+    let script = Shared::default();
+    script.lock().unwrap().speaks = Some(vec![plugin_api::STATELESS_VERSION]);
+    let url = server(&script).await;
+    let store = Arc::new(MemoryStore::new(3));
+    let (registry, _) = installed(&store, &[config(&url)]).await.unwrap();
+    let mut session = session(registry, DataClass::Private);
+    for query in ["rust", "two words"] {
+        let (status, content) =
+            call(&mut session, "jobs_search_jobs", &json!({"query": query})).await;
+        assert_eq!(status, CallStatus::Ran, "{query}: {content}");
+    }
+    assert_eq!(script.lock().unwrap().calls.len(), 2);
 }
 
 #[tokio::test]
