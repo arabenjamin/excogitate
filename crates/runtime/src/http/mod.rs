@@ -470,6 +470,10 @@ async fn metrics_page(State(app): State<App>) -> Response {
     metrics
         .read_jobs(app.runtime.workflows.store.as_ref())
         .await;
+    // People are read for their spend; the store must know how they're kept.
+    if let Err(error) = app.auth_ready().await {
+        eprintln!("metrics: couldn't declare how people are kept: {error}");
+    }
     metrics.set_spend(&app.runtime.spend_today().await);
     (
         [(

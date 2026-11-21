@@ -475,6 +475,14 @@ pub async fn run_server(
         workers,
         definitions,
     } = open(product, plugins).await?;
+    // How people and keys are kept, before anything reads them: a queued
+    // job's payer and the metrics read people, and neither waits for a key
+    // to be checked, which is what declared them before.
+    store
+        .shared()
+        .register_records(&crate::auth::declarations())
+        .await
+        .map_err(RunError::OpenStore)?;
     let runtime = runtime.with_definitions(definitions.clone());
     let count = runtime.load_definitions(&definitions, Utc::now()).await?;
     let router = runtime.http_router(product, version, &owner_key)?;
