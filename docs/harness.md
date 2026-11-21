@@ -87,6 +87,14 @@ was adopted. What the judges may spend is
 `harness.judge_usd_micros` in `config.yaml`, 0 by default, and which reads a probe
 really runs is `harness.probe_reads`, `[memory]` by default.
 
+Each editor, composer and judge reply may be `harness.judge_output_tokens`
+long, 4,000 by default. A reasoning model's thinking counts against it, and
+an editor writes two whole candidates, so give a reasoning model its own
+maximum. When a reply comes back empty because the limit ran out, the
+attempt's problem says so. A larger limit also reserves more of
+`judge_usd_micros` before each call, so the cap needs room for a whole
+attempt: the editor, the composer, the judges and the replay.
+
 `POST /api/v1/harness/attempts`
 ([schema](../schemas/v1/improve_request.schema.json)) with
 `{"agent", "task", "why"}` queues an attempt and answers 202 with its job. The

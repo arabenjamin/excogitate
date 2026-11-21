@@ -101,7 +101,15 @@ fn read_reply<T: DeserializeOwned>(
 ) -> Result<T, String> {
     let reply = &completion.response;
     if reply.content.trim().is_empty() {
-        return Err("the reply was empty".to_owned());
+        // A reasoning model can spend the whole limit before it writes.
+        return Err(if reply.finish == FinishReason::Length {
+            format!(
+                "the reply was empty: {} used its whole output limit before writing",
+                completion.model
+            )
+        } else {
+            "the reply was empty".to_owned()
+        });
     }
     let Some(value) = first_json_object(&reply.content) else {
         return Err(if reply.finish == FinishReason::Length {
@@ -406,6 +414,17 @@ models:
         };
         assert_eq!(first, "the reply was empty");
         assert_eq!(repair, "the reply was empty");
+    }
+
+    #[tokio::test]
+    async fn an_empty_reply_at_the_output_limit_says_the_limit_took_it() {
+        let mut cut = text("");
+        cut.finish = FinishReason::Length;
+        let (result, _) = run(vec![Ok(cut.clone()), Ok(cut)]).await;
+        let StructuredError::Refused { first, .. } = result.unwrap_err() else {
+            panic!();
+        };
+        assert!(first.contains("used its whole output limit"), "{first}");
     }
 
     #[tokio::test]
