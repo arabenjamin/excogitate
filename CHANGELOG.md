@@ -3,6 +3,14 @@
 All notable changes are listed here. The file is generated from the
 Conventional Commits by [git-cliff](https://git-cliff.org) (`cliff.toml`).
 
+## [0.30.0] - 2026-11-21
+
+### Features
+
+- A remote MCP tool's arguments that its schema marks `x-mcp-header` go in
+  `Mcp-Param-<Name>` headers too, as the 2026-07-28 revision has a server
+  ask: GitHub's hosted server refused every repo tool without them
+
 ## [0.29.2] - 2026-11-21
 
 ### Fixed
