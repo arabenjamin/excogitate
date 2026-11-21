@@ -1,8 +1,13 @@
 //! The client side of MCP's Streamable HTTP transport: each message is a
-//! POST, answered with JSON or an event stream. A session id the server
-//! hands out at `initialize` goes back on every later message; when the
-//! server forgets it (a 404), a new session is started once. Only the
-//! fields used are read; the rest of what a server sends is ignored.
+//! POST, answered with JSON or an event stream.
+//!
+//! The first call probes with `server/discover`. A server that speaks the
+//! stateless revision (2026-07-28) is then sent each request with its
+//! revision and capabilities in `_meta` and the headers that repeat them.
+//! Any other server is opened with `initialize`, as before: a session id it
+//! hands out goes back on every later message, and when it forgets it (a
+//! 404), a new session is started once. Only the fields used are read; the
+//! rest of what a server sends is ignored.
 
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
@@ -87,6 +92,80 @@ struct Session {
     version: String,
 }
 
+/// How a server is spoken to, once the probe has said.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum Era {
+    /// 2026-07-28: no handshake; each request says its revision.
+    Stateless,
+    /// After an `initialize` handshake.
+    Handshake(Session),
+}
+
+/// What every stateless request carries in `_meta`.
+fn stateless_meta() -> Value {
+    json!({
+        (plugin_api::VERSION_META): plugin_api::STATELESS_VERSION,
+        (plugin_api::CAPABILITIES_META): {},
+        (plugin_api::CLIENT_INFO_META): {"name": "mcp-remote", "version": env!("CARGO_PKG_VERSION")},
+    })
+}
+
+/// `params` with the stateless `_meta` added beside whatever `_meta` they
+/// already had.
+fn with_stateless_meta(params: &Value) -> Value {
+    let mut params = if params.is_object() {
+        params.clone()
+    } else {
+        json!({})
+    };
+    let mut meta = params
+        .get("_meta")
+        .filter(|meta| meta.is_object())
+        .cloned()
+        .unwrap_or_else(|| json!({}));
+    if let (Some(meta), Value::Object(added)) = (meta.as_object_mut(), stateless_meta()) {
+        meta.extend(added);
+    }
+    params["_meta"] = meta;
+    params
+}
+
+/// The revisions a list names, as text.
+fn versions_in(list: Option<&Value>) -> Vec<String> {
+    list.and_then(Value::as_array)
+        .map(|versions| {
+            versions
+                .iter()
+                .filter_map(Value::as_str)
+                .take(16)
+                .map(|version| version.chars().take(32).collect())
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// Whether a server's own list of revisions means speaking to it
+/// statelessly (true) or by handshake (false). Neither is an error.
+fn stateless_from(versions: &[String]) -> Result<bool, McpError> {
+    if versions
+        .iter()
+        .any(|version| version == plugin_api::STATELESS_VERSION)
+    {
+        return Ok(true);
+    }
+    if versions
+        .iter()
+        .any(|version| plugin_api::HANDSHAKE_VERSIONS.contains(&version.as_str()))
+    {
+        return Ok(false);
+    }
+    Err(McpError::Protocol(format!(
+        "it speaks only MCP {}, and this speaks {}",
+        versions.join(", "),
+        plugin_api::SUPPORTED_VERSIONS.join(", ")
+    )))
+}
+
 /// One server's connection.
 #[derive(Debug)]
 pub struct Connection {
@@ -94,7 +173,7 @@ pub struct Connection {
     url: Url,
     key: Option<Key>,
     timeout: Duration,
-    session: Mutex<Option<Session>>,
+    era: Mutex<Option<Era>>,
     next_id: AtomicU64,
 }
 
@@ -152,7 +231,7 @@ impl Connection {
             url,
             key,
             timeout,
-            session: Mutex::new(None),
+            era: Mutex::new(None),
             next_id: AtomicU64::new(1),
         }
     }
@@ -175,6 +254,9 @@ impl Connection {
             .body(message.to_string());
         if let Some(key) = &self.key {
             request = request.header(key.name.clone(), key.value.clone());
+        }
+        for (name, value) in plugin_api::stateless_headers(message) {
+            request = request.header(name, value);
         }
         if let Some(session) = session {
             request = request.header(VERSION_HEADER, session.version.as_str());
@@ -283,41 +365,101 @@ impl Connection {
         Ok(session)
     }
 
-    async fn session(&self) -> Result<Session, McpError> {
-        let mut held = self.session.lock().await;
-        if let Some(session) = held.as_ref() {
-            return Ok(session.clone());
+    /// Asks the server with `server/discover` whether it speaks the
+    /// stateless revision. A server that doesn't know the method, or
+    /// answers anything but a modern refusal, is one to open with a
+    /// handshake. Only a server that can't be reached is an error.
+    async fn speaks_stateless(&self) -> Result<bool, McpError> {
+        let id = self.next_id.fetch_add(1, Ordering::Relaxed);
+        let probe = json!({
+            "jsonrpc": "2.0",
+            "id": id,
+            "method": "server/discover",
+            "params": {"_meta": stateless_meta()},
+        });
+        let answer = self.post(&probe, None).await?;
+        let Some(response) = answer
+            .messages
+            .iter()
+            .find(|message| message.get("id").and_then(Value::as_u64) == Some(id))
+        else {
+            return Ok(false);
+        };
+        if let Some(result) = response.get("result") {
+            if result
+                .get("supportedVersions")
+                .is_none_or(|v| !v.is_array())
+            {
+                return Ok(false);
+            }
+            let versions = versions_in(result.get("supportedVersions"));
+            return stateless_from(&versions);
         }
-        let session = self.initialize().await?;
-        *held = Some(session.clone());
-        Ok(session)
+        let code = response.pointer("/error/code").and_then(Value::as_i64);
+        if code == Some(plugin_api::rpc::UNSUPPORTED_VERSION) {
+            // A modern server that doesn't speak this revision: what it
+            // does speak decides, never a guess.
+            let versions = versions_in(response.pointer("/error/data/supported"));
+            return stateless_from(&versions);
+        }
+        Ok(false)
     }
 
-    async fn forget(&self, session: &Session) {
-        let mut held = self.session.lock().await;
-        if held.as_ref() == Some(session) {
+    async fn era(&self) -> Result<Era, McpError> {
+        let mut held = self.era.lock().await;
+        if let Some(era) = held.as_ref() {
+            return Ok(era.clone());
+        }
+        let era = if self.speaks_stateless().await? {
+            Era::Stateless
+        } else {
+            Era::Handshake(self.initialize().await?)
+        };
+        *held = Some(era.clone());
+        Ok(era)
+    }
+
+    async fn forget(&self, era: &Era) {
+        let mut held = self.era.lock().await;
+        if held.as_ref() == Some(era) {
             *held = None;
         }
     }
 
+    async fn send(&self, era: &Era, method: &str, params: &Value) -> Result<Value, McpError> {
+        match era {
+            Era::Stateless => self
+                .exchange(method, &with_stateless_meta(params), None)
+                .await
+                .map(|(_, result)| result),
+            Era::Handshake(session) => self
+                .exchange(method, params, Some(session))
+                .await
+                .map(|(_, result)| result),
+        }
+    }
+
     async fn call_once(&self, method: &str, params: &Value) -> Result<Value, McpError> {
-        let session = self.session().await?;
-        match self.exchange(method, params, Some(&session)).await {
-            // The server forgot the session: one more try, on a new one.
-            Err(McpError::Status { status: 404, .. }) if session.id.is_some() => {
-                self.forget(&session).await;
-                let session = self.session().await?;
-                self.exchange(method, params, Some(&session))
-                    .await
-                    .map(|(_, result)| result)
+        let era = self.era().await?;
+        match self.send(&era, method, params).await {
+            // The server forgot the session, or no longer takes stateless
+            // requests: one more try, after asking again.
+            Err(McpError::Status { status, .. })
+                if (status == 404
+                    && matches!(&era, Era::Handshake(session) if session.id.is_some()))
+                    || (status == 400 && era == Era::Stateless) =>
+            {
+                self.forget(&era).await;
+                let era = self.era().await?;
+                self.send(&era, method, params).await
             }
             Err(error) => {
                 if matches!(error, McpError::Unreachable(_)) {
-                    self.forget(&session).await;
+                    self.forget(&era).await;
                 }
                 Err(error)
             }
-            Ok((_, result)) => Ok(result),
+            Ok(result) => Ok(result),
         }
     }
 
@@ -410,6 +552,30 @@ mod tests {
             messages_of("application/json", "<html>"),
             Vec::<Value>::new()
         );
+    }
+
+    #[test]
+    fn the_stateless_meta_goes_beside_what_meta_there_was() {
+        let params = with_stateless_meta(&json!({"name": "t", "_meta": {"kept": 1}}));
+        assert_eq!(params["name"], "t");
+        assert_eq!(params["_meta"]["kept"], 1);
+        assert_eq!(
+            params["_meta"][plugin_api::VERSION_META],
+            plugin_api::STATELESS_VERSION
+        );
+        assert!(params["_meta"][plugin_api::CAPABILITIES_META].is_object());
+    }
+
+    #[test]
+    fn a_servers_revisions_decide_how_it_is_spoken_to() {
+        let list = |versions: &[&str]| versions.iter().map(|v| (*v).to_owned()).collect::<Vec<_>>();
+        assert_eq!(
+            stateless_from(&list(&["2026-07-28", "2025-11-25"])),
+            Ok(true)
+        );
+        assert_eq!(stateless_from(&list(&["2025-11-25"])), Ok(false));
+        let error = stateless_from(&list(&["2099-01-01"])).unwrap_err();
+        assert!(error.to_string().contains("2099-01-01"), "{error}");
     }
 
     #[test]

@@ -40,7 +40,11 @@ pub use source::{
 // The runtime's side of MCP. It isn't part of the plugin contract and can
 // change in any release.
 #[doc(hidden)]
-pub use serve::{Called, MAX_LINE_BYTES, MCP_VERSION, McpHandler, read_line, serve, serve_stdio};
+pub use serve::{
+    CAPABILITIES_META, CLIENT_INFO_META, Called, HANDSHAKE_VERSIONS, LIST_TTL_MS, MAX_LINE_BYTES,
+    MCP_VERSION, McpHandler, SERVER_INFO_META, STATELESS_VERSION, SUPPORTED_VERSIONS, VERSION_META,
+    read_line, serve, serve_stdio, stateless_headers,
+};
 pub use tool::{
     CapabilityUse, Effect, Plugin, PluginError, Tool, ToolContext, ToolDefinition, ToolFailure,
     ToolOutput,

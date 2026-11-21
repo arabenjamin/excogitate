@@ -15,8 +15,104 @@ use crate::rpc::{self, INVALID_PARAMS, METHOD_NOT_FOUND, Peer, failure, success}
 use crate::wire::{CONTEXT_META, WireContext};
 use crate::{Effect, Tool, ToolContext};
 
-/// The MCP protocol version spoken.
+/// The MCP revision the plugin host and `mcp-remote` open a handshake with,
+/// and so the one the plugin contract speaks.
 pub const MCP_VERSION: &str = "2025-06-18";
+
+/// The stateless revision: no handshake, and every request says its
+/// revision and the client's capabilities in `_meta`.
+pub const STATELESS_VERSION: &str = "2026-07-28";
+
+/// Every revision served, newest first.
+pub const SUPPORTED_VERSIONS: [&str; 3] = [STATELESS_VERSION, "2025-11-25", MCP_VERSION];
+
+/// The revisions opened with `initialize`, newest first.
+pub const HANDSHAKE_VERSIONS: [&str; 2] = ["2025-11-25", MCP_VERSION];
+
+/// Where a stateless request says its revision.
+pub const VERSION_META: &str = "io.modelcontextprotocol/protocolVersion";
+
+/// Where a stateless request says what the client can do.
+pub const CAPABILITIES_META: &str = "io.modelcontextprotocol/clientCapabilities";
+
+/// Where a stateless request names its client.
+pub const CLIENT_INFO_META: &str = "io.modelcontextprotocol/clientInfo";
+
+/// Where a stateless result names its server.
+pub const SERVER_INFO_META: &str = "io.modelcontextprotocol/serverInfo";
+
+/// How long a stateless client may keep a tool list or a discovery, in
+/// milliseconds. The list changes when definitions are reloaded or a key's
+/// scopes change, so a minute's staleness is cheap (owner, 2026-11-21).
+pub const LIST_TTL_MS: u64 = 60_000;
+
+/// The revision a handshake settles on: the one asked for if it's ours,
+/// otherwise our newest, as the handshake revisions say.
+fn negotiated(params: &Value) -> &'static str {
+    let asked = params.get("protocolVersion").and_then(Value::as_str);
+    HANDSHAKE_VERSIONS
+        .into_iter()
+        .find(|version| Some(*version) == asked)
+        .unwrap_or(HANDSHAKE_VERSIONS[0])
+}
+
+/// The revision a stateless request asks for, if it's one: whatever its
+/// `_meta` says, a string or not.
+fn stateless_version(params: &Value) -> Option<&Value> {
+    params.get("_meta")?.get(VERSION_META)
+}
+
+/// The HTTP headers a 2026-07-28 request must carry, taken from its body:
+/// its revision, its method and, on a `tools/call`, the tool. None for
+/// anything else, which needs none.
+#[must_use]
+pub fn stateless_headers(message: &Value) -> Vec<(&'static str, String)> {
+    let method = message.get("method").and_then(Value::as_str);
+    let version = message
+        .pointer("/params/_meta")
+        .and_then(|meta| meta.get(VERSION_META))
+        .and_then(Value::as_str);
+    let (Some(method), Some(version)) = (method, version) else {
+        return Vec::new();
+    };
+    if method == "initialize" {
+        return Vec::new();
+    }
+    let mut headers = vec![("mcp-protocol-version", version.to_owned())];
+    if message.get("id").is_some() {
+        headers.push(("mcp-method", method.to_owned()));
+    }
+    if method == "tools/call"
+        && let Some(name) = message.pointer("/params/name").and_then(Value::as_str)
+    {
+        headers.push(("mcp-name", name.to_owned()));
+    }
+    headers
+}
+
+/// `value` with `fields` set on it, when both are objects.
+fn with_fields(mut value: Value, fields: Value) -> Value {
+    if let (Some(object), Value::Object(fields)) = (value.as_object_mut(), fields) {
+        object.extend(fields);
+    }
+    value
+}
+
+/// The error for a revision the server doesn't speak, listing those it does.
+fn unsupported(id: &Value, requested: &str) -> Value {
+    json!({
+        "jsonrpc": "2.0",
+        "id": id,
+        "error": {
+            "code": rpc::UNSUPPORTED_VERSION,
+            "message": "Unsupported protocol version",
+            "data": {
+                "supported": SUPPORTED_VERSIONS,
+                "requested": requested.chars().take(64).collect::<String>(),
+            },
+        },
+    })
+}
 
 /// The longest line read in either direction. Over this, the connection ends.
 pub const MAX_LINE_BYTES: u64 = 8 * 1024 * 1024;
@@ -89,31 +185,31 @@ pub enum Called {
     Ran(Value),
 }
 
-async fn call_tool(handler: &McpHandler, id: &Value, params: &Value) -> Value {
-    let Some(name) = params.get("name").and_then(Value::as_str) else {
-        return failure(id, INVALID_PARAMS, "no such tool");
-    };
+/// What `tools/call` returns, or that there's no such tool.
+async fn call_result(handler: &McpHandler, params: &Value) -> Option<Value> {
+    let name = params.get("name").and_then(Value::as_str)?;
     let arguments = params
         .get("arguments")
         .cloned()
         .unwrap_or_else(|| json!({}));
-    let result = match handler.call(name, arguments, context_of(params)).await {
-        Called::NoSuchTool => return failure(id, INVALID_PARAMS, "no such tool"),
-        Called::Refused(refusal) => json!({
-            "content": [{ "type": "text", "text": refusal.to_string() }],
-            "isError": true,
-        }),
-        Called::Failed(message) => json!({
-            "content": [{ "type": "text", "text": message }],
-            "isError": true,
-        }),
-        Called::Ran(value) => json!({
-            "content": [{ "type": "text", "text": value.to_string() }],
-            "structuredContent": value,
-            "isError": false,
-        }),
-    };
-    success(id, &result)
+    Some(
+        match handler.call(name, arguments, context_of(params)).await {
+            Called::NoSuchTool => return None,
+            Called::Refused(refusal) => json!({
+                "content": [{ "type": "text", "text": refusal.to_string() }],
+                "isError": true,
+            }),
+            Called::Failed(message) => json!({
+                "content": [{ "type": "text", "text": message }],
+                "isError": true,
+            }),
+            Called::Ran(value) => json!({
+                "content": [{ "type": "text", "text": value.to_string() }],
+                "structuredContent": value,
+                "isError": false,
+            }),
+        },
+    )
 }
 
 /// Answers MCP messages, whichever way they arrive.
@@ -200,24 +296,106 @@ impl McpHandler {
     }
 
     /// The reply to one message. A notification gets none.
+    ///
+    /// Two eras are served side by side, chosen by each message: a request
+    /// whose `_meta` names a revision is stateless (2026-07-28), and anything
+    /// else is answered as after an `initialize` handshake (2025-11-25 or
+    /// 2025-06-18). A client that skips the handshake is served as before.
     pub async fn handle(&self, message: &Value) -> Option<Value> {
         // A message without an id is a notification, and gets no reply.
         let id = message.get("id")?;
         let params = message.get("params").cloned().unwrap_or_else(|| json!({}));
-        Some(match message.get("method").and_then(Value::as_str) {
+        let method = message.get("method").and_then(Value::as_str);
+        if method != Some("initialize")
+            && let Some(version) = stateless_version(&params)
+        {
+            return Some(self.stateless(id, method, &params, version).await);
+        }
+        Some(match method {
             Some("initialize") => success(
                 id,
                 &json!({
-                    "protocolVersion": MCP_VERSION,
+                    "protocolVersion": negotiated(&params),
                     "capabilities": { "tools": {} },
-                    "serverInfo": { "name": self.name, "version": self.version },
+                    "serverInfo": self.identity(),
                 }),
             ),
             Some("ping") => success(id, &json!({})),
             Some("tools/list") => success(id, &tool_listing(&self.tools)),
-            Some("tools/call") => call_tool(self, id, &params).await,
+            Some("tools/call") => match call_result(self, &params).await {
+                Some(result) => success(id, &result),
+                None => failure(id, INVALID_PARAMS, "no such tool"),
+            },
+            Some("server/discover") => failure(
+                id,
+                INVALID_PARAMS,
+                "server/discover needs `_meta` naming a revision in `io.modelcontextprotocol/protocolVersion`",
+            ),
             _ => failure(id, METHOD_NOT_FOUND, "no such method"),
         })
+    }
+
+    /// Who the server is, as MCP's `Implementation`.
+    fn identity(&self) -> Value {
+        json!({ "name": self.name, "version": self.version })
+    }
+
+    /// A stateless request: its revision and the client's capabilities are in
+    /// its `_meta`, and nothing earlier on the connection counts.
+    async fn stateless(
+        &self,
+        id: &Value,
+        method: Option<&str>,
+        params: &Value,
+        version: &Value,
+    ) -> Value {
+        let Some(version) = version.as_str() else {
+            return failure(
+                id,
+                INVALID_PARAMS,
+                &format!("`_meta.{VERSION_META}` must be a string"),
+            );
+        };
+        if version != STATELESS_VERSION {
+            return unsupported(id, version);
+        }
+        let declared = params
+            .get("_meta")
+            .and_then(|meta| meta.get(CAPABILITIES_META))
+            .is_some_and(Value::is_object);
+        if !declared {
+            return failure(
+                id,
+                INVALID_PARAMS,
+                &format!("`_meta.{CAPABILITIES_META}` is required"),
+            );
+        }
+        let mut result = match method {
+            Some("server/discover") => json!({
+                "supportedVersions": SUPPORTED_VERSIONS,
+                "capabilities": { "tools": {} },
+                "ttlMs": LIST_TTL_MS,
+                "cacheScope": "public",
+            }),
+            // What's listed depends on the key, so only this client keeps it.
+            Some("tools/list") => with_fields(
+                tool_listing(&self.tools),
+                json!({ "ttlMs": LIST_TTL_MS, "cacheScope": "private" }),
+            ),
+            Some("tools/call") => match call_result(self, params).await {
+                Some(result) => result,
+                None => return failure(id, INVALID_PARAMS, "no such tool"),
+            },
+            _ => return failure(id, METHOD_NOT_FOUND, "no such method"),
+        };
+        result = with_fields(
+            result,
+            json!({
+                "resultType": "complete",
+                "_meta": { (SERVER_INFO_META): self.identity() },
+            }),
+        );
+        success(id, &result)
     }
 }
 
@@ -347,9 +525,30 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_handshake_gets_the_revision_asked_for_or_our_newest() {
+        for (asked, answered) in [
+            ("\"2025-11-25\"", "2025-11-25"),
+            ("\"2025-06-18\"", "2025-06-18"),
+            ("\"2024-11-05\"", "2025-11-25"),
+            ("\"2026-07-28\"", "2025-11-25"),
+            ("null", "2025-11-25"),
+        ] {
+            let line = format!(
+                r#"{{"jsonrpc":"2.0","id":1,"method":"initialize","params":{{"protocolVersion":{asked}}}}}"#
+            );
+            let replies = exchange(&format!("{line}\n")).await;
+            assert_eq!(
+                replies.first().unwrap()["result"]["protocolVersion"],
+                answered,
+                "{asked}"
+            );
+        }
+    }
+
+    #[tokio::test]
     async fn it_handshakes_lists_and_calls() {
         let replies = exchange(concat!(
-            r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}"#, "\n",
+            r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18"}}"#, "\n",
             r#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#, "\n",
             r#"{"jsonrpc":"2.0","id":2,"method":"tools/list"}"#, "\n",
             r#"{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"demo_echo","arguments":{"a":1}}}"#, "\n",
@@ -390,6 +589,112 @@ mod tests {
         let result = &replies.first().unwrap()["result"];
         assert_eq!(result["isError"], true);
         assert_ne!(result["content"][0]["text"], "nope", "it ran");
+    }
+
+    /// A stateless request: `method` with `params`, and the revision and
+    /// capabilities in `_meta`.
+    fn stateless(id: u32, method: &str, params: &Value) -> String {
+        let mut params = params.clone();
+        params["_meta"] = json!({
+            (VERSION_META): STATELESS_VERSION,
+            (CAPABILITIES_META): {},
+        });
+        json!({ "jsonrpc": "2.0", "id": id, "method": method, "params": params }).to_string()
+    }
+
+    #[tokio::test]
+    async fn a_stateless_client_discovers_lists_and_calls_without_a_handshake() {
+        let input = [
+            stateless(1, "server/discover", &json!({})),
+            stateless(2, "tools/list", &json!({})),
+            stateless(
+                3,
+                "tools/call",
+                &json!({"name": "demo_echo", "arguments": {"a": 1}}),
+            ),
+        ]
+        .join("\n");
+        let replies = exchange(&format!("{input}\n")).await;
+        let [discovered, listed, called] = replies.as_slice() else {
+            panic!("three replies: {replies:?}");
+        };
+        let discovered = &discovered["result"];
+        assert_eq!(discovered["supportedVersions"], json!(SUPPORTED_VERSIONS));
+        assert_eq!(discovered["capabilities"], json!({ "tools": {} }));
+        assert_eq!(discovered["cacheScope"], "public");
+        let listed = &listed["result"];
+        assert_eq!(listed["tools"][0]["name"], "demo_echo");
+        assert_eq!(listed["ttlMs"], LIST_TTL_MS);
+        assert_eq!(
+            listed["cacheScope"], "private",
+            "the list depends on the key"
+        );
+        let called = &called["result"];
+        assert_eq!(called["structuredContent"]["a"], 1);
+        for result in [discovered, listed, called] {
+            assert_eq!(result["resultType"], "complete", "{result}");
+            assert_eq!(
+                result["_meta"][SERVER_INFO_META]["name"], "demo",
+                "{result}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn a_stateless_request_must_say_its_revision_and_capabilities() {
+        let unknown = json!({
+            "jsonrpc": "2.0", "id": 1, "method": "tools/list",
+            "params": { "_meta": { (VERSION_META): "1999-01-01", (CAPABILITIES_META): {} } }
+        });
+        let bare = json!({
+            "jsonrpc": "2.0", "id": 2, "method": "tools/list",
+            "params": { "_meta": { (VERSION_META): STATELESS_VERSION } }
+        });
+        let undiscoverable = json!({"jsonrpc": "2.0", "id": 3, "method": "server/discover"});
+        let replies = exchange(&format!(
+            "{unknown}\n{bare}\n{undiscoverable}\n{}\n",
+            stateless(4, "ping", &json!({}))
+        ))
+        .await;
+        let error = &replies[0]["error"];
+        assert_eq!(error["code"], rpc::UNSUPPORTED_VERSION);
+        assert_eq!(error["data"]["supported"], json!(SUPPORTED_VERSIONS));
+        assert_eq!(error["data"]["requested"], "1999-01-01");
+        assert_eq!(replies[1]["error"]["code"], INVALID_PARAMS);
+        assert!(
+            replies[1]["error"]["message"]
+                .as_str()
+                .unwrap()
+                .contains(CAPABILITIES_META)
+        );
+        assert_eq!(
+            replies[2]["error"]["code"], INVALID_PARAMS,
+            "discover needs _meta"
+        );
+        assert_eq!(
+            replies[3]["error"]["code"], METHOD_NOT_FOUND,
+            "2026-07-28 has no ping"
+        );
+    }
+
+    #[test]
+    fn a_stateless_request_says_its_revision_method_and_tool_in_headers() {
+        let call: Value = serde_json::from_str(&stateless(
+            1,
+            "tools/call",
+            &json!({"name": "demo_echo", "arguments": {}}),
+        ))
+        .unwrap();
+        assert_eq!(
+            stateless_headers(&call),
+            [
+                ("mcp-protocol-version", STATELESS_VERSION.to_owned()),
+                ("mcp-method", "tools/call".to_owned()),
+                ("mcp-name", "demo_echo".to_owned()),
+            ]
+        );
+        let handshake = json!({"jsonrpc": "2.0", "id": 1, "method": "tools/list"});
+        assert_eq!(stateless_headers(&handshake), []);
     }
 
     #[tokio::test]

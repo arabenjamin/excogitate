@@ -40,6 +40,52 @@ struct Script {
     methods: Vec<String>,
     /// The arguments of each tools/call.
     calls: Vec<Value>,
+    /// Be a stateless server (2026-07-28 and later) speaking these
+    /// revisions: no handshake, and every request must say its revision in
+    /// `_meta` and in headers.
+    speaks: Option<Vec<&'static str>>,
+}
+
+/// A stateless server's answer to `message`, as a modern one refuses what
+/// it can't take: a 400 with the error.
+fn stateless_answer(script: &mut Script, headers: &HeaderMap, message: &Value) -> Response {
+    let speaks = script.speaks.clone().unwrap_or_default();
+    let id = message["id"].clone();
+    let method = message["method"].as_str().unwrap_or("").to_owned();
+    let refuse = |error: Value| {
+        let body = json!({"jsonrpc": "2.0", "id": id, "error": error});
+        (StatusCode::BAD_REQUEST, Json(body)).into_response()
+    };
+    let Some(version) = message["params"]["_meta"][plugin_api::VERSION_META].as_str() else {
+        return refuse(json!({"code": -32602, "message": "no revision in _meta"}));
+    };
+    if !speaks.contains(&version) {
+        return refuse(
+            json!({"code": -32022, "message": "Unsupported protocol version",
+                             "data": {"supported": speaks, "requested": version}}),
+        );
+    }
+    let header = |name: &str| headers.get(name).and_then(|v| v.to_str().ok());
+    if header("mcp-protocol-version") != Some(version) || header("mcp-method") != Some(&method) {
+        return refuse(json!({"code": -32020, "message": "headers don't match"}));
+    }
+    let mut result = match method.as_str() {
+        "server/discover" => json!({"supportedVersions": speaks, "capabilities": {"tools": {}},
+                                    "ttlMs": 0, "cacheScope": "public"}),
+        "tools/list" => json!({"tools": tools(), "ttlMs": 0, "cacheScope": "public"}),
+        "tools/call" => {
+            script.calls.push(message["params"].clone());
+            json!({"content": [{"type": "text", "text": "2 jobs"}],
+                   "structuredContent": {"jobs": ["a", "b"]}})
+        }
+        _ => {
+            let body = json!({"jsonrpc": "2.0", "id": id,
+                              "error": {"code": -32601, "message": "no such method"}});
+            return (StatusCode::NOT_FOUND, Json(body)).into_response();
+        }
+    };
+    result["resultType"] = json!("complete");
+    Json(json!({"jsonrpc": "2.0", "id": id, "result": result})).into_response()
 }
 
 type Shared = Arc<Mutex<Script>>;
@@ -70,6 +116,9 @@ async fn serve(
     }
     let method = message["method"].as_str().unwrap_or("").to_owned();
     script.methods.push(method.clone());
+    if script.speaks.is_some() {
+        return stateless_answer(&mut script, &headers, &message);
+    }
     let mut session = None;
     if method == "initialize" {
         script.started += 1;
@@ -257,12 +306,13 @@ async fn the_tools_named_are_offered_and_called() {
         assert_eq!(
             script.methods,
             [
+                "server/discover",
                 "initialize",
                 "notifications/initialized",
                 "tools/list",
                 "tools/call"
             ],
-            "one handshake, reused"
+            "one probe, then one handshake, reused"
         );
     }
 }
@@ -328,6 +378,51 @@ async fn a_private_run_reaches_only_a_no_log_server() {
     let mut public = session(registry, DataClass::Public);
     let (status, content) = call(&mut public, "jobs_search_jobs", &json!({"query": "x"})).await;
     assert_eq!(status, CallStatus::Ran, "{content}");
+}
+
+#[tokio::test]
+async fn a_stateless_server_is_spoken_to_without_a_handshake() {
+    let script = Shared::default();
+    script.lock().unwrap().speaks = Some(vec![plugin_api::STATELESS_VERSION]);
+    let url = server(&script).await;
+    let store = Arc::new(MemoryStore::new(3));
+    let (registry, done) = installed(&store, &[config(&url)]).await.unwrap();
+    assert_eq!(done[0].tools, ["jobs_search_jobs", "jobs_fail"]);
+    let mut session = session(registry, DataClass::Private);
+    let (status, content) = call(&mut session, "jobs_search_jobs", &json!({"query": "rust"})).await;
+    assert_eq!(status, CallStatus::Ran, "{content}");
+    let script = script.lock().unwrap();
+    assert_eq!(
+        script.methods,
+        ["server/discover", "tools/list", "tools/call"],
+        "one probe, and no handshake"
+    );
+    let sent = &script.calls[0];
+    assert_eq!(sent["name"], "search-jobs");
+    assert_eq!(sent["arguments"]["query"], "rust");
+    assert_eq!(
+        sent["_meta"][plugin_api::VERSION_META],
+        plugin_api::STATELESS_VERSION
+    );
+    assert!(sent["_meta"][plugin_api::CAPABILITIES_META].is_object());
+}
+
+#[tokio::test]
+async fn a_server_that_speaks_only_a_newer_revision_says_so() {
+    let script = Shared::default();
+    script.lock().unwrap().speaks = Some(vec!["2099-01-01"]);
+    let url = server(&script).await;
+    let store = Arc::new(MemoryStore::new(3));
+    let error = installed(&store, &[config(&url)]).await.unwrap_err();
+    assert!(error.contains("2099-01-01"), "{error}");
+    assert!(
+        !script
+            .lock()
+            .unwrap()
+            .methods
+            .contains(&"initialize".to_owned()),
+        "a modern refusal is never taken for an old server"
+    );
 }
 
 #[tokio::test]

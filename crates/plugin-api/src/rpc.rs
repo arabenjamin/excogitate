@@ -32,8 +32,14 @@ pub const METHOD_NOT_FOUND: i64 = -32601;
 pub const INVALID_PARAMS: i64 = -32602;
 /// The server couldn't do it, for its own reasons.
 pub const SERVER_ERROR: i64 = -32000;
-/// Too many requests are running on this connection already.
+/// Too many requests are running on this connection already. In the range
+/// MCP leaves to implementations.
 pub const BUSY: i64 = -32004;
+/// An HTTP header doesn't match the body it came with (MCP 2026-07-28).
+pub const HEADER_MISMATCH: i64 = -32020;
+/// The request asks for an MCP revision the server doesn't speak (MCP
+/// 2026-07-28).
+pub const UNSUPPORTED_VERSION: i64 = -32022;
 
 /// The notification that stops a request.
 pub const CANCELLED: &str = "notifications/cancelled";

@@ -128,9 +128,18 @@ below.
 
 `POST /mcp`, one JSON-RPC message per request, answered with JSON. It offers the
 same tools as stdio: [`chat`, `http_request`, `memory`, `job_history` and `calculate`](mcp.md). It keeps no
-session and opens no event stream, so `GET` answers 405. A message that isn't
-one JSON-RPC 2.0 object, or a `mcp-protocol-version` header other than
-2025-06-18, is a 400 with a JSON-RPC error.
+session and opens no event stream, so `GET` answers 405. It speaks
+[three revisions](mcp.md#protocol-revisions). A message that isn't one
+JSON-RPC 2.0 object, or a `mcp-protocol-version` header naming a revision it
+doesn't speak, is a 400 with a JSON-RPC error, and the latter lists those it
+does.
+
+A 2026-07-28 request also says in headers what its body says:
+`MCP-Protocol-Version` (the same as `_meta`'s), `Mcp-Method`, and on a
+`tools/call` `Mcp-Name`, the tool. One that doesn't fit is a 400 with
+`-32020`. For such a request, an unknown method is a 404, and a request it
+can't take (a missing `_meta` field, an unknown tool) a 400. A handshake's
+errors stay 200 with the JSON-RPC error, as before.
 
 ## The front door
 

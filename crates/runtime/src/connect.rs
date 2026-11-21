@@ -31,17 +31,20 @@ async fn relay_one(
     key: &str,
     line: Vec<u8>,
 ) -> Option<String> {
-    let id = match serde_json::from_slice::<Value>(&line) {
-        Ok(message) => message.get("id").cloned(),
-        Err(_) => return Some(error_line(&Value::Null, PARSE_ERROR, "not JSON")),
+    let Ok(message) = serde_json::from_slice::<Value>(&line) else {
+        return Some(error_line(&Value::Null, PARSE_ERROR, "not JSON"));
     };
-    let sent = client
+    let id = message.get("id").cloned();
+    let mut request = client
         .post(endpoint)
         .bearer_auth(key)
-        .header("content-type", "application/json")
-        .body(line)
-        .send()
-        .await;
+        .header("content-type", "application/json");
+    // A stateless request says in headers what its body says; stdio has no
+    // headers, so they're added here.
+    for (name, value) in plugin_api::stateless_headers(&message) {
+        request = request.header(name, value);
+    }
+    let sent = request.body(line).send().await;
     // Anything a notification can't be told is only worth a line in the log.
     let complain = |problem: String| {
         if let Some(id) = &id {

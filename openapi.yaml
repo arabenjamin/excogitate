@@ -3836,13 +3836,33 @@ paths:
     post:
       operationId: mcp
       parameters:
-      - description: The protocol version; any other is refused.
+      - description: >-
+          The MCP revision. Required on a 2026-07-28 request, and then the same as its
+          `_meta` says; any revision not served is refused.
         in: header
         name: mcp-protocol-version
         required: false
         schema:
           enum:
+          - "2026-07-28"
+          - "2025-11-25"
           - "2025-06-18"
+          type: string
+      - description: The request's method. Required on a 2026-07-28 request.
+        in: header
+        name: mcp-method
+        required: false
+        schema:
+          maxLength: 64
+          minLength: 1
+          type: string
+      - description: The tool a 2026-07-28 `tools/call` calls. Required on one.
+        in: header
+        name: mcp-name
+        required: false
+        schema:
+          maxLength: 128
+          minLength: 1
           type: string
       requestBody:
         content:
@@ -3868,7 +3888,9 @@ paths:
                 jsonrpc:
                   const: "2.0"
                 method:
-                  description: initialize, ping, tools/list or tools/call; anything else is method-not-found.
+                  description: >-
+                    initialize, ping, server/discover, tools/list or tools/call; anything else is
+                    method-not-found.
                   type: string
                 params:
                   type:
@@ -3929,7 +3951,10 @@ paths:
                     - message
                     type: object
                   id:
-                    type: "null"
+                    type:
+                    - string
+                    - number
+                    - "null"
                   jsonrpc:
                     const: "2.0"
                 required:
@@ -3938,6 +3963,35 @@ paths:
                 - error
                 type: object
           description: Not a JSON-RPC 2.0 message, or a protocol version it doesn't speak.
+        "404":
+          content:
+            application/json:
+              schema:
+                properties:
+                  error:
+                    properties:
+                      code:
+                        type: integer
+                      data: {}
+                      message:
+                        type: string
+                    required:
+                    - code
+                    - message
+                    type: object
+                  id:
+                    type:
+                    - string
+                    - number
+                    - "null"
+                  jsonrpc:
+                    const: "2.0"
+                required:
+                - jsonrpc
+                - id
+                - error
+                type: object
+          description: A 2026-07-28 request for a method there's no such of.
         "413":
           content:
             application/json:
@@ -3958,7 +4012,7 @@ paths:
           description: The server failed, or is busy. The body says which.
       security:
       - bearer: []
-      summary: "MCP over HTTP: one JSON-RPC 2.0 message per request, protocol 2025-06-18"
+      summary: "MCP over HTTP: one JSON-RPC 2.0 message per request, in revision 2026-07-28, 2025-11-25 or 2025-06-18"
       x-scopes: "Per call: read for a tool call that only reads, run for one that changes something, chat for chat."
   /metrics:
     get:

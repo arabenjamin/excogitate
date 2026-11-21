@@ -1,5 +1,8 @@
 //! MCP over HTTP: one JSON-RPC message per POST, answered with JSON. It keeps
 //! no session, so there's nothing to resume and no event stream to open.
+//! Both eras are served: a handshake's (2025-11-25, 2025-06-18) and the
+//! stateless one (2026-07-28), whose requests also say in headers what
+//! their body says.
 
 use std::sync::Arc;
 
@@ -9,8 +12,11 @@ use axum::extract::State;
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::routing::post;
-use plugin_api::MCP_VERSION;
-use plugin_api::rpc::{INVALID_REQUEST, PARSE_ERROR, failure};
+use plugin_api::rpc::{
+    HEADER_MISMATCH, INVALID_PARAMS, INVALID_REQUEST, METHOD_NOT_FOUND, PARSE_ERROR,
+    UNSUPPORTED_VERSION, failure,
+};
+use plugin_api::{STATELESS_VERSION, SUPPORTED_VERSIONS, VERSION_META};
 use serde_json::{Value, json};
 
 use super::spec::{Body, Errors, Kind, Param, Route};
@@ -24,6 +30,58 @@ const FORBIDDEN: i64 = -32001;
 
 fn rpc_error(status: StatusCode, code: i64, message: &str) -> Response {
     (status, axum::Json(failure(&Value::Null, code, message))).into_response()
+}
+
+/// A header's value, if it's there and readable.
+fn header<'a>(headers: &'a HeaderMap, name: &str) -> Option<&'a str> {
+    headers.get(name).and_then(|value| value.to_str().ok())
+}
+
+/// The revision a stateless request names in its body, if it is one. An
+/// `initialize` is a handshake's, whatever else it carries.
+fn stateless_version(message: &Value) -> Option<&str> {
+    if message.get("method").and_then(Value::as_str) == Some("initialize") {
+        return None;
+    }
+    message
+        .pointer("/params/_meta")?
+        .get(VERSION_META)?
+        .as_str()
+}
+
+/// Why a stateless request's headers don't fit its body, if they don't:
+/// the revision, the method, and on a call the tool must all match.
+fn header_mismatch(headers: &HeaderMap, message: &Value, version: &str) -> Option<String> {
+    if header(headers, "mcp-protocol-version") != Some(version) {
+        return Some(format!(
+            "MCP-Protocol-Version must be {version}, as the body's `_meta` says"
+        ));
+    }
+    let method = message.get("method").and_then(Value::as_str).unwrap_or("");
+    if message.get("id").is_some() && header(headers, "mcp-method") != Some(method) {
+        return Some(format!("Mcp-Method must be {method}, as the body says"));
+    }
+    if method == "tools/call" {
+        let name = message
+            .pointer("/params/name")
+            .and_then(Value::as_str)
+            .unwrap_or("");
+        if header(headers, "mcp-name") != Some(name) {
+            return Some(format!("Mcp-Name must be {name}, the tool the body calls"));
+        }
+    }
+    None
+}
+
+/// The status a stateless reply goes with: a request the server can't take
+/// is a 400, an unknown method a 404. A handshake's errors are all 200, as
+/// before.
+fn stateless_status(reply: &Value) -> StatusCode {
+    match reply.pointer("/error/code").and_then(Value::as_i64) {
+        Some(METHOD_NOT_FOUND) => StatusCode::NOT_FOUND,
+        Some(INVALID_PARAMS | UNSUPPORTED_VERSION | HEADER_MISMATCH) => StatusCode::BAD_REQUEST,
+        _ => StatusCode::OK,
+    }
 }
 
 /// Whether `caller` may make this `tools/call`, and if not, why. A tool
@@ -75,12 +133,6 @@ async fn post_message(
     headers: HeaderMap,
     body: Bytes,
 ) -> Response {
-    if let Some(version) = headers.get("mcp-protocol-version")
-        && version.to_str().ok() != Some(MCP_VERSION)
-    {
-        let detail = format!("this server speaks MCP {MCP_VERSION}");
-        return rpc_error(StatusCode::BAD_REQUEST, INVALID_REQUEST, &detail);
-    }
     let message = match json_body(&headers, &body) {
         Ok(message) => message,
         Err(error) if error.status() == StatusCode::BAD_REQUEST => {
@@ -93,6 +145,43 @@ async fn post_message(
         let detail = "a request is one JSON-RPC 2.0 object";
         return rpc_error(StatusCode::BAD_REQUEST, INVALID_REQUEST, detail);
     }
+    let id = message.get("id").cloned().unwrap_or(Value::Null);
+    if let Some(version) = headers.get("mcp-protocol-version") {
+        let version = version.to_str().unwrap_or("");
+        if !SUPPORTED_VERSIONS.contains(&version) {
+            let refused = json!({
+                "jsonrpc": "2.0",
+                "id": id,
+                "error": {
+                    "code": UNSUPPORTED_VERSION,
+                    "message": "Unsupported protocol version",
+                    "data": {
+                        "supported": SUPPORTED_VERSIONS,
+                        "requested": version.chars().take(64).collect::<String>(),
+                    },
+                },
+            });
+            return (StatusCode::BAD_REQUEST, axum::Json(refused)).into_response();
+        }
+    }
+    let stateless = stateless_version(&message).map(str::to_owned);
+    if let Some(version) = &stateless {
+        if let Some(detail) = header_mismatch(&headers, &message, version) {
+            let refused = failure(&id, HEADER_MISMATCH, &detail);
+            return (StatusCode::BAD_REQUEST, axum::Json(refused)).into_response();
+        }
+    } else if header(&headers, "mcp-protocol-version") == Some(STATELESS_VERSION)
+        && message.get("id").is_some()
+    {
+        let detail = format!(
+            "a {STATELESS_VERSION} request names its revision and the client's capabilities in `params._meta`"
+        );
+        return (
+            StatusCode::BAD_REQUEST,
+            axum::Json(failure(&id, INVALID_PARAMS, &detail)),
+        )
+            .into_response();
+    }
     // A notification, or the client's reply to something: nothing to answer.
     if message.get("id").is_none() || message.get("method").is_none() {
         return StatusCode::ACCEPTED.into_response();
@@ -101,7 +190,6 @@ async fn post_message(
     if method == Some("tools/call")
         && let Err(detail) = may_call(&app, &caller, message.get("params"))
     {
-        let id = message.get("id").cloned().unwrap_or(Value::Null);
         return axum::Json(failure(&id, FORBIDDEN, &detail)).into_response();
     }
     let listing = method == Some("tools/list");
@@ -123,9 +211,19 @@ async fn post_message(
     } else {
         app.mcp.handle(&message).await
     };
+    let status = |reply: &Value| {
+        if stateless.is_some() {
+            stateless_status(reply)
+        } else {
+            StatusCode::OK
+        }
+    };
     match reply {
-        Some(reply) if listing => axum::Json(only_callable(&app, &caller, reply)).into_response(),
-        Some(reply) => axum::Json(reply).into_response(),
+        Some(reply) if listing => {
+            let reply = only_callable(&app, &caller, reply);
+            (status(&reply), axum::Json(reply)).into_response()
+        }
+        Some(reply) => (status(&reply), axum::Json(reply)).into_response(),
         None => ApiError::internal(&"a request got no reply").into_response(),
     }
 }
@@ -152,8 +250,8 @@ pub(super) fn message_schema() -> Value {
             "jsonrpc": { "const": "2.0" },
             "id": { "type": ["string", "number", "null"] },
             "method": { "type": "string",
-                        "description": "initialize, ping, tools/list or tools/call; \
-                                        anything else is method-not-found." },
+                        "description": "initialize, ping, server/discover, tools/list or \
+                                        tools/call; anything else is method-not-found." },
             "params": { "type": ["object", "array"] },
             "result": {},
             "error": error_object()
@@ -182,7 +280,7 @@ pub(super) fn error_schema() -> Value {
         "required": ["jsonrpc", "id", "error"],
         "properties": {
             "jsonrpc": { "const": "2.0" },
-            "id": { "type": "null" },
+            "id": { "type": ["string", "number", "null"] },
             "error": error_object()
         }
     })
@@ -190,8 +288,21 @@ pub(super) fn error_schema() -> Value {
 
 const PROTOCOL: Param = Param {
     name: "mcp-protocol-version",
-    about: "The protocol version; any other is refused.",
-    kind: Kind::OneOf(&[MCP_VERSION]),
+    about: "The MCP revision. Required on a 2026-07-28 request, and then the same as \
+            its `_meta` says; any revision not served is refused.",
+    kind: Kind::OneOf(&SUPPORTED_VERSIONS),
+};
+
+const METHOD: Param = Param {
+    name: "mcp-method",
+    about: "The request's method. Required on a 2026-07-28 request.",
+    kind: Kind::Text(64),
+};
+
+const TOOL: Param = Param {
+    name: "mcp-name",
+    about: "The tool a 2026-07-28 `tools/call` calls. Required on one.",
+    kind: Kind::Text(128),
 };
 
 pub(super) fn routes() -> Vec<Route> {
@@ -199,12 +310,18 @@ pub(super) fn routes() -> Vec<Route> {
         Route::post(
             "mcp",
             "/mcp",
-            "MCP over HTTP: one JSON-RPC 2.0 message per request, protocol 2025-06-18",
+            "MCP over HTTP: one JSON-RPC 2.0 message per request, in revision 2026-07-28, \
+             2025-11-25 or 2025-06-18",
             post(post_message),
         )
-        .headers(&[PROTOCOL])
+        .headers(&[PROTOCOL, METHOD, TOOL])
         .body(Body::Inline(message_schema))
         .reply(200, "The JSON-RPC reply.", Body::Inline(reply_schema))
+        .reply(
+            404,
+            "A 2026-07-28 request for a method there's no such of.",
+            Body::Inline(error_schema),
+        )
         .reply(
             202,
             "A notification or a client's reply: nothing to answer.",

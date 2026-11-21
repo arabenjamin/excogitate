@@ -279,7 +279,8 @@ async fn mcp_works_over_http() {
     assert_eq!(hello.status(), StatusCode::OK);
     assert_eq!(
         body_of(hello).await["result"]["protocolVersion"],
-        plugin_api::MCP_VERSION
+        plugin_api::HANDSHAKE_VERSIONS[0],
+        "a client that names no revision gets our newest handshake"
     );
 
     let note = json!({ "jsonrpc": "2.0", "method": "notifications/initialized" });
@@ -443,6 +444,142 @@ async fn a_protocol_version_it_doesnt_speak_is_refused() {
     );
 }
 
+/// A 2026-07-28 request: its revision and capabilities in `_meta`.
+fn stateless(id: u32, method: &str, params: &Value) -> Value {
+    let mut params = params.clone();
+    params["_meta"] = json!({
+        (plugin_api::VERSION_META): plugin_api::STATELESS_VERSION,
+        (plugin_api::CAPABILITIES_META): {},
+    });
+    rpc(id, method, &params)
+}
+
+impl Running {
+    /// POSTs `body` to `/mcp` with these headers as well.
+    async fn mcp(&self, body: &Value, headers: &[(&str, &str)]) -> Response {
+        let mut request = self
+            .client
+            .post(format!("{}/mcp", self.url))
+            .bearer_auth(KEY)
+            .header("content-type", "application/json");
+        for (name, value) in headers {
+            request = request.header(*name, *value);
+        }
+        request.body(body.to_string()).send().await.unwrap()
+    }
+}
+
+#[tokio::test]
+async fn a_stateless_request_is_served_when_its_headers_match_its_body() {
+    let running = quiet("mcpstateless", vec![]).await;
+    let version = plugin_api::STATELESS_VERSION;
+    let call = stateless(
+        1,
+        "tools/call",
+        &json!({ "name": "calculate", "arguments": { "expression": "2 * 3" } }),
+    );
+    let right = [
+        ("mcp-protocol-version", version),
+        ("mcp-method", "tools/call"),
+        ("mcp-name", "calculate"),
+    ];
+    let answered = running.mcp(&call, &right).await;
+    assert_eq!(answered.status(), StatusCode::OK);
+    let answered = body_of(answered).await;
+    assert_eq!(answered["result"]["resultType"], "complete", "{answered}");
+    assert_eq!(answered["result"]["isError"], false, "{answered}");
+
+    let listed = body_of(
+        running
+            .mcp(
+                &stateless(2, "tools/list", &json!({})),
+                &[
+                    ("mcp-protocol-version", version),
+                    ("mcp-method", "tools/list"),
+                ],
+            )
+            .await,
+    )
+    .await;
+    assert_eq!(listed["result"]["ttlMs"], plugin_api::LIST_TTL_MS);
+    let names: Vec<&str> = listed["result"]["tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|tool| tool["name"].as_str())
+        .collect();
+    assert!(names.contains(&"calculate"), "{names:?}");
+
+    // Each header that doesn't fit the body is a 400 with -32020.
+    for wrong in [
+        vec![("mcp-method", "tools/call"), ("mcp-name", "calculate")],
+        vec![
+            ("mcp-protocol-version", version),
+            ("mcp-method", "tools/list"),
+            ("mcp-name", "calculate"),
+        ],
+        vec![
+            ("mcp-protocol-version", version),
+            ("mcp-method", "tools/call"),
+            ("mcp-name", "memory"),
+        ],
+    ] {
+        let refused = running.mcp(&call, &wrong).await;
+        assert_eq!(refused.status(), StatusCode::BAD_REQUEST, "{wrong:?}");
+        assert_eq!(body_of(refused).await["error"]["code"], -32020, "{wrong:?}");
+    }
+}
+
+#[tokio::test]
+async fn a_stateless_error_has_the_status_its_revision_gives() {
+    let running = quiet("mcpstatus", vec![]).await;
+    let version = plugin_api::STATELESS_VERSION;
+    let unknown = running
+        .mcp(
+            &stateless(1, "resources/list", &json!({})),
+            &[
+                ("mcp-protocol-version", version),
+                ("mcp-method", "resources/list"),
+            ],
+        )
+        .await;
+    assert_eq!(unknown.status(), StatusCode::NOT_FOUND);
+    assert_eq!(body_of(unknown).await["error"]["code"], -32601);
+
+    // A 2026-07-28 header on a body that doesn't say its revision.
+    let bare = running
+        .mcp(
+            &rpc(2, "tools/list", &json!({})),
+            &[
+                ("mcp-protocol-version", version),
+                ("mcp-method", "tools/list"),
+            ],
+        )
+        .await;
+    assert_eq!(bare.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(body_of(bare).await["error"]["code"], -32602);
+
+    let old = running
+        .mcp(
+            &rpc(3, "tools/list", &json!({})),
+            &[("mcp-protocol-version", "1999-01-01")],
+        )
+        .await;
+    assert_eq!(old.status(), StatusCode::BAD_REQUEST);
+    let old = body_of(old).await;
+    assert_eq!(old["error"]["code"], -32022);
+    assert_eq!(
+        old["error"]["data"]["supported"],
+        json!(plugin_api::SUPPORTED_VERSIONS)
+    );
+
+    // A handshake's errors stay 200, as before.
+    let legacy = running
+        .mcp(&rpc(4, "resources/list", &json!({})), &[])
+        .await;
+    assert_eq!(legacy.status(), StatusCode::OK);
+}
+
 #[tokio::test]
 async fn mcp_opens_no_stream_and_keeps_no_session() {
     let running = quiet("mcpget", vec![]).await;
@@ -493,6 +630,29 @@ async fn a_stdio_client_can_use_a_running_server() {
         replies[1]["result"]["structuredContent"]["answer"],
         "Bridged."
     );
+}
+
+#[tokio::test]
+async fn a_stateless_stdio_client_can_use_a_running_server() {
+    // stdio has no headers: the relay adds the ones the body implies.
+    let running = quiet("bridgestateless", vec![]).await;
+    let call = json!({ "name": "calculate", "arguments": { "expression": "2 * 3" } });
+    let lines = [
+        stateless(1, "server/discover", &json!({})),
+        stateless(2, "tools/call", &call),
+    ];
+    let replies = bridged(&running.url, KEY, &lines).await;
+    assert_eq!(replies.len(), 2, "{replies:?}");
+    assert_eq!(
+        replies[0]["result"]["supportedVersions"][0],
+        plugin_api::STATELESS_VERSION,
+        "{replies:?}"
+    );
+    assert_eq!(
+        replies[1]["result"]["resultType"], "complete",
+        "{replies:?}"
+    );
+    assert_eq!(replies[1]["result"]["isError"], false, "{replies:?}");
 }
 
 #[tokio::test]

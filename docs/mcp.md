@@ -55,6 +55,28 @@ check.
 
 All work is private for now, so it only reaches `no_log` providers.
 
+## Protocol revisions
+
+The same tools are served in three revisions, on stdio and over HTTP, and
+each message picks its own:
+
+| Revision | How a client opens |
+|---|---|
+| 2026-07-28 | No handshake. Each request names the revision in `params._meta["io.modelcontextprotocol/protocolVersion"]` and the client's capabilities in `"io.modelcontextprotocol/clientCapabilities"`. `server/discover` says which revisions are served. |
+| 2025-11-25, 2025-06-18 | `initialize`. It answers the revision asked for, or 2025-11-25 if it's one this doesn't speak. |
+
+A request with neither is answered as after a handshake, so a client that
+skips `initialize` keeps working.
+
+A 2026-07-28 result has `resultType: "complete"` and names the server in
+`_meta["io.modelcontextprotocol/serverInfo"]`. `tools/list` may be kept
+for 60 seconds (`ttlMs`), by that client only (`cacheScope: "private"`),
+since what's listed depends on the key. That revision has no `ping`. A
+revision this doesn't speak is error `-32022`, listing those it does.
+
+`connect` relays either kind. Over stdio there are no headers, so it adds
+the ones a 2026-07-28 request needs over HTTP.
+
 ## Settings
 
 [The variables are in env.md](env.md).
@@ -111,10 +133,17 @@ that the server doesn't offer stops startup, saying what it does offer.
 | Result | Untrusted. `text` is its text content joined, with anything else it sent named in brackets; `structured` is its structured result when that fits; both are cut at `max_result_chars`, and `truncated` says so. A result the server marks as an error is a failed call, with its reason. |
 | Time | `timeout_seconds`, or what the run has left if that's less. |
 
-**Sessions.** A server that hands out a session id at `initialize` gets
-it back on every message. One handshake is made per server and reused;
-if the server forgets the session (a 404), a new one is started once. An
-answer can be JSON or an event stream, and at most 8 MiB is read.
+**Revisions and sessions.** Each server is first asked with
+`server/discover` (revision 2026-07-28). A server that speaks that
+revision is sent each request with it in `_meta` and the headers that
+repeat it, and no handshake. Any other answer means an older server,
+which is opened with `initialize`, unless the server refuses the revision
+and lists only newer ones: then startup stops, naming them. A server that
+hands out a session id at `initialize` gets it back on every message. One
+handshake is made per server and reused; if the server forgets the
+session (a 404), or a stateless server starts refusing (a 400), it's asked
+again once. An answer can be JSON or an event stream, and at most 8 MiB is
+read.
 
 **A server that's down.** Each server's last good listing of the tools
 named is kept in the store (as `mcp_client.listing` records, so no plugin
