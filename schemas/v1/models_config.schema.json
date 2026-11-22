@@ -85,6 +85,18 @@
           "minLength": 1,
           "type": "string"
         },
+        "reasoning_effort": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ReasoningEffort"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "How much it may reason before answering. Absent sends nothing, and\nthe provider decides."
+        },
         "wire_model": {
           "description": "The id the endpoint knows it by.",
           "maxLength": 256,
@@ -186,6 +198,26 @@
         "timeout_secs"
       ],
       "type": "object"
+    },
+    "ReasoningEffort": {
+      "description": "How much a reasoning model may think before it answers, sent as\n`reasoning_effort`. Left out, the provider's default: some reason\nwithout bound and spend the whole reply on it.",
+      "oneOf": [
+        {
+          "const": "low",
+          "description": "As little as the model allows.",
+          "type": "string"
+        },
+        {
+          "const": "medium",
+          "description": "The middle setting.",
+          "type": "string"
+        },
+        {
+          "const": "high",
+          "description": "As much as it likes.",
+          "type": "string"
+        }
+      ]
     },
     "RoleConfig": {
       "additionalProperties": false,

@@ -121,6 +121,23 @@ A key is read from the environment variable named by `api_key_env`, and
 belongs to its provider, so nothing can send it elsewhere. Redirects aren't
 followed, and a key can't be printed.
 
+## Reasoning effort
+
+A reasoning model can spend its whole reply thinking and come back empty.
+`reasoning_effort: low` (or `medium`, `high`) on a model in `models.yaml` is
+sent with each of its calls as `reasoning_effort`, which OpenRouter and
+OpenAI's API take; left out, nothing is sent and the provider decides.
+
+```yaml
+  - name: glm-flash
+    provider: openrouter
+    wire_model: z-ai/glm-5.3-flash
+    capabilities: [chat, tools]
+    context_tokens: 1048576
+    max_output_tokens: 32768
+    reasoning_effort: low
+```
+
 ## Structured output
 
 `generate_structured` returns a typed value. It sends the type's schema (the

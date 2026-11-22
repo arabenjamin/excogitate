@@ -50,6 +50,9 @@ pub(crate) fn chat_body(model: &Model, request: &ChatRequest, output_tokens: u32
     body.insert("model".to_owned(), json!(model.wire_model));
     body.insert("max_tokens".to_owned(), json!(output_tokens));
     body.insert("stream".to_owned(), json!(false));
+    if let Some(effort) = model.reasoning_effort {
+        body.insert("reasoning_effort".to_owned(), json!(effort.as_str()));
+    }
     if let Some(temperature) = request.temperature {
         body.insert("temperature".to_owned(), json!(temperature));
     }
@@ -299,6 +302,23 @@ mod tests {
                 schema: json!({ "type": "object" }),
             }),
         }
+    }
+
+    #[test]
+    fn a_reasoning_effort_is_sent_only_when_configured() {
+        assert!(
+            chat_body(&model("chat"), &request(false), 3)
+                .get("reasoning_effort")
+                .is_none()
+        );
+        let yaml = "version: 1\nproviders:\n  - {name: p, base_url: 'http://h/v1', no_log: true, timeout_secs: 5}\n\
+             models:\n  - {name: m, provider: p, wire_model: w, capabilities: [chat], context_tokens: 9, \
+             max_output_tokens: 9, reasoning_effort: low}\n";
+        let low = Arc::clone(&catalog(yaml).models()[0]);
+        assert_eq!(
+            chat_body(&low, &request(false), 3)["reasoning_effort"],
+            "low"
+        );
     }
 
     #[test]

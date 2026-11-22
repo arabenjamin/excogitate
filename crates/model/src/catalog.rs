@@ -117,6 +117,32 @@ impl Price {
     }
 }
 
+/// How much a reasoning model may think before it answers, sent as
+/// `reasoning_effort`. Left out, the provider's default: some reason
+/// without bound and spend the whole reply on it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ReasoningEffort {
+    /// As little as the model allows.
+    Low,
+    /// The middle setting.
+    Medium,
+    /// As much as it likes.
+    High,
+}
+
+impl ReasoningEffort {
+    /// The value on the wire.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Low => "low",
+            Self::Medium => "medium",
+            Self::High => "high",
+        }
+    }
+}
+
 /// One model, as configured.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -144,6 +170,10 @@ pub struct ModelConfig {
     pub embedding_dimension: Option<u32>,
     /// What it costs. Absent means free.
     pub price: Option<Price>,
+    /// How much it may reason before answering. Absent sends nothing, and
+    /// the provider decides.
+    #[serde(default)]
+    pub reasoning_effort: Option<ReasoningEffort>,
 }
 
 /// The models configuration could not be used.
@@ -216,6 +246,8 @@ pub struct Model {
     pub embedding_dimension: Option<usize>,
     /// What it costs.
     pub price: Price,
+    /// How much it may reason, if the configuration says.
+    pub reasoning_effort: Option<ReasoningEffort>,
 }
 
 impl Model {
@@ -414,6 +446,7 @@ fn resolve_model(config: ModelConfig, providers: &[Arc<Provider>]) -> Result<Mod
         max_output_tokens: config.max_output_tokens,
         embedding_dimension: config.embedding_dimension.map(|width| width as usize),
         price,
+        reasoning_effort: config.reasoning_effort,
     })
 }
 
