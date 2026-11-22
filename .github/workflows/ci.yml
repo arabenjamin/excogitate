@@ -70,7 +70,7 @@ jobs:
         run: rustup toolchain install
       - run: cargo fmt --all -- --check
       - uses: crate-ci/typos@276087d9a4f06398b3e04825487805e2d7375888 # v1.52.2
-      - uses: taiki-e/install-action@ab49d3c64680143e184118bed66a46419fc15519 # v2.90.5
+      - uses: taiki-e/install-action@75a7c0f87bd666af3cdb75c5b9e9d03ab6044e6f # v2.90.6
         with:
           tool: taplo-cli@0.10.0,cargo-deny@0.20.2
       - run: taplo fmt --check
@@ -126,7 +126,7 @@ jobs:
         with:
           shared-key: dev
           save-if: ${{ github.ref == 'refs/heads/main' }}
-      - uses: taiki-e/install-action@ab49d3c64680143e184118bed66a46419fc15519 # v2.90.5
+      - uses: taiki-e/install-action@75a7c0f87bd666af3cdb75c5b9e9d03ab6044e6f # v2.90.6
         with:
           tool: cargo-nextest@0.9.150
       - name: DuckDB extensions for the store's tests
@@ -163,7 +163,7 @@ jobs:
         with:
           shared-key: dev
           save-if: false
-      - uses: taiki-e/install-action@ab49d3c64680143e184118bed66a46419fc15519 # v2.90.5
+      - uses: taiki-e/install-action@75a7c0f87bd666af3cdb75c5b9e9d03ab6044e6f # v2.90.6
         with:
           tool: cargo-hack@0.6.45
       # `check`, not `build`: no codegen, so the feature sets don't rebuild
@@ -203,7 +203,7 @@ jobs:
         with:
           shared-key: dev
           save-if: false
-      - uses: taiki-e/install-action@ab49d3c64680143e184118bed66a46419fc15519 # v2.90.5
+      - uses: taiki-e/install-action@75a7c0f87bd666af3cdb75c5b9e9d03ab6044e6f # v2.90.6
         with:
           tool: cargo-semver-checks@0.51.0
       - name: The last release
