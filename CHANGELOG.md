@@ -3,6 +3,14 @@
 All notable changes are listed here. The file is generated from the
 Conventional Commits by [git-cliff](https://git-cliff.org) (`cliff.toml`).
 
+## [0.31.0] - 2026-11-21
+
+### Features
+
+- A model in `models.yaml` can set `reasoning_effort` (`low`, `medium` or
+  `high`), sent with each of its calls: GLM 5.3 Flash reasoned through its
+  whole reply limit on coding tasks and answered with nothing
+
 ## [0.30.0] - 2026-11-21
 
 ### Features
