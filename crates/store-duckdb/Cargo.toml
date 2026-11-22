@@ -15,7 +15,7 @@ chrono.workspace = true
 # upgrade is a deliberate step. See docs/store.md before changing it.
 # download-lib fetches DuckDB's own prebuilt library. Compiling it from source
 # (`bundled`) took 204 seconds on 32 cores and would dominate every cold build.
-duckdb = { version = "=1.20000.1", features = ["chrono", "download-lib"] }
+duckdb = { version = "=1.20000.2", features = ["chrono", "download-lib"] }
 events = { path = "../events" }
 protocol = { path = "../protocol" }
 schema = { path = "../schema" }
